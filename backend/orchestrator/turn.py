@@ -7,19 +7,20 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextvars import copy_context
 from dataclasses import dataclass
 from typing import Any
 
+from ..config import LLMSettings
 from ..db import Database
 from ..llm import calls as model_calls
+from ..llm.client import DeepSeekClient
 from ..llm.types import AssistantTurn
 from ..memory import attach, prompt_turns
-from ..services.chat_run import enqueue_chat_run, wake_chat_worker
-from ..services.run_names import StepType, step_name
+from ..services.chat_run import enqueue_chat_run
+from ..services.run_names import StepStatus, StepType, step_name
 from ..tools import all_schemas, all_tools
 from .prompt import OPEN, REACT
 
@@ -58,23 +59,17 @@ def open_session(llm: Any, *, message: str, attachments: list[str],
         f"=== 消息 ===\n{message[:4000] or '（无文字）'}"
     )
     messages = [{"role": "user", "content": user}]
-    request = {
-        "model": model_calls.SCHOOL_CHAT,
-        "system": OPEN,
-        "messages": messages,
-        "schema": session_open_schema(),
-    }
-    step_id = None 
+    step_id = None
     if db is not None and run_id:
         step = db.insert_step(run_id, StepType.MODEL, step_name(StepType.MODEL, None), {})
         step_id = None if step is None else step["id"]
     raw: dict[str, Any] = {}
     caught: Exception | None = None
-    started = time.perf_counter()
     try:
         parsed = model_calls.school_json(
-            model_calls.SCHOOL_CHAT, system=OPEN, messages=messages, 
-            schema=session_open_schema(), temperature=0, client = llm
+            model_calls.SCHOOL_CHAT, system=OPEN, messages=messages,
+            schema=session_open_schema(), temperature=0, client=llm,
+            db=db, run_id=run_id, step_id=step_id, purpose="session.title",
         )
         if isinstance(parsed, dict):
             raw = parsed
@@ -82,25 +77,11 @@ def open_session(llm: Any, *, message: str, attachments: list[str],
             caught = ValueError("Campus model did not return a JSON object")
     except Exception as err:
         caught = err
-    
+
     if db is not None and run_id and step_id:
-        usage = getattr(llm, "last_usage", {})
-        usage = usage if isinstance(usage, dict) else {}
-        db.insert_model_call(
-            run_id, step_id, 
-            provider=str(getattr(llm, "provider", None) or "sjtu"),
-            model=model_calls.SCHOOL_CHAT,
-            request=request,
-            response={"json": raw} if raw else {},
-            prompt_tokens=int(usage.get("prompt_tokens") or 0),
-            completion_tokens=int(usage.get("completion_tokens") or 0),
-            latency_ms=int((time.perf_counter() - started) * 1000),
-            status="failed" if caught is not None else "succeeded",
-            error={"message": str(caught) if caught is not None else None},
-        )
         db.finish_step(
-            step_id, 
-            "failed" if caught is not None else "succeeded",
+            step_id,
+            StepStatus.FAILED if caught is not None else StepStatus.SUCCEEDED,
             None if caught is not None else {"title": str(raw.get("title") or "")}, 
             {"message": str(caught)} if caught is not None else None,
         )
@@ -171,8 +152,10 @@ def run_tool_calls(
     used = False
     last: AssistantTurn | None = None
     for _ in range(MAX_TOOL_ROUNDS):
+        can_call = callable(getattr(llm, "response", None)) or callable(getattr(llm, "complete_json", None))
+        flash = llm if can_call else DeepSeekClient(LLMSettings(base_url=None, api_key=""))
         last = model_calls.flash_tools(
-            system=attach(REACT, memory or ""), messages=messages, tools=schemas,
+            client=flash, system=attach(REACT, memory or ""), messages=messages, tools=schemas,
         )
         if not last.tool_calls:
             if used:
@@ -215,4 +198,3 @@ def handle_message(
         db, session, text, images=images, documents=documents, model=model, attachments=names
     )
     yield {"type": "run", "run_id": run["id"]}
-    wake_chat_worker(run["id"])

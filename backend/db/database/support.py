@@ -12,6 +12,7 @@ from typing import Any
 from sqlalchemy import inspect
 
 from ...config import db_url
+from ...services.run_names import RunStatus, StepEvent
 
 
 def utcnow() -> datetime:
@@ -35,23 +36,28 @@ class ChatTurnBusy(Exception):
         self.run_id = run_id
         super().__init__(run_id)
 
-ALLOWED_RUN_TRANSITIONS: dict[str, frozenset[str]] = {
-    "queued": frozenset({"running", "cancelled"}),
-    "running": frozenset({"succeeded", "failed", "queued", "waiting_for_user", "cancelled"}),
-    "waiting_for_user": frozenset({"queued", "cancelled"}),
+ALLOWED_RUN_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
+    RunStatus.QUEUED: frozenset({RunStatus.RUNNING, RunStatus.CANCELLED}),
+    RunStatus.RUNNING: frozenset({
+        RunStatus.SUCCEEDED,
+        RunStatus.FAILED,
+        RunStatus.QUEUED,
+        RunStatus.WAITING_FOR_USER,
+        RunStatus.CANCELLED,
+    }),
+    RunStatus.WAITING_FOR_USER: frozenset({RunStatus.QUEUED, RunStatus.CANCELLED}),
 }
 
-
-RUN_TRANSITION_EVENTS: dict[tuple[str, str], str] = {
-    ("queued", "running"): "run.started",
-    ("queued", "cancelled"): "run.cancelled",
-    ("running", "succeeded"): "run.completed",
-    ("running", "failed"): "run.failed",
-    ("running", "queued"): "run.retry_scheduled",
-    ("running", "waiting_for_user"): "run.waiting_for_user",
-    ("running", "cancelled"): "run.cancelled",
-    ("waiting_for_user", "queued"): "run.resumed",
-    ("waiting_for_user", "cancelled"): "run.cancelled",
+RUN_TRANSITION_EVENTS: dict[tuple[RunStatus, RunStatus], StepEvent] = {
+    (RunStatus.QUEUED, RunStatus.RUNNING): StepEvent.RUN_STARTED,
+    (RunStatus.QUEUED, RunStatus.CANCELLED): StepEvent.RUN_CANCELLED,
+    (RunStatus.RUNNING, RunStatus.SUCCEEDED): StepEvent.RUN_COMPLETED,
+    (RunStatus.RUNNING, RunStatus.FAILED): StepEvent.RUN_FAILED,
+    (RunStatus.RUNNING, RunStatus.QUEUED): StepEvent.RUN_RETRY_SCHEDULED,
+    (RunStatus.RUNNING, RunStatus.WAITING_FOR_USER): StepEvent.RUN_WAITING_FOR_USER,
+    (RunStatus.RUNNING, RunStatus.CANCELLED): StepEvent.RUN_CANCELLED,
+    (RunStatus.WAITING_FOR_USER, RunStatus.QUEUED): StepEvent.RUN_RESUMED,
+    (RunStatus.WAITING_FOR_USER, RunStatus.CANCELLED): StepEvent.RUN_CANCELLED,
 }
 
 

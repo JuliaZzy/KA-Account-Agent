@@ -22,7 +22,7 @@ from typing import Any
 from .db import Database
 from .llm import calls as model_calls
 from .schemas import Memory
-from .services.run_names import StepType, step_name
+from .services.run_names import StepStatus, StepType, ToolCallStatus, ToolErrorCode, step_name, tool_error
 
 log = logging.getLogger(__name__)
 
@@ -222,49 +222,30 @@ def _open_fold_step(db: Database, run_id: str | None) -> str | None:
         return None
     return step["id"]
 
-def _record_fold(
-    db: Database, run_id: str | None, step_id: str | None, llm: Any, *,
-    request: dict[str, Any], response: dict[str, Any], latency_ms: int, error: Exception | None = None,
-) -> None:
-    if not run_id or not step_id:
-        return
-    usage = getattr(llm, "last_usage", None)
-    usage = usage if isinstance(usage, dict) else {}
-    db.insert_model_call(
-        run_id, step_id, 
-        provider=str(getattr(llm, "provider", None) or "sjtu"),
-        model=model_calls.SCHOOL_CHAT,
-        request=request,
-        response={"json": response} if response else {},
-        prompt_tokens=int(usage.get("prompt_tokens") or 0),
-        completion_tokens=int(usage.get("completion_tokens") or 0),
-        latency_ms=latency_ms,
-        status="failed" if error is not None else "succeeded",
-        error={"message": str(error)} if error is not None else None,
-    )
-
 def _close_fold(
     db: Database, run_id: str | None, step_id: str | None, *,
     cursor: int, fold_through: int, summary: str, latency_ms: int, error: Exception | None = None,
 ) -> None:
     if not run_id or not step_id:
         return
-    status = "failed" if error is not None else "succeeded"
+    tool_status = ToolCallStatus.FAILED if error is not None else ToolCallStatus.SUCCEEDED
+    step_status = StepStatus.FAILED if error is not None else StepStatus.SUCCEEDED
     result = {"folded_through": fold_through, "summary": summary}
+    failure = None if error is None else tool_error(ToolErrorCode.UPSTREAM, str(error))
     db.insert_tool_call(
         run_id, step_id,
         tool_name="memory.fold",
         args={"folded_through": cursor},
         result={} if error is not None else result,
-        status=status,
+        status=tool_status,
         idempotency_key=f"memory.fold:{run_id}:{cursor}",
         latency_ms=latency_ms,
-        error={"message": str(error)} if error is not None else None,
+        error=failure,
     )
     db.finish_step(
-        step_id, status,
+        step_id, step_status,
         None if error is not None else result,
-        {"message": str(error)} if error is not None else None,
+        failure,
     )
 
 def fold_older(
@@ -291,12 +272,6 @@ def fold_older(
         f"=== 迄今的摘要 ===\n{summary or '（无）'}\n\n"
         f"=== 更早的轮次 ===\n{pending}"
     )}]
-    request = {
-        "model": model_calls.SCHOOL_CHAT,
-        "system": FOLD,
-        "messages": messages,
-        "schema": fold_schema(),
-    }
     raw: dict[str, Any] = {}
     caught: Exception | None = None
     started = time.perf_counter()
@@ -308,19 +283,19 @@ def fold_older(
             schema=fold_schema(),
             temperature=0,
             client=llm,
+            db=db,
+            run_id=run_id,
+            step_id=step_id,
+            purpose="memory.fold",
         )
         if isinstance(parsed, dict):
             raw = parsed
         else:
             caught = ValueError("model did not return a JSON object")
     except Exception as e:
-        caught = e 
+        caught = e
         log.exception("could not fold older turns into the summary")
     latency_ms = int((time.perf_counter() - started) * 1000)
-    _record_fold(
-        db, run_id, step_id, llm, request=request, response=raw, 
-        latency_ms=latency_ms, error=caught
-    )
     if caught is not None:
         _close_fold(
             db, run_id, step_id, cursor=folded, fold_through=folded, summary=summary,

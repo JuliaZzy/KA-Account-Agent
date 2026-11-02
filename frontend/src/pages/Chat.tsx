@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 
-import { api, cancelRun, getRunTrace, postJson, resumeRun, streamMessage, waitForRun, type RunTrace } from "../api";
+import { api, cancelRun, followRun, getRunEvents, postJson, resumeRun, streamMessage, type RunEvent } from "../api";
 import { CHAT_DOC_EXTS, CHAT_IMAGE_EXTS, clipAttachedFiles, fileExt } from "../chat-files";
 import { flightOf, isChatBusy, isForgotten, onForgetChat, patchFlight, setActiveChat, useFlight } from "../chat-live";
 import { NeedPartnership, useDesk } from "../desk";
@@ -12,7 +12,7 @@ import {
   greeting,
   lineFlag,
   money,
-  stepsFromTrace,
+  activitiesFromEvents,
   trimNum,
   reportCharts,
   resultLink,
@@ -106,8 +106,7 @@ const snaps = new Map<string, Snap>();
 onForgetChat((id) => snaps.delete(id));
 const SKIP = new Set(["(message)", "(confirm)"]);
 
-function waitingToolName(trace: RunTrace): string | null {
-  const events = trace.events ?? [];
+function waitingToolName(events: RunEvent[]): string | null {
   for (let i = events.length - 1; i >= 0; i -= 1) {
     if (events[i].event_type !== "run.waiting_for_user") continue;
     const name = events[i].payload_json?.tool_name;
@@ -217,32 +216,8 @@ function ChatDesk() {
   const [traceSteps, setTraceSteps] = useState<Activity[]>([]);
 
 useEffect(() => {
-  const runId = flight.runId;
-  if (!runId || !userId) {
-    setTraceSteps([]);
-    return;
-  }
-  let stopped = false;
-  const orgId = partnership.id;
-
-  async function pull(): Promise<string> {
-    const trace = await getRunTrace(runId as string, orgId, userId);
-    if (!stopped) setTraceSteps(stepsFromTrace(trace.steps));
-    return trace.run.status;
-  }
-
-  void pull().catch(() => undefined);
-  if (!flight.busy) return () => { stopped = true; };
-  const timer = window.setInterval(() => {
-    void pull().then((status) => {
-      if (status === "succeeded" || status === "failed" || status === "cancelled") window.clearInterval(timer);
-    }).catch(() => undefined);
-  }, 800);
-  return () => {
-    stopped = true;
-    window.clearInterval(timer);
-  };
-}, [flight.runId, flight.busy, userId, partnership.id]);
+  setTraceSteps([]);
+}, [flight.runId]);
   sidRef.current = sid;
   const pendingKinds = flight.tasks;
   const liveKind = pendingKinds.length > 1
@@ -315,8 +290,8 @@ useEffect(() => {
     return Promise.all(turns.map(async (turn) => {
       if (turn.role !== "assistant" || !turn.runId) return turn;
       try {
-        const trace = await getRunTrace(turn.runId, orgId, userId);
-        const steps = stepsFromTrace(trace.steps);
+        const events = await getRunEvents(turn.runId, orgId, userId);
+        const steps = activitiesFromEvents(events);
         return steps.length ? { ...turn, activity: steps } : turn;
       } catch {
         return turn;
@@ -462,12 +437,12 @@ useEffect(() => {
       }, stop.signal);
       const runId = flightOf(chatId).runId;
       if (!runId || !userId) throw new Error("run was not created");
-      const ended = await waitForRun(runId, partnership.id, userId, stop.signal, (trace) => {
-        steps = stepsFromTrace(trace.steps);
+      const ended = await followRun(runId, partnership.id, userId, stop.signal, (events, run) => {
+        steps = activitiesFromEvents(events, run.status);
         setTraceSteps(steps);
-        const partial = trace.run.output_json?.text;
+        const partial = run.output_json?.text;
         if (typeof partial === "string" && partial) patchFlight(chatId, { live: partial });
-        parkedTool = waitingToolName(trace) ?? parkedTool;
+        parkedTool = waitingToolName(events) ?? parkedTool;
       });
       if (ended.status === "cancelled") {
         committed = true;
@@ -516,12 +491,12 @@ useEffect(() => {
         message: decision === "skip" ? "跳过" : "确认",
         decision,
       });
-      const ended = await waitForRun(runId, partnership.id, userId, stop.signal, (trace) => {
-        steps = stepsFromTrace(trace.steps);
+      const ended = await followRun(runId, partnership.id, userId, stop.signal, (events, run) => {
+        steps = activitiesFromEvents(events, run.status);
         setTraceSteps(steps);
-        const partial = trace.run.output_json?.text;
+        const partial = run.output_json?.text;
         if (typeof partial === "string" && partial) patchFlight(chatId, { live: partial });
-        parkedTool = waitingToolName(trace) ?? parkedTool;
+        parkedTool = waitingToolName(events) ?? parkedTool;
       });
       if (ended.status === "cancelled") {
         committed = true;

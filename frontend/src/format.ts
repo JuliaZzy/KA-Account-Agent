@@ -13,6 +13,27 @@ function textField(raw: unknown, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
+/** One line per public run event that carries `display`. The page does not rename tools. */
+export function activitiesFromEvents(raw: unknown, status?: string): Activity[] {
+  if (!Array.isArray(raw)) return [];
+  const rows = raw.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const row = item as { sequence?: unknown; payload_json?: unknown };
+    const sequence = Number(row.sequence);
+    const title = textField(row.payload_json, "display");
+    if (!Number.isInteger(sequence) || sequence <= 0 || !title) return [];
+    return [{ id: String(sequence), title, detail: "", state: "done" as const, sequence }];
+  });
+  rows.sort((a, b) => a.sequence - b.sequence);
+  const moving = status === "queued" || status === "running";
+  return rows.map((row, index) => ({
+    id: row.id,
+    title: row.title,
+    detail: row.detail,
+    state: moving && index === rows.length - 1 ? "running" as const : "done" as const,
+  }));
+}
+
 /** Steps from `GET /runs/{id}/trace`. A row without an id or a name is dropped.
 
 The harness names a model step `model`. A desk turn stores its label on the row,

@@ -36,7 +36,18 @@ from .memory import Memory
 from .order import PoEvent, PoRuleEvaluation, PurchaseOrder, PurchaseOrderItem
 from .partnership import Distributor, Partnership
 from .report import NarrativeReport, ReportExtraction, ReportFact, SalesReport
-from .run import AgentRun, AgentStep, AuditLog, Checkpoint, DeadLetterJob, JobQueue, ModelCall, OutboxJob, RunEvent, ToolCall, UsageRecord
+from .run import (
+    AgentRun,
+    AgentStep,
+    AuditLog,
+    Checkpoint,
+    DeadLetterJob,
+    ModelCall,
+    OutboxJob,
+    RunEvent,
+    ToolCall,
+    UsageRecord,
+)
 from .user import User
 
 __all__ = [
@@ -62,12 +73,11 @@ __all__ = [
     "ContractTerritory",
     "DeadLetterJob",
     "Distributor",
-    "OutboxJob",
-    "JobQueue",
     "JSONCol",
     "Memory",
     "ModelCall",
     "NarrativeReport",
+    "OutboxJob",
     "Partnership",
     "PoEvent",
     "PoRuleEvaluation",

@@ -26,3 +26,5 @@ def test_celery_app_uses_those_urls_and_the_ping_task():
     from backend.celery.tasks import execute_run
     assert execute_run.name == "ka_account.execute_run"
     assert "ka_account.execute_run" in celery.tasks
+    assert celery.conf.task_acks_late is True
+    assert celery.conf.task_reject_on_worker_lost is True

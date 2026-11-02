@@ -323,6 +323,6 @@ def test_unconfigured_retrieval_is_told_to_the_user(db, monkeypatch):
     )
     events = list(service.handle_message(db, llm, sid, "What is the shelf life?"))
     assert work_chat(db, llm, events[0]["run_id"]) is True
-    trace = db.run_trace("ps-1", events[0]["run_id"])
+    trace = db.run_trace("dist-1", events[0]["run_id"])
     call = next(item for item in trace["tool_calls"] if item["tool_name"] == "brand.search")
     assert "EMBEDDING_BASE_URL" in str(call.get("result_json") or call.get("error_json"))

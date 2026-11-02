@@ -1,11 +1,12 @@
-"""Claim one `job_queue` row and run it.
+"""Claim one run by id and finish it.
 
-The run row is read before any execution. A terminal run is acknowledged and left alone.
-The lease update and `run.started` commit before `execute` is called. `execute` returns the
-`output_json` to store. The queue row is acknowledged only after that commit.
+Celery delivers `run_id`. The lease and `run.started` commit before `execute`.
+The task returns only after the run is terminal, `waiting_for_user`, or the next
+outbox row is scheduled. That return is the ack.
 
-`PermanentRunError` fails the run. Any other exception is retried until `max_attempts`, then
-moved to `dead_letter_jobs`.
+`PermanentRunError` fails the run. Any other exception is retried until the
+execution budget, then moved to `dead_letter_jobs`. An infrastructure error
+puts the run back without spending that budget.
 """
 
 from __future__ import annotations
@@ -23,67 +24,77 @@ from ..db.database import ChatTurnBusy
 from ..repositories.run_repository import (
     RUN_TERMINAL_STATUSES,
     RunStatus,
-    ack_job,
     cancel_run,
     claim_chat_turn,
-    claim_queued_job,
-    claim_run,
     complete_run,
     fail_run,
     find_agent_run_by_id,
-    requeue_job,
-    schedule_retry
+    schedule_retry,
 )
 from ..repositories.run_repository import (
-    sweep_expired_leases as _sweep_expired_leases
+    sweep_expired_leases as _sweep_expired_leases,
 )
+from .entry_guard import acquire_run, queue_enabled, release_run
 
-LEASE_FOR = timedelta(minutes=5) # How long to keep the lease on the row.
+LEASE_FOR = timedelta(minutes=5)
 RETRY_AFTER = timedelta(minutes=1), timedelta(minutes=5), timedelta(minutes=15)
+INFRASTRUCTURE_AFTER = (timedelta(seconds=5),)
 
 log = logging.getLogger(__name__)
+
 
 class PermanentRunError(Exception):
     """The input or the permission will not succeed on another try."""
 
+
 class InfrastructureError(Exception):
-    """The queue message can be tried by another worker. This does not spend a business attempt."""
+    """The worker can try this run again. This does not spend a business attempt."""
+
 
 class LeaseLost(Exception):
-    """This worker no longer holds the lease. Acknowledge the job and leave the run."""
+    """This worker no longer holds the lease. Leave the run for the sweeper."""
+
 
 class SessionBusy(Exception):
-    """Another run for this chat is still running. Leave this job queued."""
+    """Another run for this chat is still running. Leave this run queued."""
+
 
 def _finish_claimed(
     db: Database,
     run: dict[str, Any],
-    job_id: str,
     execute: Callable[[dict[str, Any]], dict[str, Any]],
     retry_after: tuple[timedelta, ...],
 ) -> bool:
     run_id = str(run["id"])
+    if _over_duration(run):
+        fail_run(db, run_id, {
+            "kind": "permanent",
+            "code": "COST_BUDGET_EXCEEDED",
+            "message": "run duration exceeded",
+        })
+        return True
     try:
         output = execute(run)
-    except (InfrastructureError, OperationalError) as e:
-        requeue_job(db, job_id, run_id, str(e))
+    except (InfrastructureError, OperationalError) as exc:
+        schedule_retry(
+            db, run_id, {"kind": "infrastructure", "message": str(exc)},
+            INFRASTRUCTURE_AFTER, spend_attempt=False,
+        )
         return True
-    except PermanentRunError as e:
-        return _settle(db, job_id, run_id, e, permanent=True, retry_after=retry_after)
+    except PermanentRunError as exc:
+        return _settle(db, run_id, exc, permanent=True, retry_after=retry_after)
     except LeaseLost:
-        ack_job(db, job_id)
         return True
-    except Exception as e:
-        return _settle(db, job_id, run_id, e, permanent=False, retry_after=retry_after)
+    except Exception as exc:
+        return _settle(db, run_id, exc, permanent=False, retry_after=retry_after)
     row = find_agent_run_by_id(db, run_id)
     if row is None or row["status"] in RUN_TERMINAL_STATUSES or row["status"] == RunStatus.WAITING_FOR_USER:
-        ack_job(db, job_id)
         return True
     finished = complete_run(db, run_id, output)
     if finished is None:
         cancel_run(db, run_id)
-    ack_job(db, job_id)
     return True
+
 
 def work_once(
     db: Database,
@@ -92,94 +103,78 @@ def work_once(
     retry_after: tuple[timedelta, ...] = RETRY_AFTER,
     run_id: str | None = None,
 ) -> bool:
-    """Handle one queue row. False when the queue has nothing queued."""
-    if run_id is not None:
-        try:
-            claimed = claim_chat_turn(db, run_id, worker_id, _lease_deadline())
-        except ChatTurnBusy as e:
-            raise SessionBusy(e.run_id) from e
-        if claimed is not None:
-            run, job_id = claimed 
-            return _finish_claimed(db, run, job_id, execute, retry_after)
+    """Run one claimed id. False when no `run_id` was given.
 
-    job = claim_queued_job(db, worker_id, run_id)
-    if job is None:
+    A terminal run is skipped. The queue switch leaves a queued run where it is.
+    The running gates are taken for this claim and given back when the call returns.
+    """
+    if not run_id:
+        return False
+    existing = find_agent_run_by_id(db, run_id)
+    if existing is None:
+        return False
+    if existing["status"] in RUN_TERMINAL_STATUSES:
+        return True
+    if not queue_enabled():
+        return False
+    org_id = str(existing.get("org_id") or "")
+    user_id = str(existing.get("user_id") or "")
+    if not acquire_run(org_id, user_id):
         return False
     try:
-        run_id = _run_id(job)
-    except ValueError as e:
-        return _settle(db, job["id"], "", e, permanent=True, retry_after=retry_after)
-    try:
-        run = find_agent_run_by_id(db, run_id)
-        if run is None or run["status"] in RUN_TERMINAL_STATUSES:
-            ack_job(db, job["id"])
-            return True
-        claimed = claim_run(db, run_id, worker_id, _lease_deadline())
-        if claimed is None:
-            ack_job(db, job["id"])
-            return True
-        output = execute(claimed)
-    except (InfrastructureError, OperationalError) as e:
-        requeue_job(db, job["id"], run_id, str(e))
-        return True
-    except PermanentRunError as e:
-        return _settle(db, job["id"], run_id, e, permanent=True, retry_after=retry_after)
-    except LeaseLost:
-        ack_job(db, job["id"])
-        return True
-    except Exception as e:
-        return _settle(db, job["id"], run_id, e, permanent=False, retry_after=retry_after)
-    row = find_agent_run_by_id(db, run_id)
-    if row is None or row["status"] in RUN_TERMINAL_STATUSES or row["status"] == RunStatus.WAITING_FOR_USER:
-        ack_job(db, job["id"])
-        return True
-    finished = complete_run(db, run_id, output)
-    if finished is None:
-        cancel_run(db, run_id)
-    ack_job(db, job["id"])
-    return True
+        try:
+            run = claim_chat_turn(db, run_id, worker_id, _lease_deadline())
+        except ChatTurnBusy as exc:
+            raise SessionBusy(exc.run_id) from exc
+        if run is None:
+            return find_agent_run_by_id(db, run_id) is not None
+        return _finish_claimed(db, run, execute, retry_after)
+    finally:
+        release_run(org_id, user_id)
+
 
 def serve_worker(
-    db: Database, 
-    worker_id: str, 
-    execute: Callable[[dict[str, Any]], dict[str, Any]]
+    db: Database,
+    worker_id: str,
+    execute: Callable[[dict[str, Any]], dict[str, Any]],
 ) -> None:
-    """Keep taking queue rows. Do not call this from `create_app` or from tests."""
+    """Unused by compose. Delivery is `execute_run.delay`, which passes `run_id`."""
     while True:
         if not work_once(db, worker_id, execute):
             time.sleep(0.5)
 
+
 def _settle(
     db: Database,
-    job_id: str,
     run_id: str,
     exc: Exception,
+    *,
     permanent: bool,
     retry_after: tuple[timedelta, ...],
 ) -> bool:
-    error = {
-        "kind": "permanent" if permanent else "transient",
-        "message": str(exc),
-    }
+    error = {"kind": "permanent" if permanent else "transient", "message": str(exc)}
     if not run_id:
-        ack_job(db, job_id)
         return True
-    outcome = fail_run(db, job_id, run_id, error) if permanent else schedule_retry(db, job_id, run_id, error, retry_after)
-    if outcome is None:
-        ack_job(db, job_id)
-    elif outcome == "dead_letter":
-        log.error('dead letter run_id=%s job_id=%s error=%s', run_id, job_id, error.get("message"))
+    outcome = (
+        fail_run(db, run_id, error) if permanent
+        else schedule_retry(db, run_id, error, retry_after)
+    )
+    if outcome == "dead_letter":
+        log.error("dead letter run_id=%s error=%s", run_id, error.get("message"))
     return True
 
-def _run_id(job: dict[str, Any]) -> str:
-    payload = job["payload_json"]
-    run_id = payload.get("run_id") if isinstance(payload, dict) else None 
-    if not isinstance(run_id, str) or not run_id:
-        raise ValueError(f"execute_run job {job['id']} has no run_id")
-    return run_id
 
 def _lease_deadline() -> datetime:
     return utcnow() + LEASE_FOR
+
+
+def _over_duration(run: dict[str, Any]) -> bool:
+    cap = run.get("max_duration_seconds")
+    started = run.get("started_at")
+    if cap is None or started is None or not isinstance(started, datetime):
+        return False
+    return utcnow() >= started + timedelta(seconds=int(cap))
+
 
 def sweep_expired_leases(db: Database, limit: int = 100) -> int:
     """Release runs whose lease has expired. Do not call this from `create_app`."""

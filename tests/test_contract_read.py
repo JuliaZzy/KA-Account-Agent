@@ -253,7 +253,7 @@ def test_contract_read_hands_the_run_to_ocr(db, monkeypatch):
     monkeypatch.setattr("backend.contract.turn.SJTUClient", lambda settings: object())
     from backend.services.session_tools import _contract_read
 
-    run, _created = db.create_agent_run("ps-1", "u-a", "chat", "ocr-handoff", {"message": "file"})
+    run, _created = db.create_agent_run("dist-1", "u-a", "chat", "ocr-handoff", {"message": "file"})
     filed = _contract_read(db, {"id": "s", "partnership_id": "ps-1"}, [("agreement.pdf", b"%PDF")])(
         {}, context={"run_id": run["id"]},
     )

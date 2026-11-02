@@ -160,6 +160,19 @@ services:
       retries: 8
       start_period: 25s
 
+  sweeper:
+    <<: *python
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command:
+      - python
+      - -m
+      - backend.services.sweeper
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend

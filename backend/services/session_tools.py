@@ -22,7 +22,11 @@ from ..report.turn import ReportDraft, iter_draft
 from ..text2sql.text2sql import answer_question
 from ..tools import exchange_rate, lang_translate, send_email, web_search
 from .run_loop import Tool, ToolRegistry
-from .run_names import StepType, step_name
+from .run_names import TOOL_STARTED_DISPLAY, StepType, ToolErrorCode, step_name
+
+# Read tools may be retried by the executor. Side effects are not.
+_RETRY_FAST = frozenset({ToolErrorCode.TIMEOUT, ToolErrorCode.RATE_LIMITED, ToolErrorCode.UPSTREAM})
+_RETRY_QUERY = frozenset({ToolErrorCode.TIMEOUT, ToolErrorCode.UPSTREAM})
 
 _QUESTION = {
     "type": "object",
@@ -54,18 +58,27 @@ def tools(
             description=web_search.SCHEMA["function"]["description"],
             fn=web_search.run,
             parameters=web_search.SCHEMA["function"]["parameters"],
+            timeout_seconds=30,
+            retryable_errors=_RETRY_FAST,
+            display=TOOL_STARTED_DISPLAY["web_search"],
         ),
         Tool(
             name="translate",
             description=lang_translate.SCHEMA["function"]["description"],
             fn=lang_translate.run,
             parameters=lang_translate.SCHEMA["function"]["parameters"],
+            timeout_seconds=30,
+            retryable_errors=_RETRY_FAST,
+            display=TOOL_STARTED_DISPLAY["translate"],
         ),
         Tool(
             name="exchange_rate",
             description=exchange_rate.SCHEMA["function"]["description"],
             fn=exchange_rate.run,
             parameters=exchange_rate.SCHEMA["function"]["parameters"],
+            timeout_seconds=30,
+            retryable_errors=_RETRY_FAST,
+            display=TOOL_STARTED_DISPLAY["exchange_rate"],
         ),
         Tool(
             name="send_email",
@@ -73,36 +86,52 @@ def tools(
             fn=send_email.run,
             parameters=send_email.SCHEMA["function"]["parameters"],
             requires_approval=True,
+            side_effect=True,
+            idempotency_required=True,
+            timeout_seconds=30,
+            display=TOOL_STARTED_DISPLAY["send_email"],
         ),
         Tool(
             name="po.draft",
             description="Draft or update a purchase order. Prices, discount rules in the contract and MOQ come from code.",
             fn=_po_draft(db, llm, session, text, images, bundle),
             parameters=_QUESTION,
+            timeout_seconds=300,
+            display=TOOL_STARTED_DISPLAY["po.draft"],
         ),
         Tool(
             name="contract.read",
             description="Read an uploaded agreement into a draft table. Nothing is written until confirm.",
             fn=_contract_read(db, session, documents),
             parameters={"type": "object", "properties": {}},
+            timeout_seconds=300,
+            display=TOOL_STARTED_DISPLAY["contract.read"],
         ),
         Tool(
             name="report.draft",
             description="Draft a performance report. Numbers come from queries, not the model.",
             fn=_report_draft(db, llm, session, text, bundle),
             parameters=_QUESTION,
+            timeout_seconds=300,
+            display=TOOL_STARTED_DISPLAY["report.draft"],
         ),
         Tool(
             name="data.query",
             description="Answer a question with rows from this partnership's tables through creating a SQL query.",
             fn=_data_query(db, session, text, bundle),
             parameters=_QUESTION,
+            timeout_seconds=120,
+            retryable_errors=_RETRY_QUERY,
+            display=TOOL_STARTED_DISPLAY["data.query"],
         ),
         Tool(
             name="brand.search",
             description="Retrieve brand-knowledge passages for this question.",
             fn=_brand_search(db, llm, session, text, bundle),
             parameters=_QUESTION,
+            timeout_seconds=120,
+            retryable_errors=_RETRY_QUERY,
+            display=TOOL_STARTED_DISPLAY["brand.search"],
         ),
     ]
     taken = {tool.name for tool in listed}
@@ -236,5 +265,8 @@ def _mcp_tools(taken: set[str]) -> list[Tool]:
             fn=make_mcp_tool_fn(hub, name),
             parameters=parameters if isinstance(parameters, dict) else {"type": "object", "properties": {}},
             requires_approval=True,
+            side_effect=True,
+            idempotency_required=True,
+            timeout_seconds=60,
         ))
     return registered

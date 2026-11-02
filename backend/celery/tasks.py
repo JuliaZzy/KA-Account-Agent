@@ -21,17 +21,25 @@ def ping() -> str:
     return "pong"
 
 
-@celery.task(bind=True, name="ka_account.execute_run", max_retries=None)
-def execute_run(self, run_id: str) -> str:
-    """Claim this chat run and execute it. Tests call `work_chat` instead.
-    
-    A second turn for a chat that is already running stays queued. The retry 
-    releases this worker slot until the first turn has finished.
+@celery.task(
+    bind=True, name="ka_account.execute_run", max_retries=None,
+    acks_late=True, reject_on_worker_lost=True,
+)
+def execute_run(self, run_id: str, trace_id: str | None = None) -> str:
+    """Claim this run and execute it. Returning acks the message.
+
+    Tests call `work_chat` instead. A second turn for a chat that is already
+    running stays queued and is tried again in a few seconds, without spending
+    a business attempt. `trace_id` is the id written on the run at create time.
     """
+    del trace_id
     from ..db import Database
     from ..services.chat_run import client_for_chat, execute_chat
+    from ..services.entry_guard import queue_enabled
     from ..services.run_worker import SessionBusy, work_once
 
+    if not queue_enabled():
+        raise self.retry(countdown=30)
     db = Database()
     row = db.find_agent_run_by_id(run_id)
     payload = row.get("input_json") if isinstance(row, dict) and isinstance(row.get("input_json"), dict) else {}

@@ -48,6 +48,7 @@ def resolve_references(llm: Any, references: list[str], products: list[dict[str,
         return {}
     raw = model_calls.school_json(
         model_calls.SCHOOL_CHAT,
+        client=llm,
         system=build_resolver_prompt(references, products),
         messages=[{"role": "user", "content": "请解析上面的说法。"}],
         temperature=0,

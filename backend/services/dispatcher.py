@@ -1,29 +1,60 @@
-"""Move due outbox rows onto `job_queue` table.
+"""Publish due outbox rows to Celery.
 
-Publish hasspens in its own transaction. Marking the outbox row and appending `run.enqueued`
-happen in the next one, so a crash between them leaves the outbox pending. 
+The publish and the `dispatched` mark stay in separate transactions, so a crash
+between them leaves the outbox pending and the scan sends the message again.
 """
 
 from __future__ import annotations
 
-import time 
+import os
+import time
 
 from ..db import Database
-from ..repositories.run_repository import enqueue_job, find_pending_outbox_jobs, mark_outbox_dispatched, mark_outbox_retry
+from ..repositories.run_repository import find_pending_outbox_jobs, mark_outbox_dispatched, mark_outbox_retry
 
 
 def dispatch_pending(db: Database, limit: int = 100) -> int:
-    """Publish one batch. Returens how many outbox rows were marked dispatched."""
+    """Publish one batch. Returns how many outbox rows were marked dispatched.
+
+    Tests do not call Redis. They mark the row dispatched and pass `run_id` to `work_once`.
+    """
     delivered = 0
     for job in find_pending_outbox_jobs(db, limit):
+        payload = job.get("payload_json") or {}
         try:
-            enqueue_job(db, job["job_type"], job["payload_json"])
-        except Exception as e:
-            mark_outbox_retry(db, job["id"], str(e))
+            _publish(payload if isinstance(payload, dict) else {})
+        except Exception as exc:
+            mark_outbox_retry(db, job["id"], str(exc))
             continue
         if mark_outbox_dispatched(db, job["id"]) is not None:
             delivered += 1
     return delivered
+
+
+def _publish(payload: dict) -> None:
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return
+    run_id = payload.get("run_id")
+    if not isinstance(run_id, str) or not run_id:
+        raise ValueError("execute_run outbox has no run_id")
+    trace_id = payload.get("trace_id")
+    from ..celery.tasks import execute_run
+    execute_run.delay(run_id, trace_id if isinstance(trace_id, str) else None)
+
+
+def republish_unclaimed(db: Database, older_than_seconds: int = 30) -> int:
+    """Send `execute_run` again when the outbox is dispatched and the run is still queued."""
+    from datetime import timedelta
+
+    from ..db import utcnow
+
+    sent = 0
+    cutoff = utcnow() - timedelta(seconds=older_than_seconds)
+    for payload in db.unclaimed_dispatches(cutoff):
+        _publish(payload)
+        sent += 1
+    return sent
+
 
 def serve_dispatcher(db: Database, limit: int = 100) -> None:
     """Keep scanning. Do not call this from `create_app` or from tests."""

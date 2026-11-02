@@ -1,8 +1,9 @@
-"""Steps, checkpoints, model calls, and tool calls for one harness iteration. 
+"""Steps, checkpoints, model calls, and tool calls for one harness iteration.
 
-Each method is its own transaction. The run row is locked while the next 
-step or checkpoint index is chosen. Event names match `StepEvent` in
-`COMPLETED_TOOL_CALLS_KEY`, and `LAST_KEY` there.
+Most methods are their own transaction. Closing a tool step is the exception:
+the tool row, the step, the checkpoint, the events, and a side-effect audit
+row commit together. The run row is locked while the next step or checkpoint
+index is chosen. Event names match `StepEvent`.
 """
 
 from __future__ import annotations
@@ -10,14 +11,17 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
+from ...services.run_names import RunStatus, StepEvent, StepStatus, StepType, ToolCallStatus
 from .. import orm
 from .support import _row_dict, utcnow
 
-_STEP_TYPES = frozenset({"model", "tool"})
-_DONE = frozenset({"succeeded", "failed"})
+_STEP_TYPES = frozenset({StepType.MODEL, StepType.TOOL})
+_STEP_DONE = frozenset({StepStatus.SUCCEEDED, StepStatus.FAILED})
+_TOOL_DONE = frozenset({ToolCallStatus.SUCCEEDED, ToolCallStatus.FAILED})
+_TOOL_SETTLE = _TOOL_DONE | {ToolCallStatus.RESPONSE_LOST}
 _CHECKPOINT_KEYS = frozenset({"context", "completed_tool_calls", "last"})
 
 class RecordMixin:
@@ -33,25 +37,9 @@ class RecordMixin:
 
     def append_checkpoint(self, run_id: str, state: dict[str, Any]) -> int:
         self._require_checkpoint_state(state)
-        now = utcnow()
         with self.tx() as s:
-            run = self._lock_run(s, run_id)
-            if run is None:
-                return None
-            current = s.scalar(
-                select(func.max(orm.Checkpoint.checkpoint_index))
-                .where(orm.Checkpoint.run_id == run_id)
-            )
-            row = orm.Checkpoint(
-                id=f"ckpt_{uuid.uuid4().hex}",
-                run_id=run_id,
-                checkpoint_index = int(current or 0) + 1,
-                state_json=state,
-                created_at=now,
-            )
-            s.add(row)
-            s.flush()
-            return _row_dict(row)
+            row = self._write_checkpoint(s, run_id, state, utcnow())
+            return _row_dict(row) if row is not None else None
 
     def insert_step(
         self, 
@@ -72,7 +60,7 @@ class RecordMixin:
         now = utcnow()
         with self.tx() as s:
             run = self._lock_run(s, run_id)
-            if run is None or run.status != "running":
+            if run is None or run.status != RunStatus.RUNNING:
                 return None
             current = s.scalar(
                 select(func.max(orm.AgentStep.step_index))
@@ -81,7 +69,7 @@ class RecordMixin:
             row = orm.AgentStep(
                 id=f"step_{uuid.uuid4().hex}",
                 run_id=run_id,
-                status="running",
+                status=StepStatus.RUNNING,
                 step_index=int(current or 0) + 1,
                 step_type=step_type,
                 name=name,
@@ -90,7 +78,7 @@ class RecordMixin:
             )
             s.add(row)
             s.flush()
-            self._append_event(s, run_id, "step_started", {
+            self._append_event(s, run_id, StepEvent.STEP_STARTED, {
                 "step_id": row.id, "step_index": row.step_index, "step_type": row.step_type, "name": name
             }, now)
             s.flush()
@@ -102,10 +90,20 @@ class RecordMixin:
         status: str,
         output: dict[str, Any] | None = None,
         error: dict[str, Any] | None = None,
+        checkpoint: dict[str, Any] | None = None,
+        extra_event: str | None = None,
+        extra_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        """Close a running step. A second call returns the row and does not append again."""
-        if status not in _DONE:
+        """Close a running step. A second call returns the row and does not append again.
+
+        `checkpoint` and `extra_event` are written in this same transaction.
+        A call that does not call a tool (unknown tool, or over the tool budget)
+        uses them so the step, the checkpoint, and `tool.failed` commit together.
+        """
+        if status not in _STEP_DONE:
             raise ValueError(f"Invalid step status: {status}")
+        if checkpoint is not None:
+            self._require_checkpoint_state(checkpoint)
         now = utcnow()
         with self.tx() as s:
             step = s.scalars(
@@ -115,16 +113,12 @@ class RecordMixin:
             ).first()
             if step is None:
                 return None
-            if step.status != "running":
-                return _row_dict(step)
-            step.status = status
-            step.output_json = output
-            step.error_json = error
-            step.ended_at = now
-            event = "step_failed" if status == "failed" else "step_completed"
-            self._append_event(s, step.run_id, event, {
-                "step_id": step_id, "step_index": step.step_index, "status": status
-            }, now)
+            if step.status == StepStatus.RUNNING:
+                self._close_step(s, step, status, output, error, now)
+            if extra_event:
+                self._append_event(s, step.run_id, extra_event, extra_payload or {}, now)
+            if checkpoint is not None and self._write_checkpoint(s, step.run_id, checkpoint, now) is None:
+                raise RuntimeError("run missing while closing a step")
             s.flush()
             return _row_dict(step)
 
@@ -142,13 +136,15 @@ class RecordMixin:
         latency_ms: int,
         status: str,
         error: dict[str, Any] | None = None,
+        usage_source: str | None = None,
+        emit_event: bool = True,
     ) -> dict[str, Any]:
         """Record one finished model call. None when the step is not on this run. 
         
         The row is written after the call returns, so `created_at` is the write
         time and `latency_ms` is the measured duration.
         """
-        if status not in _DONE:
+        if status not in _STEP_DONE:
             raise ValueError("model call status must be succeeded or failed")
         now = utcnow()
         prompt_tokens = max(0, int(prompt_tokens))
@@ -170,6 +166,7 @@ class RecordMixin:
                 response_json = response or {},
                 prompt_tokens = prompt_tokens,
                 completion_tokens = completion_tokens,
+                usage_source = usage_source,
                 latency_ms = latency_ms,
                 status = status,
                 error_json = error or {},
@@ -186,16 +183,44 @@ class RecordMixin:
                 completion_tokens=completion_tokens,
                 total_tokens=prompt_tokens + completion_tokens,
                 estimated_cost_cents=0,
+                usage_source=usage_source,
                 created_at=now,
             ))
             s.add(row)
             s.flush()
-            event = "model_failed" if status == "failed" else "model_completed"
-            self._append_event(s, run_id, event, {
-                "step_id": step_id, "model_call_id": row.id, "status": status
-            }, now)
+            if emit_event:
+                event = StepEvent.MODEL_FAILED if status == StepStatus.FAILED else StepEvent.MODEL_COMPLETED
+                self._append_event(s, run_id, event, {
+                    "step_id": step_id, "model_call_id": row.id, "status": status
+                }, now)
             s.flush()
             return _row_dict(row)
+
+    def model_budget(self, run_id: str) -> dict[str, Any] | None:
+        """Caps and spend already stored for this run. None when the run is missing.
+
+        A null cap is not a limit. A refused call is not in these totals.
+        """
+        with self.tx() as s:
+            run = s.get(orm.AgentRun, run_id)
+            if run is None:
+                return None
+            calls = s.scalar(
+                select(func.count()).select_from(orm.ModelCall).where(orm.ModelCall.run_id == run_id)
+            )
+            tokens = s.scalar(
+                select(func.coalesce(func.sum(orm.UsageRecord.total_tokens), 0)).where(
+                    orm.UsageRecord.run_id == run_id
+                )
+            )
+            return {
+                "org_id": run.org_id,
+                "trace_id": run.trace_id,
+                "max_model_calls": run.max_model_calls,
+                "max_tokens": run.max_tokens,
+                "model_calls": int(calls or 0),
+                "total_tokens": int(tokens or 0),
+            }
 
     def insert_tool_call(
         self,
@@ -209,15 +234,24 @@ class RecordMixin:
         idempotency_key: str, 
         latency_ms: int,
         error: dict[str, Any] | None = None,
+        checkpoint: dict[str, Any] | None = None,
+        step_status: str | None = None,
+        step_output: dict[str, Any] | None = None,
+        step_error: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        """Record one finished tool call. 
+        """Record one finished tool call.
 
-        A replay does not append another event. None when the step is not on this run.
+        A replay does not append another tool event. None when the step is not on this run.
+        When `checkpoint` or `step_status` is set, that close happens in this same transaction.
         """
-        if status not in _DONE:
+        if status not in _TOOL_DONE:
             raise ValueError("tool call status must be succeeded or failed")
         if not isinstance(idempotency_key, str) or not idempotency_key:
             raise ValueError("`idempotency_key` is required")
+        if checkpoint is not None:
+            self._require_checkpoint_state(checkpoint)
+        if step_status is not None and step_status not in _STEP_DONE:
+            raise ValueError(f"Invalid step status: {step_status}")
         now = utcnow()
         try:
             with self.tx() as s:
@@ -232,10 +266,18 @@ class RecordMixin:
                     )
                 ).first()
                 if existing is not None:
+                    self._attach_close(
+                        s, step, now, step_status=step_status, step_output=step_output,
+                        step_error=step_error, checkpoint=checkpoint,
+                    )
+                    s.flush()
                     return _row_dict(existing)
+                run = s.get(orm.AgentRun, run_id)
                 row = orm.ToolCall(
                     id = f"tcall_{uuid.uuid4().hex}",
                     run_id = run_id,
+                    org_id = None if run is None else run.org_id,
+                    user_id = None if run is None else run.user_id,
                     step_id = step_id,
                     tool_name = tool_name,
                     args_json = args,
@@ -245,18 +287,24 @@ class RecordMixin:
                     latency_ms = latency_ms,
                     error_json = error or {},
                     created_at = now,
+                    started_at = now,
                     ended_at = now,
                 )
                 s.add(row)
                 s.flush()
-                event = "tool_failed" if status == "failed" else "tool_completed"
+                event = StepEvent.TOOL_FAILED if status == ToolCallStatus.FAILED else StepEvent.TOOL_COMPLETED
                 self._append_event(s, run_id, event, {
                     "step_id": step_id, "tool_call_id": row.id, "tool_name": tool_name, "status": status
                 }, now)
+                self._attach_close(
+                    s, step, now, step_status=step_status, step_output=step_output,
+                    step_error=step_error, checkpoint=checkpoint,
+                )
                 s.flush()
                 return _row_dict(row)
         except IntegrityError:
             with self.tx() as s:
+                step = self._lock_step(s, run_id, step_id)
                 existing = s.scalars(
                     select(orm.ToolCall)
                     .where(
@@ -264,8 +312,13 @@ class RecordMixin:
                         orm.ToolCall.idempotency_key == idempotency_key
                     )
                 ).first()
-                if existing is None:
+                if existing is None or step is None:
                     raise
+                self._attach_close(
+                    s, step, utcnow(), step_status=step_status, step_output=step_output,
+                    step_error=step_error, checkpoint=checkpoint,
+                )
+                s.flush()
                 return _row_dict(existing)
 
     def claim_tool_call(
@@ -297,17 +350,21 @@ class RecordMixin:
                 ).first()
                 if existing is not None:
                     return _row_dict(existing), False
+                run = s.get(orm.AgentRun, run_id)
                 row = orm.ToolCall(
                     id = f"tcall_{uuid.uuid4().hex}",
                     run_id = run_id,
+                    org_id = None if run is None else run.org_id,
+                    user_id = None if run is None else run.user_id,
                     step_id = step_id,
                     tool_name = tool_name,
                     args_json = args,
                     result_json = {},
-                    status = "running", 
+                    status = ToolCallStatus.RUNNING, 
                     idempotency_key = idempotency_key,
                     latency_ms = 0,
                     created_at = now,
+                    started_at = now,
                 )
                 s.add(row)
                 s.flush()
@@ -330,10 +387,24 @@ class RecordMixin:
         status: str,
         latency_ms: int,
         error: dict[str, Any] | None = None,
+        checkpoint: dict[str, Any] | None = None,
+        audit: bool = False,
+        step_status: str | None = None,
+        step_output: dict[str, Any] | None = None,
+        step_error: dict[str, Any] | None = None,
+        manual_review: bool = False,
     ) -> dict[str, Any] | None:
-        """Fill a claimed tool call. A second call returns the row and does not append again."""
-        if status not in _DONE:
-            raise ValueError("tool call status must be succeeded or failed")
+        """Fill a claimed tool call. A second call returns the row and does not append again.
+
+        A side-effect result, its checkpoint, the step, the tool event, and the audit
+        row commit in this transaction. The handler itself runs before this is called.
+        """
+        if status not in _TOOL_SETTLE:
+            raise ValueError("tool call status must be succeeded, failed, or response_lost")
+        if checkpoint is not None:
+            self._require_checkpoint_state(checkpoint)
+        if step_status is not None and step_status not in _STEP_DONE:
+            raise ValueError(f"Invalid step status: {step_status}")
         now = utcnow()
         with self.tx() as s:
             row = s.scalars(
@@ -343,19 +414,114 @@ class RecordMixin:
             ).first()
             if row is None:
                 return None
-            if row.status != "running":
-                return _row_dict(row)
-            row.result_json = result or {}
-            row.status = status
-            row.latency_ms = latency_ms
-            row.error_json = error or {}
-            row.ended_at = now
-            event = "tool_failed" if status == "failed" else "tool_completed"
-            self._append_event(s, row.run_id, event, {
-                "step_id": row.step_id, "tool_call_id": row.id, "tool_name": row.tool_name, "status": status
-            }, now)
+            if row.status != ToolCallStatus.RUNNING:
+                if checkpoint is None and step_status is None:
+                    return _row_dict(row)
+            else:
+                row.result_json = result or {}
+                row.status = status
+                row.latency_ms = latency_ms
+                row.error_json = error or {}
+                row.ended_at = now
+                event = StepEvent.TOOL_COMPLETED if status == ToolCallStatus.SUCCEEDED else StepEvent.TOOL_FAILED
+                self._append_event(s, row.run_id, event, {
+                    "step_id": row.step_id, "tool_call_id": row.id, "tool_name": row.tool_name, "status": status
+                }, now)
+                if manual_review:
+                    self._append_event(s, row.run_id, StepEvent.TOOL_MANUAL_REVIEW, {
+                        "step_id": row.step_id, "tool_call_id": row.id, "tool_name": row.tool_name,
+                        "status": status,
+                    }, now)
+                if audit:
+                    self._audit_tool(s, row, status, error, now)
+            step = self._lock_step(s, row.run_id, row.step_id)
+            if step is None:
+                raise RuntimeError("tool call step is missing")
+            self._attach_close(
+                s, step, now, step_status=step_status, step_output=step_output,
+                step_error=step_error, checkpoint=checkpoint,
+            )
             s.flush()
             return _row_dict(row)
+
+    def count_tool_calls(self, run_id: str) -> int:
+        """Rows already stored for this run, including ones that did not succeed."""
+        with self.tx() as s:
+            count = s.scalar(
+                select(func.count()).select_from(orm.ToolCall).where(orm.ToolCall.run_id == run_id)
+            )
+            return int(count or 0)
+
+    def list_tool_calls(self, run_id: str) -> list[dict[str, Any]]:
+        with self.tx() as s:
+            rows = s.scalars(
+                select(orm.ToolCall)
+                .where(orm.ToolCall.run_id == run_id)
+                .order_by(orm.ToolCall.created_at, orm.ToolCall.id)
+            )
+            return [_row_dict(row) for row in rows]
+
+    def list_audit_logs(self, run_id: str) -> list[dict[str, Any]]:
+        with self.tx() as s:
+            rows = s.scalars(
+                select(orm.AuditLog)
+                .where(orm.AuditLog.run_id == run_id)
+                .order_by(orm.AuditLog.created_at, orm.AuditLog.id)
+            )
+            return [_row_dict(row) for row in rows]
+
+    def _close_step(self, s, step, status: str, output, error, now) -> None:
+        step.status = status
+        step.output_json = output
+        step.error_json = error
+        step.ended_at = now
+        event = StepEvent.STEP_FAILED if status == StepStatus.FAILED else StepEvent.STEP_COMPLETED
+        self._append_event(s, step.run_id, event, {
+            "step_id": step.id, "step_index": step.step_index, "status": status,
+        }, now)
+
+    def _attach_close(
+        self, s, step, now, *, step_status, step_output, step_error, checkpoint,
+    ) -> None:
+        if step_status is not None and step.status == StepStatus.RUNNING:
+            self._close_step(s, step, step_status, step_output, step_error, now)
+        if checkpoint is not None and self._write_checkpoint(s, step.run_id, checkpoint, now) is None:
+            raise RuntimeError("run missing while closing a tool step")
+
+    def _write_checkpoint(self, s, run_id: str, state: dict[str, Any], now):
+        run = self._lock_run(s, run_id)
+        if run is None:
+            return None
+        current = s.scalar(
+            select(func.max(orm.Checkpoint.checkpoint_index)).where(orm.Checkpoint.run_id == run_id)
+        )
+        row = orm.Checkpoint(
+            id=f"ckpt_{uuid.uuid4().hex}",
+            run_id=run_id,
+            checkpoint_index=int(current or 0) + 1,
+            state_json=state,
+            created_at=now,
+        )
+        s.add(row)
+        s.flush()
+        return row
+
+    def _audit_tool(self, s, row, status: str, error: dict[str, Any] | None, now) -> None:
+        """One audit row for a side effect. The body and the arguments stay out."""
+        if not row.org_id or not row.user_id:
+            return
+        code = str(error.get("code") or "") if isinstance(error, dict) else ""
+        s.add(orm.AuditLog(
+            id=f"aud_{uuid.uuid4().hex}",
+            user_id=row.user_id,
+            org_id=row.org_id,
+            run_id=row.run_id,
+            action=str(row.tool_name)[:64],
+            target_type="tool_call",
+            target_id=row.id,
+            metadata_json={"status": str(status), "error_code": code},
+            created_at=now,
+        ))
 
     @staticmethod
     def _require_checkpoint_state(state: dict[str, Any]) -> None:

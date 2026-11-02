@@ -37,6 +37,17 @@ class RunResponse(BaseModel):
     lease_expires_at: datetime | None = None
     attempts: int
     parent_run_id: str | None = None
+    trace_id: str | None = None
+    max_model_calls: int | None = None
+    max_tokens: int | None = None
+    max_tool_calls: int | None = None
+    max_duration_seconds: int | None = None
+
+
+class RepairRunRequest(BaseModel):
+    reason: str
+    before: dict[str, Any] = Field(default_factory=dict)
+    after: dict[str, Any] = Field(default_factory=dict)
 
 
 class RunEventResponse(BaseModel):
@@ -86,6 +97,11 @@ class AgentRun(BaseModel):
     lease_expires_at: datetime | None = None
     attempts: int
     parent_run_id: str | None = None
+    trace_id: str | None = None
+    max_model_calls: int | None = None
+    max_tokens: int | None = None
+    max_tool_calls: int | None = None
+    max_duration_seconds: int | None = None
 
 
 class AgentStep(BaseModel):
@@ -130,6 +146,7 @@ class UsageRecord(BaseModel):
     completion_tokens: int
     total_tokens: int
     estimated_cost_cents: int
+    usage_source: str | None = None
     created_at: datetime
 
 
@@ -143,6 +160,7 @@ class ModelCall(BaseModel):
     response_json: dict[str, Any]
     prompt_tokens: int
     completion_tokens: int
+    usage_source: str | None = None
     latency_ms: int
     status: str
     error_json: dict[str, Any] | None = None
@@ -152,6 +170,8 @@ class ModelCall(BaseModel):
 class ToolCall(BaseModel):
     id: str
     run_id: str
+    org_id: str | None = None
+    user_id: str | None = None
     step_id: str
     tool_name: str
     args_json: dict[str, Any]
@@ -161,6 +181,7 @@ class ToolCall(BaseModel):
     latency_ms: int
     error_json: dict[str, Any] | None = None
     created_at: datetime
+    started_at: datetime | None = None
     ended_at: datetime | None = None
 
 
@@ -199,21 +220,6 @@ class DeadLetterJob(BaseModel):
     created_at: datetime
 
 
-class JobQueue(BaseModel):
-    id: str
-    job_type: str
-    payload_json: dict[str, Any]
-    status: str
-    attempts: int
-    max_attempts: int
-    available_at: datetime
-    lock_by: str | None = None
-    lock_until: datetime | None = None
-    last_error_json: dict[str, Any] | None = None
-    created_at: datetime
-    finished_at: datetime | None = None
-
-
 class TraceResponse(BaseModel):
     run: RunResponse
     steps: list[AgentStep] = Field(default_factory=list)
@@ -221,3 +227,58 @@ class TraceResponse(BaseModel):
     model_calls: list[ModelCall] = Field(default_factory=list)
     tool_calls: list[ToolCall] = Field(default_factory=list)
     checkpoints: list[Checkpoint] = Field(default_factory=list)
+    outbox: list[OutboxJob] = Field(default_factory=list)
+    dead_letters: list[DeadLetterJob] = Field(default_factory=list)
+
+
+class MonitorSwitches(BaseModel):
+    send_email: bool
+    mcp: bool
+    queue: bool
+
+
+class SloRow(BaseModel):
+    name: str
+    target: str
+    value: str
+    ok: bool | None = None
+
+
+class MonitorAlert(BaseModel):
+    signal: str
+    action: str
+    runbook: str | None = None
+
+
+class RunbookResponse(BaseModel):
+    id: str
+    title: str
+    body: str
+
+
+class MonitorMetrics(BaseModel):
+    created: int
+    succeeded: int
+    failed: int
+    duration_p95: float | None = None
+    queue_lag_p95: float | None = None
+    model_latency_p95: float | None = None
+    pending_jobs: int
+    active_runs: int
+    sse_connections: int
+    stuck_runs: int
+    model_errors: int
+    tool_calls: int
+    tool_errors: int
+    duplicates: int
+    cost_cents: int
+    daily_cost_cents: int
+    daily_tokens: int
+
+
+class MonitorResponse(BaseModel):
+    switches: MonitorSwitches
+    slo: list[SloRow]
+    alerts: list[MonitorAlert]
+    runbooks: list[RunbookResponse]
+    metrics: MonitorMetrics

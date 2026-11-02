@@ -34,11 +34,11 @@ def test_full_flow(db):
     ev = events(c.post(f"/api/sessions/{sid}/message", json={"message": "10 cases of fish oil, no discount"}))
     assert [event["type"] for event in ev if event["type"] == "session"] == []
     run_id = _of(ev, "run")["run_id"]
-    assert db.find_agent_run("ps-1", run_id)["status"] == "queued"
+    assert db.find_agent_run("dist-1", run_id)["status"] == "queued"
     assert work_chat(db, llm, run_id) is True
     assert db.session(sid)["title"] == "10 cases fish oil"
     assert db.session(sid)["tags"] == ["po"]
-    trace = db.run_trace("ps-1", run_id)
+    trace = db.run_trace("dist-1", run_id)
     named = next(
         row for row in trace["model_calls"]
         if (row.get("request_json") or {}).get("schema", {}).get("name") == "session_open"
@@ -46,7 +46,7 @@ def test_full_flow(db):
     assert named["model"] == "deepseek-chat" and named["status"] == "succeeded"
     step = next(step for step in trace["steps"] if step["id"] == named["step_id"])
     assert (step["step_type"], step["name"], step["status"]) == ("model", "model", "succeeded")
-    run = db.find_agent_run("ps-1", run_id)
+    run = db.find_agent_run("dist-1", run_id)
     assert run["status"] == "succeeded"
     assert run["output_json"]["text"] == "All set — press Confirm."
     assert db.session(sid)["history"][-1]["content"] == "All set — press Confirm."
@@ -89,7 +89,7 @@ def test_model_failure_leaves_the_stream_open_and_fails_on_the_worker(db):
     run_id = _of(ev, "run")["run_id"]
     assert all(e.get("type") != "error" for e in ev)
     assert work_chat(db, llm, run_id) is True
-    run = db.find_agent_run("ps-1", run_id)
+    run = db.find_agent_run("dist-1", run_id)
     assert run["status"] == "queued"
     assert run["error_json"]["kind"] == "transient"
 

@@ -12,8 +12,13 @@ Both enter `run_loop`.
 
 from __future__ import annotations
 
+import errno
+import hashlib
 import inspect
 import json
+import logging
+import smtplib
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -27,6 +32,7 @@ from ..repositories.run_repository import (
     append_run_event,
     claim_tool_call,
     complete_tool_call,
+    count_tool_calls,
     create_agent_run,
     find_agent_run_by_id,
     finish_step,
@@ -37,32 +43,56 @@ from ..repositories.run_repository import (
     list_run_events,
     mark_waiting_for_user,
 )
+from ..tools.send_email import MailError
+from ..tools.send_email import preflight as mail_preflight
+from .entry_guard import acquire_tool, release_tool, tool_group, tool_switch_off
 from .run_names import (
     COMPLETED_TOOL_CALLS_KEY,
     CONTEXT_KEY,
     LAST_INPUT,
     LAST_KEY,
     LAST_REPLY,
+    EntryErrorCode,
     StepEvent,
     StepStatus,
     StepType,
+    ToolCallStatus,
+    ToolErrorCode,
     checkpoint_last_after_tool,
     checkpoint_last_before_tool,
     step_name,
+    tool_error,
 )
 from .run_worker import LeaseLost, PermanentRunError
 
 MAX_LOOP_STEPS = 8
+# A read tool may be called again this many times after the first failure.
+# Side effects are not retried.
+_READ_RETRIES = 2
 _TOOL_USE = "assistant:tool_use:"
 Memory = tuple[list[dict[str, Any]], list[str], str, str | None, str | None]
+log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class Tool:
+    """One registered tool. `schema` is what the model sees.
+
+    `execute_tool` reads `side_effect` when it writes the audit row,
+    `idempotency_required` when it builds the business key, and `timeout_seconds`
+    when it stops a slow call. `retryable_errors` decides whether a read tool
+    is tried again. `display` is the sentence already stored on events.
+    """
+
     name: str
     description: str
     fn: Callable[[dict[str, Any]], dict[str, Any]]
     parameters: dict[str, Any] = field(default_factory=lambda: {"type": "object", "properties": {}})
     requires_approval: bool = False
+    side_effect: bool = False
+    idempotency_required: bool = False
+    timeout_seconds: int = 30
+    retryable_errors: frozenset[str] = field(default_factory=frozenset)
+    display: str = ""
 
     def schema(self) -> dict[str, Any]:
         return {
@@ -84,16 +114,25 @@ class ToolRegistry:
             self._tools[tool.name] = tool
 
     def get(self, name: str) -> Tool:
-        tool = self._tools.get(name)
+        tool = self.find(name)
         if tool is None:
             raise ValueError(f"Tool {name} not found")
         return tool
+
+    def find(self, name: str) -> Tool | None:
+        return self._tools.get(name)
 
     def tools(self) -> list[Tool]:
         return list(self._tools.values())
 
     def schemas(self) -> list[dict[str, Any]]:
         return [tool.schema() for tool in self._tools.values()]
+
+def _tool_failure(tool: Tool, message: str) -> dict[str, str | bool]:
+    """A handler that did not return a result. Retry only if this tool lists that code."""
+    code = ToolErrorCode.UPSTREAM
+    return tool_error(code, message, retryable=code in tool.retryable_errors)
+
 
 def _caller(fn: Any) -> tuple[str, str]:
     return str(getattr(fn, "provider", "fake")), str(getattr(fn, "model", "fake"))
@@ -173,9 +212,9 @@ def run_loop(
         latency_ms = int((time.perf_counter() - started) * 1000)
         if turn.tool_calls:
             call = turn.tool_calls[0]
-            tool = tools.get(call.name)
+            tool = tools.find(call.name)
             context = [*context, _assistant_message(turn)]
-            if tool.requires_approval:
+            if tool is not None and tool.requires_approval:
                 if _pause(db, run, context, completed, call, turn, latency_ms, decide_provider, decide_model_name) is None:
                     return {}
                 return {}
@@ -305,119 +344,640 @@ def _finish_tool(
     provider: str,
     model_name: str,
 ) -> Memory | None:
-    # 找模型要调用的工具块是否存在
+    """Loop side of one tool. Skip stays here. Everything else goes through `execute_tool`."""
     block = _last_tool_use(context)
     if block is None or block.get("name") != tool_name:
         raise PermanentRunError("checkpoint tool call does not match the context")
     tool_use_id = block.get("id")
     if not isinstance(tool_use_id, str) or tool_use_id in completed:
         raise PermanentRunError("tool call id is missing or already completed")
-    tool = tools.get(tool_name)
+    tool = tools.find(tool_name)
     args = block.get("input") if isinstance(block.get("input"), dict) else {}
-
-    # 检查是否被其他 worker 抢占了
     if _stopped(db, run["id"], str(run.get("lease_owner") or "")):
         return None
 
-    # 提前算好幂等键
-    key = f"{tool_name}:{tool_use_id}"
-    step_id = open_step_id     # 记录未完成的步骤
-
-    # 需要审批的工具，跳过只记结果，不调用函数
-    skipped = tool.requires_approval and _resume_skipped(db, run)
-    if skipped:
+    step_id = open_step_id
+    # Skip never calls the handler and never takes a seat.
+    if tool is not None and tool.requires_approval and _resume_skipped(db, run):
         if step_id is None:
-            return None 
+            return None
         result = {"skipped": True}
-        tool_ms = 0
-        if insert_tool_call(
-            db, run["id"], step_id,
-            tool_name=tool_name, args=args, result=result, status=StepStatus.SUCCEEDED,
-            idempotency_key=key, latency_ms=tool_ms,
-        ) is None:
-            return None
-    elif tool.requires_approval:
-        if step_id is None:
-            step_id = _record_model_step(
-                db, run, context, turn, latency_ms, provider, model_name, None, tool_name, args
-            )
-        if step_id is None:
-            return None
-        # 抢占工具调用
-        claimed = claim_tool_call(
-            db, run["id"], step_id, tool_name=tool_name, args=args, idempotency_key=key
-        )
-        if claimed is None:
-            return None
-        row, created = claimed 
-        # 如果幂等键已存在，则直接使用已有的结果
-        if not created:
-            if row.get("status") != StepStatus.SUCCEEDED:
-                raise PermanentRunError("tool call already completed")
-            stored = row.get("result_json")
-            result = stored if isinstance(stored, dict) else {}
-            tool_ms = int(row.get("latency_ms") or 0)
-        # 抢座成功，执行
-        else:
-            _event(db, run, StepEvent.TOOL_STARTED, {"tool_name": tool_name, "tool_use_id": tool_use_id})
-            started = time.perf_counter()
-            try:
-                result = _invoke_tool(db, run["id"], tool, args, context, step_id)
-            except Exception as e:
-                complete_tool_call(
-                    db, row["id"], result={}, status=StepStatus.FAILED, latency_ms=0, 
-                    error={"message": str(e)}
-                )    # 异常时先标记为 failed，再抛出永久错误
-                raise PermanentRunError(str(e)) from e 
-            # 记录工具调用时间
-            tool_ms = int((time.perf_counter() - started) * 1000)
-            # 工具返回的不是字典，则标记为 failed
-            if not isinstance(result, dict):
-                complete_tool_call(
-                    db, row["id"], result={}, status=StepStatus.FAILED, latency_ms=tool_ms,
-                    error={"message": "tool returned a non-object"}
-                )
-                raise PermanentRunError("tool returned a non-object")
-            if complete_tool_call(
-                db, row["id"], result=result, status=StepStatus.SUCCEEDED, latency_ms=tool_ms,
-            ) is None:
-                return None
-    # 不需要审批的工具
-    else:
-        if step_id is None:
-            step_id = _record_model_step(
-                db, run, context, turn, latency_ms, provider, model_name, None, tool_name, args
-            )
-        if step_id is None:
-            return None
-        _event(db, run, StepEvent.TOOL_STARTED, {"tool_name": tool_name, "tool_use_id": tool_use_id})
-        started = time.perf_counter()
-        result = _invoke_tool(db, run["id"], tool, args, context, step_id)
-        tool_ms = int((time.perf_counter() - started) * 1000)
-        if not isinstance(result, dict):
-            raise PermanentRunError("tool returned a non-object")
-    context = [*context, _tool_result_message(tool_use_id, result)]
-    completed = [*completed, tool_use_id]
-    if _save(db, run["id"], context, completed, checkpoint_last_after_tool(tool_name)) is None:
-        return None
-    if not tool.requires_approval:
+        context = [*context, _tool_result_message(tool_use_id, result)]
+        completed = [*completed, tool_use_id]
         saved = insert_tool_call(
             db, run["id"], step_id,
-            tool_name=tool_name, args=args, result=result, status=StepStatus.SUCCEEDED,
-            idempotency_key=f"{tool_name}:{tool_use_id}", latency_ms=tool_ms,
+            tool_name=tool_name, args=args, result=result, status=ToolCallStatus.SUCCEEDED,
+            idempotency_key=f"{tool_name}:{tool_use_id}", latency_ms=0,
+            checkpoint=_checkpoint_state(
+                db, run["id"], context, completed, checkpoint_last_after_tool(tool_name),
+            ),
+            step_status=StepStatus.SUCCEEDED, step_output=result,
         )
         if saved is None:
             return None
-    if finish_step(db, step_id, StepStatus.SUCCEEDED, result) is None:
-        return None 
-    
-    # 用户没有留言 -> 返回“工具已跑完”的状态，插入消息历史中， 存 LAST_INPUT 后返回
+        return _after_tool_note(db, run, context, completed, tool_name, resume_note)
+
+    if step_id is None:
+        try:
+            step_name(StepType.TOOL, tool_name)
+        except ValueError as exc:
+            raise PermanentRunError(str(exc)) from exc
+        step_id = _record_model_step(
+            db, run, context, turn, latency_ms, provider, model_name, None, tool_name, args,
+        )
+    if step_id is None:
+        return None
+    moved = execute_tool(
+        db, run, tools, step_id=step_id, tool_name=tool_name, args=args,
+        tool_use_id=tool_use_id, context=context, completed=completed,
+    )
+    if moved is None:
+        return None
+    context, completed = moved
+    return _after_tool_note(db, run, context, completed, tool_name, resume_note)
+
+
+def execute_tool(
+    db: Database,
+    run: dict[str, Any],
+    tools: ToolRegistry,
+    *,
+    step_id: str,
+    tool_name: str,
+    args: dict[str, Any],
+    tool_use_id: str,
+    context: list[dict[str, Any]],
+    completed: list[str],
+) -> tuple[list[dict[str, Any]], list[str]] | None:
+    """Claim a model tool, call it outside the database transaction, then write the step back.
+
+    The handler is not called when the tool is missing, the arguments do not match
+    `parameters`, the run is over `max_tool_calls`, the user is outside this
+    distributor, a switch is holding the tool, or this idempotency key already
+    has a row. A validation failure is stored under `{tool_name}:{tool_use_id}` and
+    does not take the seat used for a real call. `max_tool_calls` is read from the
+    run. A missing value means no cap. Over the cap, the run fails and the handler
+    is not called.
+    A handler error is stored and returned to the loop. It does not fail the run.
+    None means the lease is gone or the step could not be written.
+    """
+    if _stopped(db, run["id"], str(run.get("lease_owner") or "")):
+        return None
+    tool = tools.find(tool_name)
+    if tool is None:
+        error = tool_error(ToolErrorCode.NOT_FOUND, "tool is not registered")
+        return _reject_tool(
+            db, run, step_id, tool_name, tool_use_id, context, completed, error, executed=False,
+        )
+    paused = tool_switch_off(
+        tool.name, side_effect=tool.side_effect, idempotency_required=tool.idempotency_required,
+    )
+    if paused is not None:
+        mark_waiting_for_user(db, run["id"], {
+            "tool_name": tool.name, "reason": "tool_paused", "switch": paused,
+        })
+        return None
+    problem = _argument_error(tool.parameters, args)
+    if problem is not None:
+        error = tool_error(
+            ToolErrorCode.VALIDATION, problem,
+            retryable=ToolErrorCode.VALIDATION in tool.retryable_errors,
+        )
+        # The failed row uses this call's id. A side-effect business key stays free.
+        return _record_invalid_call(
+            db, run, step_id, tool_name, args, tool_use_id, context, completed, error,
+        )
+    if tool.name == "send_email":
+        refusal = mail_preflight(args)
+        if refusal is not None:
+            code, message = refusal
+            error = tool_error(code, message, retryable=code in tool.retryable_errors)
+            return _record_invalid_call(
+                db, run, step_id, tool_name, args, tool_use_id, context, completed, error,
+            )
+    if tool.name == "send_email" or (tool.side_effect and tool.idempotency_required):
+        person = db.user(str(run.get("user_id") or ""))
+        if person is None or person.distributor_id != run.get("org_id"):
+            error = tool_error(ToolErrorCode.PERMISSION_DENIED, "user is not in this distributor")
+            _reject_tool(
+                db, run, step_id, tool_name, args, tool_use_id, context, completed, error, executed=False,
+            )
+            raise PermanentRunError(ToolErrorCode.PERMISSION_DENIED)
+    cap = run.get("max_tool_calls")
+    if cap is not None and count_tool_calls(db, run["id"]) >= int(cap):
+        error = tool_error(EntryErrorCode.COST_BUDGET_EXCEEDED, "tool call budget exceeded")
+        _reject_tool(
+            db, run, step_id, tool_name, tool_use_id, context, completed, error, executed=False,
+        )
+        raise PermanentRunError(EntryErrorCode.COST_BUDGET_EXCEEDED)
+
+    key = _idempotency_key(tool, run, args, tool_use_id)
+    if key is None:
+        error = tool_error(
+            ToolErrorCode.IDEMPOTENCY_REQUIRED, "idempotency key could not be computed",
+            retryable=ToolErrorCode.IDEMPOTENCY_REQUIRED in tool.retryable_errors,
+        )
+        return _record_invalid_call(
+            db, run, step_id, tool_name, args, tool_use_id, context, completed, error,
+        )
+    claimed = claim_tool_call(
+        db, run["id"], step_id, tool_name=tool_name, args=args, idempotency_key=key,
+    )
+    if claimed is None:
+        return None
+    row, created = claimed
+    if not created:
+        return _reuse_tool_call(
+            db, run, tool, row, step_id, tool_use_id, context, completed,
+        )
+
+    _event(db, run, StepEvent.TOOL_STARTED, {"tool_name": tool_name, "tool_use_id": tool_use_id})
+    if _stopped(db, run["id"], str(run.get("lease_owner") or "")):
+        return None
+    attempt = _attempt_tool(db, run["id"], tool, args, context, step_id, str(run.get("org_id") or ""))
+    return _close_tool(
+        db, run, tool, row["id"], tool_use_id, context, completed,
+        result=attempt.result, status=attempt.status, latency_ms=attempt.latency_ms,
+        error=attempt.error, executed=attempt.executed, manual_review=attempt.manual_review,
+    )
+
+
+def _idempotency_key(
+    tool: Tool, run: dict[str, Any], args: dict[str, Any], tool_use_id: str,
+) -> str | None:
+    """Seat key. Read tools use this call's id. Side effects use a business key.
+
+    The business key contains `org_id` and not `run_id` or `tool_use_id`, so the
+    same email or MCP call on another run finds the existing row. None means the
+    key cannot be built; the caller must not claim a seat.
+    """
+    if not tool.idempotency_required:
+        return f"{tool.name}:{tool_use_id}"
+    org_id = str(run.get("org_id") or "")
+    if not org_id:
+        return None
+    if tool.name == "send_email":
+        to_address = str(args.get("to") or "").strip()
+        subject = str(args.get("subject") or "").strip()
+        body = str(args.get("body") or "").strip()
+        digest = hashlib.sha256(f"{subject}\n{body}".encode()).hexdigest()[:16]
+        return f"send_email:{org_id}:{to_address}:{digest}"
+    payload = json.dumps(args, ensure_ascii=False, separators=(",", ":"), sort_keys=True, default=str)
+    digest = hashlib.sha256(payload.encode()).hexdigest()[:16]
+    return f"mcp:{org_id}:{tool.name}:{digest}"
+
+
+@dataclass(frozen=True)
+class _Attempt:
+    result: dict[str, Any]
+    status: str
+    error: dict[str, Any] | None
+    executed: bool
+    latency_ms: int
+    manual_review: bool
+
+
+def _attempt_tool(
+    db: Database,
+    run_id: str,
+    tool: Tool,
+    args: dict[str, Any],
+    context: list[dict[str, Any]],
+    step_id: str,
+    org_id: str,
+) -> _Attempt:
+    """Call the handler until it succeeds, the error is final, or retries run out.
+
+    A read tool is called again at most `_READ_RETRIES` times when the error code
+    is listed on the tool. One seat covers every try. A side effect is never
+    called again; a timeout becomes `response_lost` and asks for a person.
+    """
+    retries_left = 0 if tool.side_effect else _READ_RETRIES
+    latency_ms = 0
+    while True:
+        one = _one_call(db, run_id, tool, args, context, step_id, org_id)
+        latency_ms += one.latency_ms
+        if one.status == ToolCallStatus.SUCCEEDED:
+            return _Attempt(one.result, one.status, None, True, latency_ms, False)
+        if one.status == ToolCallStatus.RESPONSE_LOST:
+            return _Attempt({}, one.status, one.error, True, latency_ms, True)
+        if retries_left > 0 and one.error is not None and one.error.get("retryable"):
+            retries_left -= 1
+            continue
+        return _Attempt({}, ToolCallStatus.FAILED, one.error, one.executed, latency_ms, False)
+
+
+def _one_call(
+    db: Database,
+    run_id: str,
+    tool: Tool,
+    args: dict[str, Any],
+    context: list[dict[str, Any]],
+    step_id: str,
+    org_id: str,
+) -> _Attempt:
+    started = time.perf_counter()
+    group = tool_group(tool.name)
+    if group is not None and not acquire_tool(org_id, group):
+        error = tool_error(
+            ToolErrorCode.RATE_LIMITED, "tool concurrency is full",
+            retryable=ToolErrorCode.RATE_LIMITED in tool.retryable_errors,
+        )
+        return _Attempt({}, ToolCallStatus.FAILED, error, False, 0, False)
+    try:
+        result = _invoke_limited(
+            lambda: _invoke_tool(db, run_id, tool, args, context, step_id),
+            tool.timeout_seconds,
+        )
+    except TimeoutError:
+        error = tool_error(
+            ToolErrorCode.TIMEOUT, "tool timed out",
+            retryable=ToolErrorCode.TIMEOUT in tool.retryable_errors,
+        )
+        if tool.side_effect:
+            return _Attempt({}, ToolCallStatus.RESPONSE_LOST, error, True, _elapsed_ms(started), True)
+        return _Attempt({}, ToolCallStatus.FAILED, error, True, _elapsed_ms(started), False)
+    except MailError as exc:
+        error = tool_error(exc.code, str(exc), retryable=exc.code in tool.retryable_errors)
+        return _Attempt({}, ToolCallStatus.FAILED, error, True, _elapsed_ms(started), False)
+    except Exception as exc:
+        left = _request_never_left(exc)
+        return _Attempt(
+            {}, ToolCallStatus.FAILED, _tool_failure(tool, str(exc)), not left, _elapsed_ms(started), False,
+        )
+    finally:
+        if group is not None:
+            release_tool(org_id, group)
+    if not isinstance(result, dict):
+        return _Attempt(
+            {}, ToolCallStatus.FAILED, _tool_failure(tool, "tool returned a non-object"),
+            True, _elapsed_ms(started), False,
+        )
+    return _Attempt(result, ToolCallStatus.SUCCEEDED, None, True, _elapsed_ms(started), False)
+
+
+def _invoke_limited(call: Callable[[], Any], timeout_seconds: int) -> Any:
+    """Run `call` on a daemon thread and give up when `timeout_seconds` elapses.
+
+    The thread is not stopped. A side effect may still finish after this returns;
+    the caller records that as `response_lost` and does not wait for it.
+    """
+    if timeout_seconds <= 0:
+        return call()
+    box: dict[str, Any] = {}
+
+    def run() -> None:
+        try:
+            box["result"] = call()
+        except Exception as exc:
+            box["error"] = exc
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(timeout_seconds)
+    if thread.is_alive():
+        raise TimeoutError("tool timed out")
+    if "error" in box:
+        raise box["error"]
+    return box.get("result")
+
+
+def _reuse_tool_call(
+    db: Database,
+    run: dict[str, Any],
+    tool: Tool,
+    row: dict[str, Any],
+    step_id: str,
+    tool_use_id: str,
+    context: list[dict[str, Any]],
+    completed: list[str],
+) -> tuple[list[dict[str, Any]], list[str]] | None:
+    """A seat already exists. Do not call the handler again."""
+    if row.get("step_id") != step_id:
+        return _duplicate_side_effect(db, run, tool, row, step_id, tool_use_id, context, completed)
+    status = row.get("status")
+    if status == ToolCallStatus.RUNNING:
+        error = tool_error(ToolErrorCode.UPSTREAM, "tool call was left running")
+        return _close_tool(
+            db, run, tool, row["id"], tool_use_id, context, completed,
+            result={}, status=ToolCallStatus.RESPONSE_LOST, latency_ms=int(row.get("latency_ms") or 0),
+            error=error, executed=False, manual_review=bool(tool.side_effect),
+        )
+    if status == ToolCallStatus.SUCCEEDED:
+        stored = row.get("result_json")
+        result = stored if isinstance(stored, dict) else {}
+        return _close_tool(
+            db, run, tool, row["id"], tool_use_id, context, completed,
+            result=result, status=ToolCallStatus.SUCCEEDED, latency_ms=int(row.get("latency_ms") or 0),
+            error=None, executed=False,
+        )
+    stored_error = row.get("error_json")
+    error = stored_error if isinstance(stored_error, dict) and stored_error else tool_error(
+        ToolErrorCode.UPSTREAM, "tool call already finished",
+    )
+    return _close_tool(
+        db, run, tool, row["id"], tool_use_id, context, completed,
+        result={}, status=ToolCallStatus.FAILED, latency_ms=int(row.get("latency_ms") or 0),
+        error=error, executed=False,
+    )
+
+
+def _duplicate_side_effect(
+    db: Database,
+    run: dict[str, Any],
+    tool: Tool,
+    row: dict[str, Any],
+    step_id: str,
+    tool_use_id: str,
+    context: list[dict[str, Any]],
+    completed: list[str],
+) -> tuple[list[dict[str, Any]], list[str]] | None:
+    """The business key belongs to another step. Do not insert a second row."""
+    status = row.get("status")
+    if status == ToolCallStatus.RUNNING:
+        error = tool_error(ToolErrorCode.UPSTREAM, "tool call was left running")
+        saved = complete_tool_call(
+            db, row["id"], result={}, status=ToolCallStatus.RESPONSE_LOST,
+            latency_ms=int(row.get("latency_ms") or 0), error=error,
+            audit=bool(tool.side_effect), manual_review=bool(tool.side_effect),
+        )
+        if saved is None:
+            return None
+        return _reject_tool(
+            db, run, step_id, tool.name, tool_use_id, context, completed, error, executed=False,
+        )
+    if status == ToolCallStatus.SUCCEEDED:
+        stored = row.get("result_json")
+        visible = {"skipped_duplicate": True, "result": stored if isinstance(stored, dict) else {}}
+        failed = False
+    else:
+        stored_error = row.get("error_json")
+        error = stored_error if isinstance(stored_error, dict) and stored_error else tool_error(
+            ToolErrorCode.UPSTREAM, "tool call already finished",
+        )
+        visible = {"skipped_duplicate": True, "error": error}
+        failed = True
+    context = [*context, _tool_result_message(tool_use_id, visible)]
+    completed = [*completed, tool_use_id]
+    step_status = StepStatus.FAILED if failed else StepStatus.SUCCEEDED
+    event = StepEvent.TOOL_FAILED if failed else StepEvent.TOOL_COMPLETED
+    saved = finish_step(
+        db, step_id, step_status, visible, visible if failed else None,
+        checkpoint=_checkpoint_state(
+            db, run["id"], context, completed, checkpoint_last_after_tool(tool.name),
+        ),
+        extra_event=event,
+        extra_payload={
+            "step_id": step_id,
+            "tool_name": tool.name,
+            "status": "failed" if failed else "succeeded",
+            "skipped_duplicate": True,
+        },
+    )
+    if saved is None:
+        return None
+    return context, completed
+
+
+def _close_tool(
+    db: Database,
+    run: dict[str, Any],
+    tool: Tool,
+    tool_call_id: str,
+    tool_use_id: str,
+    context: list[dict[str, Any]],
+    completed: list[str],
+    *,
+    result: dict[str, Any],
+    status: str,
+    latency_ms: int,
+    error: dict[str, Any] | None,
+    executed: bool,
+    manual_review: bool = False,
+) -> tuple[list[dict[str, Any]], list[str]] | None:
+    """Write the tool result, the step, the checkpoint, and a side-effect audit row together."""
+    visible = result if status == ToolCallStatus.SUCCEEDED else (error or {})
+    failed = status != ToolCallStatus.SUCCEEDED
+    context = [*context, _tool_result_message(tool_use_id, visible if isinstance(visible, dict) else {})]
+    completed = [*completed, tool_use_id]
+    step_status = StepStatus.FAILED if failed else StepStatus.SUCCEEDED
+    saved = complete_tool_call(
+        db, tool_call_id, result=result, status=status, latency_ms=latency_ms, error=error,
+        checkpoint=_checkpoint_state(
+            db, run["id"], context, completed, checkpoint_last_after_tool(tool.name),
+        ),
+        audit=bool(tool.side_effect) and (executed or status == ToolCallStatus.RESPONSE_LOST),
+        step_status=step_status,
+        step_output=visible if isinstance(visible, dict) else {},
+        step_error=error if failed else None,
+        manual_review=manual_review,
+    )
+    if saved is None:
+        return None
+    if failed and (executed or status == ToolCallStatus.RESPONSE_LOST):
+        _log_tool_failure(
+            run, step_id=str(saved.get("step_id") or ""), tool_call_id=tool_call_id,
+            tool_name=tool.name, error_code=str((error or {}).get("code") or ""),
+            executed=executed, retryable=bool((error or {}).get("retryable")), latency_ms=latency_ms,
+        )
+    return context, completed
+
+
+def _record_invalid_call(
+    db: Database,
+    run: dict[str, Any],
+    step_id: str,
+    tool_name: str,
+    args: dict[str, Any],
+    tool_use_id: str,
+    context: list[dict[str, Any]],
+    completed: list[str],
+    error: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[str]] | None:
+    """Store a validation failure without claiming the call."""
+    context = [*context, _tool_result_message(tool_use_id, error)]
+    completed = [*completed, tool_use_id]
+    saved = insert_tool_call(
+        db, run["id"], step_id,
+        tool_name=tool_name, args=args, result={}, status=ToolCallStatus.FAILED,
+        idempotency_key=f"{tool_name}:{tool_use_id}", latency_ms=0, error=error,
+        checkpoint=_checkpoint_state(
+            db, run["id"], context, completed, checkpoint_last_after_tool(tool_name),
+        ),
+        step_status=StepStatus.FAILED, step_output=error, step_error=error,
+    )
+    if saved is None:
+        return None
+    _log_tool_failure(
+        run, step_id=step_id, tool_call_id=str(saved.get("id") or ""), tool_name=tool_name,
+        error_code=str(error.get("code") or ""), executed=False,
+        retryable=bool(error.get("retryable")), latency_ms=0,
+    )
+    return context, completed
+
+
+def _argument_error(parameters: dict[str, Any], args: dict[str, Any]) -> str | None:
+    """First schema mismatch, or None when `args` fits `parameters`.
+
+    Checks `required`, property `type` and `enum`, nested objects, array `items`,
+    and `additionalProperties: false`. Other JSON Schema keywords are left alone.
+    """
+    if not isinstance(args, dict):
+        return "arguments must be an object"
+    required = parameters.get("required")
+    if isinstance(required, list):
+        for name in required:
+            if isinstance(name, str) and name not in args:
+                return f"missing required property: {name}"
+    properties = parameters.get("properties")
+    if not isinstance(properties, dict):
+        properties = {}
+    for name, value in args.items():
+        spec = properties.get(name)
+        if not isinstance(spec, dict):
+            continue
+        message = _property_error(name, spec, value)
+        if message is not None:
+            return message
+    if parameters.get("additionalProperties") is False:
+        extra = next((name for name in args if name not in properties), None)
+        if extra is not None:
+            return f"unexpected property: {extra}"
+    return None
+
+
+def _property_error(name: str, spec: dict[str, Any], value: Any) -> str | None:
+    allowed = spec.get("type")
+    if isinstance(allowed, str):
+        allowed = [allowed]
+    if isinstance(allowed, list) and allowed:
+        if not any(_matches_type(kind, value) for kind in allowed if isinstance(kind, str)):
+            return f"property {name} has the wrong type"
+    enum = spec.get("enum")
+    if isinstance(enum, list) and value not in enum:
+        return f"property {name} is not an allowed value"
+    if isinstance(value, dict) and spec.get("type") == "object":
+        nested = _argument_error(spec, value)
+        if nested is not None:
+            return f"property {name}: {nested}"
+    items = spec.get("items")
+    if isinstance(value, list) and isinstance(items, dict):
+        for item in value:
+            message = _property_error(f"{name}[]", items, item)
+            if message is not None:
+                return message
+    return None
+
+
+def _matches_type(kind: str, value: Any) -> bool:
+    if kind == "string":
+        return isinstance(value, str)
+    if kind == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if kind == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if kind == "boolean":
+        return isinstance(value, bool)
+    if kind == "array":
+        return isinstance(value, list)
+    if kind == "object":
+        return isinstance(value, dict)
+    if kind == "null":
+        return value is None
+    return True
+
+
+def _reject_tool(
+    db: Database,
+    run: dict[str, Any],
+    step_id: str,
+    tool_name: str,
+    tool_use_id: str,
+    context: list[dict[str, Any]],
+    completed: list[str],
+    error: dict[str, Any],
+    *,
+    executed: bool,
+) -> tuple[list[dict[str, Any]], list[str]] | None:
+    """Close the step without a tool row. Used when the handler must not run."""
+    context = [*context, _tool_result_message(tool_use_id, error)]
+    completed = [*completed, tool_use_id]
+    saved = finish_step(
+        db, step_id, StepStatus.FAILED, error, error,
+        checkpoint=_checkpoint_state(
+            db, run["id"], context, completed, checkpoint_last_after_tool(tool_name),
+        ),
+        extra_event=StepEvent.TOOL_FAILED,
+        extra_payload={"step_id": step_id, "tool_name": tool_name, "status": ToolCallStatus.FAILED},
+    )
+    if saved is None:
+        return None
+    _log_tool_failure(
+        run, step_id=step_id, tool_call_id="", tool_name=tool_name,
+        error_code=str(error.get("code") or ""), executed=executed,
+        retryable=bool(error.get("retryable")), latency_ms=0,
+    )
+    return context, completed
+
+
+def _after_tool_note(
+    db: Database,
+    run: dict[str, Any],
+    context: list[dict[str, Any]],
+    completed: list[str],
+    tool_name: str,
+    resume_note: str | None,
+) -> Memory | None:
     if not resume_note:
         return context, completed, checkpoint_last_after_tool(tool_name), None, None
     context = [*context, {"role": "user", "content": resume_note}]
     if _save(db, run["id"], context, completed, LAST_INPUT) is None:
         return None
     return context, completed, LAST_INPUT, None, None
+
+
+def _log_tool_failure(
+    run: dict[str, Any],
+    *,
+    step_id: str,
+    tool_call_id: str,
+    tool_name: str,
+    error_code: str,
+    executed: bool,
+    retryable: bool,
+    latency_ms: int,
+) -> None:
+    """One line for a failed tool. Arguments, secrets, and token counts stay out."""
+    log.info(
+        "tool_call request_id=%s trace_id=%s run_id=%s org_id=%s user_id=%s outbox_id=%s "
+        "step_id=%s tool_call_id=%s tool_name=%s error_code=%s executed=%s retryable=%s latency_ms=%s",
+        "",
+        run.get("trace_id") or "",
+        run.get("id") or "",
+        run.get("org_id") or "",
+        run.get("user_id") or "",
+        "",
+        step_id,
+        tool_call_id,
+        tool_name,
+        error_code,
+        executed,
+        retryable,
+        latency_ms,
+    )
+
+
+def _request_never_left(exc: BaseException) -> bool:
+    """True when the socket was refused before the request could be sent."""
+    if isinstance(exc, (ConnectionRefusedError, ConnectionAbortedError, smtplib.SMTPConnectError)):
+        return True
+    return getattr(exc, "errno", None) in {
+        errno.ECONNREFUSED, errno.ECONNABORTED, errno.EHOSTUNREACH, errno.ENETUNREACH,
+    }
+
+
+def _elapsed_ms(started: float) -> int:
+    return int((time.perf_counter() - started) * 1000)
 
 def _pause(
     db: Database,
@@ -490,7 +1050,7 @@ def _stopped(db: Database, run_id: str, owner: str) -> bool:
         raise LeaseLost(f"lease lost for {run_id}")
     return False
 
-def _save(
+def _checkpoint_state(
     db: Database,
     run_id: str,
     context: list[dict[str, Any]],
@@ -498,7 +1058,7 @@ def _save(
     last: str,
     open_step_id: str | None = None,
     last_report: str | None = None,
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     state: dict[str, Any] = {CONTEXT_KEY: context, COMPLETED_TOOL_CALLS_KEY: completed, LAST_KEY: last}
     if open_step_id:
         state["open_step_id"] = open_step_id
@@ -508,7 +1068,21 @@ def _save(
         last_report = saved if isinstance(saved, str) else ""
     if last_report.strip():
         state["last_report"] = last_report.strip()
-    return append_checkpoint(db, run_id, state)
+    return state
+
+
+def _save(
+    db: Database,
+    run_id: str,
+    context: list[dict[str, Any]],
+    completed: list[str],
+    last: str,
+    open_step_id: str | None = None,
+    last_report: str | None = None,
+) -> dict[str, Any] | None:
+    return append_checkpoint(
+        db, run_id, _checkpoint_state(db, run_id, context, completed, last, open_step_id, last_report),
+    )
 
 def _event(db: Database, run: dict[str, Any], event_type: StepEvent, payload: dict[str, Any]) -> None:
     append_run_event(db, run["org_id"], run["id"], event_type, payload)

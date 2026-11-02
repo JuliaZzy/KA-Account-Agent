@@ -15,14 +15,15 @@ import json
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
 from ..codefix import format_failures
 from ..config import LLMSettings
 from ..db import Database, utcnow
-from ..llm import DeepSeekClient, SJTUClient, parse_json_loose
+from ..llm import DeepSeekClient, SJTUClient
+from ..llm import calls as model_calls
 from ..memory import actor_id, attach, prompt_context, prompt_turns, standing_block, summary_block
 from .prompt import PICK, REFLECT, SQL
 from .sql_validator import validate
@@ -35,7 +36,6 @@ _MAX_ROWS = 50
 REFLECT_PASS = 80
 MAX_REFLECTIONS = 3
 _SQL_ATTEMPTS = 3
-_FLASH = "deepseek-flash"
 _SCHOOL = "deepseek-chat"
 _FENCE = re.compile(r"^```(?:sql)?\s*([\s\S]*?)\s*```$", re.IGNORECASE)
 
@@ -59,33 +59,11 @@ class _RunTrace:
     run_id: str | None = None
     step_id: str | None = None
 
-def _record_sql_call(
-    trace: _RunTrace | None,
-    client: Any, 
-    *,
-    provider: str,
-    model: str,
-    request: dict[str, Any],
-    response: dict[str, Any],
-    latency_ms: int,
-    error: Exception | None,
-) -> None:
+def _ledger(trace: _RunTrace | None, purpose: str) -> dict[str, Any]:
     if trace is None or trace.db is None or not trace.run_id or not trace.step_id:
-        return 
-    usage = getattr(client, "last_usage", None)
-    usage = usage if isinstance(usage, dict) else {}
-    trace.db.insert_model_call(
-        run_id=trace.run_id, step_id=trace.step_id,
-        provider=provider,
-        model=model,
-        request=request,
-        response=response,
-        prompt_tokens=int(usage.get("prompt_tokens") or 0),
-        completion_tokens=int(usage.get("completion_tokens") or 0),
-        latency_ms=latency_ms,
-        status="failed" if error is not None else "succeeded",
-        error={"message": str(error)} if error is not None else None,
-    )
+        return {}
+    return {"db": trace.db, "run_id": trace.run_id, "step_id": trace.step_id, "purpose": purpose}
+
 
 def _ds_client() -> DeepSeekClient:
     return DeepSeekClient(LLMSettings(base_url=None, api_key=""))
@@ -95,78 +73,25 @@ def _school_client() -> SJTUClient:
     return SJTUClient(LLMSettings(base_url=None, api_key=""))
 
 
-def _json_format(schema: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "format": {
-            "type": "json_schema",
-            "name": schema["name"],
-            "schema": schema["schema"],
-        }
-    }
-
-def _ask_school(*, system: str, user: str, trace: _RunTrace | None = None) -> dict[str, Any]:
+def _ask_school(
+    *, system: str, user: str, trace: _RunTrace | None = None, purpose: str = "data.pick",
+) -> dict[str, Any]:
     """Campus deepseek-chat. The gateway has no JSON schema; the reply text is the object."""
-    client = _school_client()
-    request = {"model": _SCHOOL, "system": system, "messages": [{"role": "system", "content": user}]}
-    raw: dict[str, Any] = {}
-    error: Exception | None = None
-    started = time.perf_counter()
-    try:
-        resp = client.chat_completion(
-            model=_SCHOOL,
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-            temperature=0,
-        )
-        try:
-            text = resp["choices"][0]["message"]["content"] or ""
-        except (KeyError, IndexError, TypeError) as err:
-            raise ValueError("Campus model did not return a message.") from err
-        parsed = parse_json_loose(text)
-        if not isinstance(parsed, dict):
-            raise ValueError("Campus model did not return a JSON object.")
-        raw = parsed
-    except Exception as err:
-        error = err
-    _record_sql_call(
-        trace, client, provider="sjtu", model=_SCHOOL, 
-        request=request, response={"json": raw} if raw else {}, 
-        latency_ms=int((time.perf_counter() - started) * 1000), error=error
+    return model_calls.school_json(
+        _SCHOOL, system=system, messages=[{"role": "user", "content": user}],
+        temperature=0, client=_school_client(), **_ledger(trace, purpose),
     )
-    if error is not None:
-        raise error
-    return raw
 
 
-def _ask_ds(*, system: str, user: str, schema: dict[str, Any], trace: _RunTrace | None = None) -> dict[str, Any]:
+def _ask_ds(
+    *, system: str, user: str, schema: dict[str, Any], trace: _RunTrace | None = None,
+    purpose: str = "data.sql",
+) -> dict[str, Any]:
     """One JSON object from deepseek-flash, thinking off."""
-    client = _ds_client()
-    request = {"model": _FLASH, "instruction": system, "input": user, "text": _json_format(schema), "reasoning_effort": "none", "temperature": 0}
-    raw: dict[str, Any] = {}
-    error: Exception | None = None
-    started = time.perf_counter()
-    try:
-        resp = client.response(
-            model=_FLASH,
-            instructions=system,
-            input=user,
-            text=_json_format(schema),
-            reasoning_effort="none",
-            temperature=0,
-        )
-        parsed = parse_json_loose(resp.output_text)
-        if not isinstance(parsed, dict):
-            raise ValueError("model did not return a JSON object")
-        raw = parsed
-    except Exception as err:
-        error = err
-    _record_sql_call(
-        trace, client, provider="ds", model=_FLASH, 
-        request=request, response={"json": raw} if raw else {}, 
-        latency_ms=int((time.perf_counter() - started) * 1000), error=error
+    return model_calls.flash_json(
+        system=system, messages=[{"role": "user", "content": user}], schema=schema,
+        temperature=0, client=_ds_client(), **_ledger(trace, purpose),
     )
-    if error is not None:
-        raise error
-    return raw
 
 
 def sql_schema() -> dict[str, Any]:
@@ -186,26 +111,46 @@ def _strip_fence(sql: str) -> str:
     return (match.group(1) if match else text).strip()
 
 
-def _jsonable(value: Any, depth: int = 0) -> Any:
-    if depth > 4:
-        return None
+def _json_value(value: Any) -> Any:
+    """One cell, safe to store as JSON, with nothing removed.
+
+    Dates and amounts are not JSON types. Nested values are walked in full.
+    """
     if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
         return value.isoformat()
     if isinstance(value, Decimal):
         return float(value)
-    if isinstance(value, bytes):
+    if isinstance(value, (bytes, memoryview)):
+        # Valid text stays text. Bytes that are not UTF-8 stay in the string via surrogates.
+        return bytes(value).decode("utf-8", errors="surrogateescape")
+    if isinstance(value, dict):
+        return {str(key): _json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_value(item) for item in value]
+    return value
+
+
+def _json_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{key: _json_value(value) for key, value in row.items()} for row in rows]
+
+
+def _clip(value: Any, depth: int = 0) -> Any:
+    """A short copy for a model prompt. The returned rows do not use this."""
+    if depth > 4:
         return None
     if isinstance(value, str) and len(value) > _MAX_CELL:
         return value[:_MAX_CELL] + "…"
     if isinstance(value, dict):
-        return {str(key): _jsonable(item, depth + 1) for key, item in list(value.items())[:30]}
+        return {str(key): _clip(item, depth + 1) for key, item in list(value.items())[:30]}
     if isinstance(value, (list, tuple)):
-        return [_jsonable(item, depth + 1) for item in list(value)[:30]]
+        return [_clip(item, depth + 1) for item in list(value)[:30]]
     return value
 
 
 def _rows_for_prompt(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [{key: _jsonable(value) for key, value in row.items()} for row in rows[:_MAX_ROWS]]
+    return [{key: _clip(value) for key, value in row.items()} for row in rows[:_MAX_ROWS]]
 
 
 def _pick_tables(question: str, trace: _RunTrace | None = None) -> list[str]:
@@ -252,7 +197,7 @@ def _revise_sql(*, schema_text: str, statement: str, error: str, trace: _RunTrac
     )
     user = json.dumps({"failed_sql": statement, "error": error or "（无）"}, ensure_ascii=False)
     try:
-        raw = _ask_ds(system=system, user=user, schema=sql_schema(), trace=trace)
+        raw = _ask_ds(system=system, user=user, schema=sql_schema(), trace=trace, purpose="data.sql.revise")
     except Exception:
         return ""
     return _strip_fence(str(raw.get("sql") or ""))
@@ -382,7 +327,7 @@ def _attempt(
                     db, sql, _scope_params(partnership_id, brand_id, distributor_id, person),
                 )
                 if ok and raw_rows is not None:
-                    rows = _rows_for_prompt(raw_rows)
+                    rows = _json_rows(raw_rows)
                     error_type = None
                 elif _is_validation_error(error):
                     error_type = "validation"
@@ -432,7 +377,7 @@ def run_statement(
     started = time.perf_counter()
     params = _scope_params(partnership_id, brand_id, distributor_id, actor_id(db, session_id))
     ok, error, clean, raw_rows = _run(db, sql, params)
-    rows = _rows_for_prompt(raw_rows) if ok and raw_rows is not None else []
+    rows = _json_rows(raw_rows) if ok and raw_rows is not None else []
     error_type = None
     if not ok:
         error_type = "validation" if _is_validation_error(error) else "execution"
@@ -454,9 +399,10 @@ def _reflect(question: str, result: QueryResult, trace: _RunTrace | None = None)
             "question": question,
             "tables": result.tables,
             "row_count": result.row_count,
-            "rows": result.rows[:20],
+            "rows": _rows_for_prompt(result.rows)[:20],
         }, ensure_ascii=False),
         trace=trace,
+        purpose="data.score",
     )
     retry = str(raw.get("retry_question") or "").strip()[:_MAX_QUESTION]
     return _clamp_score(raw.get("score")), retry

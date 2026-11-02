@@ -9,13 +9,21 @@ per class and the queue mixin could not call them.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from ...services.run_names import (
+    RUN_EVENT_CHANNEL,
+    OutboxStatus,
+    RunStatus,
+    StepEvent,
+    ToolCallStatus,
+    event_display,
+)
 from .. import orm
 from .support import (
     ALLOWED_RUN_TRANSITIONS,
@@ -25,6 +33,35 @@ from .support import (
     _row_dict,
     utcnow,
 )
+
+# Prometheus histogram edges, in seconds. The last bucket is +Inf and is the row count.
+_DURATION_EDGES = (1, 5, 15, 30, 60, 120, 300)
+_LAG_EDGES = (0.1, 0.3, 1, 5, 10, 30, 60)
+_MODEL_EDGES = (0.5, 1, 2, 5, 10, 30, 60)
+
+
+def _histogram(
+    s: Session, seconds: Any, edges: tuple[float, ...], *filters: Any, joined: type | None = None,
+) -> dict[str, Any]:
+    columns: list[Any] = [func.count().filter(seconds <= edge) for edge in edges]
+    columns.append(func.count())
+    columns.append(func.coalesce(func.sum(seconds), 0))
+    columns.append(func.percentile_cont(0.95).within_group(seconds))
+    query = select(*columns)
+    if joined is orm.ModelCall:
+        query = query.select_from(orm.ModelCall).join(
+            orm.AgentRun, orm.ModelCall.run_id == orm.AgentRun.id,
+        )
+    row = s.execute(query.where(*filters)).one()
+    width = len(edges)
+    p95 = row[width + 2]
+    return {
+        "edges": list(edges),
+        "buckets": [int(row[index] or 0) for index in range(width)],
+        "count": int(row[width] or 0),
+        "sum": float(row[width + 1] or 0),
+        "p95": None if p95 is None else float(p95),
+    }
 
 
 class RunMixin:
@@ -45,8 +82,8 @@ class RunMixin:
             ).first()
             return _row_dict(row) if row else None
 
-    def list_run_events(self, org_id: str, run_id: str) -> list[dict[str, Any]] | None:
-        """Events in `sequence` order, or None when this org has no such run."""
+    def list_run_events(self, org_id: str, run_id: str, after: int = 0) -> list[dict[str, Any]] | None:
+        """Events with `sequence` greater than `after`, in order. None when this org has no such run."""
         with self.tx() as s:
             owned = s.scalars(
                 select(orm.AgentRun.id).where(orm.AgentRun.id == run_id, orm.AgentRun.org_id == org_id)
@@ -54,7 +91,9 @@ class RunMixin:
             if owned is None:
                 return None
             rows = s.scalars(
-                select(orm.RunEvent).where(orm.RunEvent.run_id == run_id).order_by(orm.RunEvent.sequence)
+                select(orm.RunEvent)
+                .where(orm.RunEvent.run_id == run_id, orm.RunEvent.sequence > after)
+                .order_by(orm.RunEvent.sequence)
             )
             return [_row_dict(row) for row in rows]
 
@@ -122,16 +161,8 @@ class RunMixin:
         event_payload.update(payload)
         self._append_event(s, run.id, RUN_TRANSITION_EVENTS[(source, to_status)], event_payload, now)
         self._append_audit(s, run, event_payload, now, who)
-        if source == "waiting_for_user" and to_status == "queued":
-            s.add(orm.OutboxJob(
-                id=f"obx_{uuid.uuid4().hex}",
-                job_type="execute_run",
-                payload_json={"run_id": run.id},
-                status="pending",
-                next_attempt_at=now,
-                created_at=now,
-                dispatch_at=now,
-            ))
+        if source == RunStatus.WAITING_FOR_USER and to_status == RunStatus.QUEUED:
+            self._add_execute_outbox(s, run, now)
             s.flush()
 
     def _apply_status_fields(
@@ -146,32 +177,32 @@ class RunMixin:
         error: dict[str, Any] | None = None,
     ) -> None:
         """Columns that ride along with the status. The event is written by `_transition`.
-        `agent_runs.attempts` counts entries into `running`. The retry budget that
-        dead-letters a job is still `job_queue.attempts`, counted in `schedule_retry`.
+        `agent_runs.attempts` counts entries into `running`. The execution budget
+        that dead-letters a run lives on the outbox row, counted in `schedule_retry`.
         """
-        if to_status == "running":
+        if to_status == RunStatus.RUNNING:
             if run.started_at is None:
                 run.started_at = now
             run.attempts = int(run.attempts) + 1
             run.lease_owner = lease_owner
             run.lease_expires_at = lease_expires_at
-        elif to_status == "waiting_for_user":
+        elif to_status == RunStatus.WAITING_FOR_USER:
             run.lease_owner = None
             run.lease_expires_at = None
-        elif to_status == "queued":
+        elif to_status == RunStatus.QUEUED:
             run.lease_owner = None
             run.lease_expires_at = None
             if error is not None:
                 run.error_json = error
-        elif to_status == "succeeded":
+        elif to_status == RunStatus.SUCCEEDED:
             run.output_json = output
             run.ended_at = now
-        elif to_status == "failed":
+        elif to_status == RunStatus.FAILED:
             run.error_json = error
             run.ended_at = now
             run.lease_owner = None
             run.lease_expires_at = None
-        elif to_status == "cancelled":
+        elif to_status == RunStatus.CANCELLED:
             run.ended_at = now
             run.lease_owner = None
             run.lease_expires_at = None
@@ -192,14 +223,14 @@ class RunMixin:
             ).first()
             if run is None:
                 return None
-            if run.status != "running":
+            if run.status != RunStatus.RUNNING:
                 return _row_dict(run)
             run.cancel_requested_at = now
             run.updated_at = now
-            payload: dict[str, Any] = {"status": "running"}
+            payload: dict[str, Any] = {"status": RunStatus.RUNNING}
             if reason:
                 payload["reason"] = reason
-            self._append_event(s, run_id, "run.cancel_requested", payload, now)
+            self._append_event(s, run_id, StepEvent.RUN_CANCEL_REQUESTED, payload, now)
             s.flush()
             return _row_dict(run)
 
@@ -209,16 +240,23 @@ class RunMixin:
         with self.tx() as s:
             run = s.scalars(
                 select(orm.AgentRun)
-                .where(orm.AgentRun.id == run_id, orm.AgentRun.status == "running")
+                .where(orm.AgentRun.id == run_id, orm.AgentRun.status == RunStatus.RUNNING)
                 .with_for_update()
             ).first()
             if run is None or run.cancel_requested_at is None:
                 return None
-            self._transition(s, run, "cancelled", {"status": "cancelled"}, now)
+            self._transition(s, run, RunStatus.CANCELLED, {"status": RunStatus.CANCELLED}, now)
             s.flush()
             return _row_dict(run)
 
-    @staticmethod 
+    @staticmethod
+    def _execute_payload(run: orm.AgentRun) -> dict[str, Any]:
+        payload: dict[str, Any] = {"run_id": run.id}
+        if isinstance(run.trace_id, str) and run.trace_id:
+            payload["trace_id"] = run.trace_id
+        return payload
+
+    @staticmethod
     def _append_event(
         s: Session,
         run_id: str,
@@ -226,18 +264,37 @@ class RunMixin:
         payload: dict[str, Any],
         now: datetime,
     ) -> orm.RunEvent:
+        # Serialize sequence assignment on this run. A second lock in the same
+        # transaction is the one `_transition` already holds.
+        s.scalars(
+            select(orm.AgentRun).where(orm.AgentRun.id == run_id).with_for_update()
+        ).first()
         current = s.scalar(
             select(func.max(orm.RunEvent.sequence)).where(orm.RunEvent.run_id == run_id)
         )
+        body = dict(payload)
+        if not (isinstance(body.get("display"), str) and body["display"].strip()):
+            sentence = event_display(event_type, body)
+            if sentence:
+                body["display"] = sentence
         event = orm.RunEvent(
             id=f"evt_{uuid.uuid4().hex}",
             run_id=run_id,
             sequence=int(current or 0) + 1,
             event_type=event_type,
-            payload_json=payload,
+            payload_json=body,
             created_at=now,
         )
         s.add(event)
+        # NOTIFY is delivered on commit. A failure here must not roll back the event.
+        try:
+            with s.begin_nested():
+                s.execute(
+                    text("SELECT pg_notify(:channel, :payload)"),
+                    {"channel": RUN_EVENT_CHANNEL, "payload": run_id},
+                )
+        except Exception:
+            pass
         return event
 
     def _append_audit(
@@ -283,6 +340,10 @@ class RunMixin:
         idempotency_key: str,
         run_input: dict[str, Any],
         parent_run_id: str | None = None,
+        max_model_calls: int | None = None,
+        max_tokens: int | None = None,
+        max_tool_calls: int | None = None,
+        max_duration_seconds: int | None = None,
     ) -> tuple[dict[str, Any], bool]:
         """Insert the queued run, `run.created`, and a pending `execute_run` outbox row together.
 
@@ -298,27 +359,24 @@ class RunMixin:
                     user_id=user_id,
                     run_type=run_type,
                     idempotency_key=idempotency_key,
-                    status="queued",
+                    status=RunStatus.QUEUED,
                     input_json=run_input,
                     parent_run_id=parent_run_id,
+                    trace_id=uuid.uuid4().hex,
+                    max_model_calls=max_model_calls,
+                    max_tokens=max_tokens,
+                    max_tool_calls=max_tool_calls,
+                    max_duration_seconds=max_duration_seconds,
                     created_at=now,
                     updated_at=now,
                 )
                 s.add(run)
                 s.flush()
-                created = {"status": "queued"}
+                created = {"status": RunStatus.QUEUED}
                 if parent_run_id is not None:
                     created["parent_run_id"] = parent_run_id
-                self._append_event(s, run_id, "run.created", created, now)
-                s.add(orm.OutboxJob(
-                    id=f"obx_{uuid.uuid4().hex}",
-                    job_type="execute_run",
-                    payload_json={"run_id": run_id},
-                    status="pending",
-                    next_attempt_at=now,
-                    created_at=now,
-                    dispatch_at=now,
-                ))
+                self._append_event(s, run_id, StepEvent.RUN_CREATED, created, now)
+                self._add_execute_outbox(s, run, now)
                 s.flush()
                 return _row_dict(run), True
         except IntegrityError:
@@ -339,26 +397,26 @@ class RunMixin:
         with self.tx() as s:
             run = s.scalars(
                 select(orm.AgentRun)
-                .where(orm.AgentRun.id == run_id, orm.AgentRun.status == "queued")
+                .where(orm.AgentRun.id == run_id, orm.AgentRun.status == RunStatus.QUEUED)
                 .with_for_update()
             ).first()
             if run is None:
                 return None
-            self._transition(s, run, "running", {"lease_owner": worker_id}, now, lease_owner=worker_id, lease_expires_at=lease_expires_at)
+            self._transition(s, run, RunStatus.RUNNING, {"lease_owner": worker_id}, now, lease_owner=worker_id, lease_expires_at=lease_expires_at)
             s.flush()
             return _row_dict(run)
 
     def claim_chat_turn(self, run_id: str, worker_id: str, lease_expires_at: datetime) -> dict[str, Any] | None:
-        """Claim a queued chat turn when that session has no other running run."""
+        """Claim a queued run. A chat turn also waits while that session is already running."""
         now = utcnow()
         with self.tx() as s:
             run = s.scalars(
                 select(orm.AgentRun)
-                .where(orm.AgentRun.id == run_id, orm.AgentRun.status == "queued")
+                .where(orm.AgentRun.id == run_id, orm.AgentRun.status == RunStatus.QUEUED)
                 .with_for_update()
             ).first()
             if run is None:
-                return None 
+                return None
             payload = run.input_json if isinstance(run.input_json, dict) else {}
             session_id = payload.get("session_id")
             if run.run_type == "chat" and isinstance(session_id, str) and session_id:
@@ -371,7 +429,7 @@ class RunMixin:
                     select(orm.AgentRun.id)
                     .where(
                         orm.AgentRun.id != run_id,
-                        orm.AgentRun.status == "running",
+                        orm.AgentRun.status == RunStatus.RUNNING,
                         orm.AgentRun.run_type == "chat",
                         orm.AgentRun.input_json["session_id"].as_string() == session_id,
                     )
@@ -379,92 +437,270 @@ class RunMixin:
                 ).first()
                 if other is not None:
                     raise ChatTurnBusy(run_id)
-            job = s.scalars(
-                select(orm.JobQueue)
-                .where(
-                    orm.JobQueue.status == "queued",
-                    orm.JobQueue.job_type == "execute_run",
-                    orm.JobQueue.payload_json["run_id"].as_string() == run_id,
-                )
-                .with_for_update()
-            ).first()
-            if job is not None:
-                return None
-            job.status = "running"
-            job.lock_by = worker_id
             self._transition(
-                s, run, "running", {"lease_owner": worker_id}, now, 
-                lease_owner=worker_id, lease_expires_at=lease_expires_at
+                s, run, RunStatus.RUNNING, {"lease_owner": worker_id}, now,
+                lease_owner=worker_id, lease_expires_at=lease_expires_at,
             )
             s.flush()
-            return _row_dict(run), str(job.id)
+            return _row_dict(run)
 
     def sweep_expired_leases(self, limit: int = 100) -> int:
-        """Return expired running leases to the queue. This does not spend a retry. 
+        """Return expired running leases to queued and append a new execute outbox.
 
-        A run that already has `cancel_requested_at` is cancelled, and its running 
-        queue row is acknowledged. `LeaseLost` acknowledges the queue row and leaves
-        the run `running`, so a run with no running queue row gets a new outbox row. 
+        This does not spend an execution attempt. A run that already asked to cancel
+        is cancelled and does not get another outbox row.
         """
         now = utcnow()
         with self.tx() as s:
             runs = list(s.scalars(
                 select(orm.AgentRun)
                 .where(
-                    orm.AgentRun.status == "running", 
+                    orm.AgentRun.status == RunStatus.RUNNING,
                     orm.AgentRun.lease_expires_at.is_not(None),
-                    orm.AgentRun.lease_expires_at < now
+                    orm.AgentRun.lease_expires_at < now,
                 )
                 .order_by(orm.AgentRun.lease_expires_at)
                 .limit(limit)
                 .with_for_update()
             ))
+            from .queue import EXECUTION_MAX_ATTEMPTS
+
             for run in runs:
                 if run.cancel_requested_at is not None:
                     self._transition(
-                        s, run, "cancelled", {"reason": "lease_expired"}, now, 
-                        actor_type="sweeper", actor_id="lease-sweep"
+                        s, run, RunStatus.CANCELLED, {"reason": "lease_expired"}, now,
+                        actor_type="sweeper", actor_id="lease-sweep",
                     )
-                    self._finish_leased_jobs(s, run.id, now)
-                    continue 
+                    continue
+                if int(run.attempts) >= EXECUTION_MAX_ATTEMPTS:
+                    self._transition(
+                        s, run, RunStatus.FAILED, {"reason": "lease_expired"}, now,
+                        error={"kind": "transient", "message": "execution attempts exhausted"},
+                        actor_type="sweeper", actor_id="lease-sweep",
+                    )
+                    continue
                 self._transition(
-                    s, run, "queued", {"reason": "lease_expired"}, now,
-                    actor_type="sweeper", actor_id="lease-sweep"
+                    s, run, RunStatus.QUEUED, {"reason": "lease_expired"}, now,
+                    actor_type="sweeper", actor_id="lease-sweep",
                 )
-                if not self._requeue_leased_jobs(s, run.id, now):
-                    self._add_execute_outbox(s, run.id, now)
+                self._add_execute_outbox(s, run, now)
+                self._append_event(
+                    s, run.id, StepEvent.RUN_REQUEUED_BY_SWEEPER, {"reason": "lease_expired"}, now,
+                )
             s.flush()
             return len(runs)
 
-    def _leased_jobs(self, s: Session, run_id: str) -> list[orm.JobQueue]:
-        return list(s.scalars(
-            select(orm.JobQueue)
-            .where(orm.JobQueue.status == "running", orm.JobQueue.payload_json["run_id"].as_string() == run_id)
-            .with_for_update()
-        ))
+    def sweep_attention(
+        self,
+        *,
+        queue_after: timedelta = timedelta(minutes=10),
+        waiting_after: timedelta = timedelta(days=1),
+        tool_after: timedelta = timedelta(seconds=90),
+        limit: int = 100,
+    ) -> None:
+        """Note stale queue and confirmation rows, and close side effects left running.
 
-    def _requeue_leased_jobs(self, s: Session, run_id: str, now: datetime) -> bool:
-        jobs = self._leased_jobs(s, run_id)
-        for job in jobs:
-            job.status = "queued"
-            job.lock_by = None
-            job.lock_until = None
-            job.available_at = now
-            job.last_error_json = {"kind": "lease_expired", "message": "lease expired"}
-        return bool(jobs)
+        Run status changes go through `_transition`. A reminder does not change status
+        and does not confirm or skip a tool. `waiting_for_user` is left waiting.
+        """
+        now = utcnow()
+        self._note_stale_queued(now - queue_after, limit)
+        self._note_waiting(now - waiting_after, limit)
+        self._fail_over_duration(now, limit)
+        self._lose_side_effects(now - tool_after, limit)
 
-    def _finish_leased_jobs(self, s: Session, run_id: str, now: datetime) -> None:
-        for job in self._leased_jobs(s, run_id):
-            job.status = "succeeded"
-            job.finished_at = now
+    def unclaimed_dispatches(self, older_than: datetime, limit: int = 100) -> list[dict[str, Any]]:
+        """Dispatched execute rows whose run is still queued. The caller publishes again."""
+        with self.tx() as s:
+            rows = s.scalars(
+                select(orm.OutboxJob)
+                .where(
+                    orm.OutboxJob.job_type == "execute_run",
+                    orm.OutboxJob.status == OutboxStatus.DISPATCHED,
+                    orm.OutboxJob.dispatch_at < older_than,
+                )
+                .order_by(orm.OutboxJob.dispatch_at)
+                .limit(limit)
+            )
+            payloads: list[dict[str, Any]] = []
+            for job in rows:
+                payload = job.payload_json if isinstance(job.payload_json, dict) else {}
+                run_id = payload.get("run_id")
+                if not isinstance(run_id, str):
+                    continue
+                run = s.get(orm.AgentRun, run_id)
+                if run is not None and run.status == RunStatus.QUEUED:
+                    payloads.append(dict(payload))
+            return payloads
 
-    @staticmethod
-    def _add_execute_outbox(s: Session, run_id: str, now: datetime) -> None:
+    def _note_stale_queued(self, cutoff: datetime, limit: int) -> None:
+        now = utcnow()
+        with self.tx() as s:
+            runs = list(s.scalars(
+                select(orm.AgentRun)
+                .where(orm.AgentRun.status == RunStatus.QUEUED, orm.AgentRun.updated_at < cutoff)
+                .order_by(orm.AgentRun.updated_at)
+                .limit(limit)
+            ))
+            for run in runs:
+                dispatched = s.scalars(
+                    select(orm.OutboxJob.id)
+                    .where(
+                        orm.OutboxJob.status == OutboxStatus.DISPATCHED,
+                        orm.OutboxJob.payload_json["run_id"].as_string() == run.id,
+                    )
+                    .limit(1)
+                ).first()
+                if dispatched is None or self._has_event(s, run.id, StepEvent.RUN_QUEUE_STALE):
+                    continue
+                self._append_event(s, run.id, StepEvent.RUN_QUEUE_STALE, {"reason": "queue_unclaimed"}, now)
+            s.flush()
+
+    def _note_waiting(self, cutoff: datetime, limit: int) -> None:
+        now = utcnow()
+        with self.tx() as s:
+            runs = list(s.scalars(
+                select(orm.AgentRun)
+                .where(
+                    orm.AgentRun.status == RunStatus.WAITING_FOR_USER,
+                    orm.AgentRun.updated_at < cutoff,
+                )
+                .order_by(orm.AgentRun.updated_at)
+                .limit(limit)
+            ))
+            for run in runs:
+                if self._has_event(s, run.id, StepEvent.RUN_WAITING_REMINDER):
+                    continue
+                self._append_event(
+                    s, run.id, StepEvent.RUN_WAITING_REMINDER, {"reason": "waiting_for_user"}, now,
+                )
+            s.flush()
+
+    def _fail_over_duration(self, now: datetime, limit: int) -> None:
+        with self.tx() as s:
+            runs = list(s.scalars(
+                select(orm.AgentRun)
+                .where(
+                    orm.AgentRun.status == RunStatus.RUNNING,
+                    orm.AgentRun.max_duration_seconds.is_not(None),
+                    orm.AgentRun.started_at.is_not(None),
+                )
+                .limit(limit)
+                .with_for_update()
+            ))
+            for run in runs:
+                cap = int(run.max_duration_seconds or 0)
+                started = run.started_at
+                if started is None or now < started + timedelta(seconds=cap):
+                    continue
+                if run.cancel_requested_at is not None:
+                    self._transition(
+                        s, run, RunStatus.CANCELLED, {"reason": "duration"}, now,
+                        actor_type="sweeper", actor_id="duration",
+                    )
+                    continue
+                self._transition(
+                    s, run, RunStatus.FAILED, {"reason": "duration"}, now,
+                    error={
+                        "kind": "permanent",
+                        "code": "COST_BUDGET_EXCEEDED",
+                        "message": "run duration exceeded",
+                    },
+                    actor_type="sweeper", actor_id="duration",
+                )
+            s.flush()
+
+    def _lose_side_effects(self, cutoff: datetime, limit: int) -> None:
+        with self.tx() as s:
+            rows = list(s.scalars(
+                select(orm.ToolCall)
+                .where(
+                    orm.ToolCall.status == "running",
+                    orm.ToolCall.started_at.is_not(None),
+                    orm.ToolCall.started_at < cutoff,
+                    or_(
+                        orm.ToolCall.tool_name == "send_email",
+                        orm.ToolCall.idempotency_key.startswith("send_email:"),
+                        orm.ToolCall.idempotency_key.startswith("mcp:"),
+                    ),
+                )
+                .limit(limit)
+            ))
+            ids = [row.id for row in rows]
+        for tool_call_id in ids:
+            try:
+                self.complete_tool_call(
+                    tool_call_id, result={}, status="response_lost", latency_ms=0,
+                    error={"code": "TOOL_TIMEOUT", "message": "side effect was left running", "retryable": False},
+                    audit=True, manual_review=True,
+                )
+            except Exception:
+                continue
+
+    def _has_event(self, s: Session, run_id: str, event_type: str) -> bool:
+        found = s.scalars(
+            select(orm.RunEvent.id)
+            .where(orm.RunEvent.run_id == run_id, orm.RunEvent.event_type == event_type)
+            .limit(1)
+        ).first()
+        return found is not None
+
+    def org_daily_usage(self, org_id: str) -> dict[str, int]:
+        """Tokens and estimated cents stored for this distributor since UTC midnight."""
+        start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        with self.tx() as s:
+            tokens = s.scalar(
+                select(func.coalesce(func.sum(orm.UsageRecord.total_tokens), 0)).where(
+                    orm.UsageRecord.org_id == org_id, orm.UsageRecord.created_at >= start,
+                )
+            )
+            cost = s.scalar(
+                select(func.coalesce(func.sum(orm.UsageRecord.estimated_cost_cents), 0)).where(
+                    orm.UsageRecord.org_id == org_id, orm.UsageRecord.created_at >= start,
+                )
+            )
+            return {"total_tokens": int(tokens or 0), "estimated_cost_cents": int(cost or 0)}
+
+    def record_repair(
+        self,
+        org_id: str,
+        run_id: str,
+        user_id: str,
+        *,
+        reason: str,
+        before: dict[str, Any],
+        after: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Write an audit row for a hand edit. The run status is not changed."""
+        now = utcnow()
+        with self.tx() as s:
+            run = s.scalars(
+                select(orm.AgentRun)
+                .where(orm.AgentRun.id == run_id, orm.AgentRun.org_id == org_id)
+                .with_for_update()
+            ).first()
+            if run is None:
+                return None
+            s.add(orm.AuditLog(
+                id=f"aud_{uuid.uuid4().hex}",
+                user_id=user_id,
+                org_id=org_id,
+                run_id=run.id,
+                action="data.repair",
+                target_type="agent_run",
+                target_id=run.id,
+                metadata_json={"reason": reason, "before": before, "after": after},
+                created_at=now,
+            ))
+            s.flush()
+            return _row_dict(run)
+
+    def _add_execute_outbox(self, s: Session, run: orm.AgentRun, now: datetime) -> None:
         s.add(orm.OutboxJob(
             id=f"obx_{uuid.uuid4().hex}",
             job_type="execute_run",
-            payload_json={"run_id": run_id},
-            status="pending",
+            payload_json=self._execute_payload(run),
+            status=OutboxStatus.PENDING,
             next_attempt_at=now,
             created_at=now,
             dispatch_at=now,
@@ -476,14 +712,14 @@ class RunMixin:
         with self.tx() as s:
             run = s.scalars(
                 select(orm.AgentRun)
-                .where(orm.AgentRun.id == run_id, orm.AgentRun.status == "running")
+                .where(orm.AgentRun.id == run_id, orm.AgentRun.status == RunStatus.RUNNING)
                 .with_for_update()
             ).first()
             if run is None:
                 return None
             if run.cancel_requested_at is not None:
                 return None
-            self._transition(s, run, "succeeded", {"status": "succeeded"}, now, output=output)
+            self._transition(s, run, RunStatus.SUCCEEDED, {"status": RunStatus.SUCCEEDED}, now, output=output)
             s.flush()
             return _row_dict(run)
 
@@ -495,7 +731,7 @@ class RunMixin:
         with self.tx() as s:
             run = s.scalars(
                 select(orm.AgentRun)
-                .where(orm.AgentRun.id == run_id, orm.AgentRun.status == "running")
+                .where(orm.AgentRun.id == run_id, orm.AgentRun.status == RunStatus.RUNNING)
                 .with_for_update()
             ).first()
             if run is None:
@@ -513,12 +749,12 @@ class RunMixin:
         with self.tx() as s:
             run = s.scalars(
                 select(orm.AgentRun)
-                .where(orm.AgentRun.id == run_id, orm.AgentRun.status == "running")
+                .where(orm.AgentRun.id == run_id, orm.AgentRun.status == RunStatus.RUNNING)
                 .with_for_update()
             ).first()
             if run is None or run.cancel_requested_at is not None:
                 return None
-            self._transition(s, run, "waiting_for_user", payload or {}, now)
+            self._transition(s, run, RunStatus.WAITING_FOR_USER, payload or {}, now)
             s.flush()
             return _row_dict(run)
 
@@ -541,7 +777,154 @@ class RunMixin:
                 "model_calls": self._run_rows(s, orm.ModelCall, orm.ModelCall.created_at, run_id),
                 "tool_calls": self._run_rows(s, orm.ToolCall, orm.ToolCall.created_at, run_id),
                 "checkpoints": self._run_rows(s, orm.Checkpoint, orm.Checkpoint.checkpoint_index, run_id),
+                "outbox": self._payload_rows(s, orm.OutboxJob, run_id),
+                "dead_letters": self._payload_rows(s, orm.DeadLetterJob, run_id),
             }
+
+    def list_agent_runs(
+        self, org_id: str, *, user_id: str | None, status: str | None, limit: int,
+    ) -> list[dict[str, Any]]:
+        """Newest runs for this distributor. `user_id` and `status` narrow the same org."""
+        with self.tx() as s:
+            query = select(orm.AgentRun).where(orm.AgentRun.org_id == org_id)
+            if user_id:
+                query = query.where(orm.AgentRun.user_id == user_id)
+            if status:
+                query = query.where(orm.AgentRun.status == status)
+            query = query.order_by(orm.AgentRun.created_at.desc(), orm.AgentRun.id.desc()).limit(limit)
+            return [_row_dict(row) for row in s.scalars(query)]
+
+    def monitor_facts(self, org_id: str) -> dict[str, Any]:
+        """Counts and latency distributions already stored for this distributor.
+
+        Queue depth and the SSE gauge are not in these tables. The monitor reads those
+        from Redis and leaves this method as the ledger.
+        """
+        now = utcnow()
+        day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        stuck_queued = and_(
+            orm.AgentRun.status == RunStatus.QUEUED,
+            orm.AgentRun.created_at <= now - timedelta(minutes=10),
+        )
+        stuck_running = and_(
+            orm.AgentRun.status == RunStatus.RUNNING,
+            orm.AgentRun.lease_expires_at.is_not(None),
+            orm.AgentRun.lease_expires_at < now,
+        )
+        with self.tx() as s:
+            org = orm.AgentRun.org_id == org_id
+            duration = func.extract("epoch", orm.AgentRun.ended_at - orm.AgentRun.started_at)
+            lag = func.extract(
+                "epoch", func.coalesce(orm.AgentRun.started_at, func.now()) - orm.AgentRun.created_at,
+            )
+            model_seconds = orm.ModelCall.latency_ms / 1000.0
+            facts = {
+                "created": self._count(s, orm.AgentRun, org),
+                "succeeded": self._count(s, orm.AgentRun, org, orm.AgentRun.status == RunStatus.SUCCEEDED),
+                "failed": self._count(s, orm.AgentRun, org, orm.AgentRun.status == RunStatus.FAILED),
+                "duration": _histogram(
+                    s, duration, _DURATION_EDGES,
+                    org, orm.AgentRun.started_at.is_not(None), orm.AgentRun.ended_at.is_not(None),
+                ),
+                "queue_lag": _histogram(s, lag, _LAG_EDGES, org),
+                "model_latency": _histogram(
+                    s, model_seconds, _MODEL_EDGES,
+                    org, orm.ModelCall.latency_ms.is_not(None),
+                    joined=orm.ModelCall,
+                ),
+                "model_errors": self._count(
+                    s, orm.ModelCall, org, orm.ModelCall.status == "failed", joined=orm.ModelCall,
+                ),
+                "model_rate_limited": self._count(
+                    s, orm.ModelCall, org,
+                    orm.ModelCall.error_json["code"].astext == "RATE_LIMITED",
+                    joined=orm.ModelCall,
+                ),
+                "tool_calls": self._count(s, orm.ToolCall, orm.ToolCall.org_id == org_id),
+                "tool_errors": self._count(
+                    s, orm.ToolCall, orm.ToolCall.org_id == org_id,
+                    orm.ToolCall.status.in_((ToolCallStatus.FAILED, ToolCallStatus.RESPONSE_LOST)),
+                ),
+                "tool_timeouts": self._count(
+                    s, orm.ToolCall, orm.ToolCall.org_id == org_id,
+                    orm.ToolCall.error_json["code"].astext == "TOOL_TIMEOUT",
+                ),
+                "send_email_calls": self._count(
+                    s, orm.ToolCall, orm.ToolCall.org_id == org_id, orm.ToolCall.tool_name == "send_email",
+                ),
+                "send_email_errors": self._count(
+                    s, orm.ToolCall, orm.ToolCall.org_id == org_id, orm.ToolCall.tool_name == "send_email",
+                    orm.ToolCall.status.in_((ToolCallStatus.FAILED, ToolCallStatus.RESPONSE_LOST)),
+                ),
+                "mcp_calls": self._count(
+                    s, orm.ToolCall, orm.ToolCall.org_id == org_id,
+                    orm.ToolCall.idempotency_key.startswith("mcp:"),
+                ),
+                "mcp_errors": self._count(
+                    s, orm.ToolCall, orm.ToolCall.org_id == org_id,
+                    orm.ToolCall.idempotency_key.startswith("mcp:"),
+                    orm.ToolCall.status.in_((ToolCallStatus.FAILED, ToolCallStatus.RESPONSE_LOST)),
+                ),
+                "duplicates": self._count(
+                    s, orm.RunEvent, org, orm.RunEvent.payload_json["skipped_duplicate"].astext == "true",
+                    joined=orm.RunEvent,
+                ),
+                "cost_cents": int(s.scalar(
+                    select(func.coalesce(func.sum(orm.UsageRecord.estimated_cost_cents), 0)).where(
+                        orm.UsageRecord.org_id == org_id,
+                    )
+                ) or 0),
+                "daily_cost_cents": int(s.scalar(
+                    select(func.coalesce(func.sum(orm.UsageRecord.estimated_cost_cents), 0)).where(
+                        orm.UsageRecord.org_id == org_id, orm.UsageRecord.created_at >= day,
+                    )
+                ) or 0),
+                "daily_tokens": int(s.scalar(
+                    select(func.coalesce(func.sum(orm.UsageRecord.total_tokens), 0)).where(
+                        orm.UsageRecord.org_id == org_id, orm.UsageRecord.created_at >= day,
+                    )
+                ) or 0),
+                "active_runs": self._count(
+                    s, orm.AgentRun, org, orm.AgentRun.status == RunStatus.RUNNING,
+                    or_(
+                        orm.AgentRun.lease_expires_at.is_(None),
+                        orm.AgentRun.lease_expires_at >= now,
+                    ),
+                ),
+                "stuck_runs": self._count(s, orm.AgentRun, org, or_(stuck_queued, stuck_running)),
+                "failed_codes": self._failed_codes(s, org_id),
+            }
+            return facts
+
+    @staticmethod
+    def _count(s: Session, model: type, *filters: Any, joined: type | None = None) -> int:
+        query = select(func.count()).select_from(model)
+        if joined is orm.ModelCall:
+            query = query.join(orm.AgentRun, orm.ModelCall.run_id == orm.AgentRun.id)
+        elif joined is orm.RunEvent:
+            query = query.join(orm.AgentRun, orm.RunEvent.run_id == orm.AgentRun.id)
+        return int(s.scalar(query.where(*filters)) or 0)
+
+    @staticmethod
+    def _failed_codes(s: Session, org_id: str) -> list[dict[str, Any]]:
+        code = func.coalesce(orm.AgentRun.error_json["code"].astext, "unknown")
+        rows = s.execute(
+            select(code, func.count())
+            .where(orm.AgentRun.org_id == org_id, orm.AgentRun.status == RunStatus.FAILED)
+            .group_by(code)
+            .order_by(func.count().desc())
+            .limit(5)
+        )
+        return [{"code": str(name), "count": int(count)} for name, count in rows]
+
+    @staticmethod
+    def _payload_rows(s: Session, model: type, run_id: str) -> list[dict[str, Any]]:
+        rows = s.scalars(
+            select(model)
+            .where(model.payload_json["run_id"].astext == run_id)
+            .order_by(model.created_at, model.id)
+        )
+        return [_row_dict(row) for row in rows]
 
     @staticmethod
     def _run_rows(s: Session, model: type, order: Any, run_id: str) -> list[dict[str, Any]]:

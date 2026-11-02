@@ -83,28 +83,144 @@ export type RunTrace = {
   events?: { event_type: string; payload_json?: { tool_name?: string } }[];
 };
 
+export type RunEvent = {
+  sequence: number;
+  event_type: string;
+  payload_json?: { tool_name?: string; display?: string };
+};
+
 const RUN_SETTLED = new Set(["succeeded", "failed", "cancelled", "waiting_for_user"]);
 
-export async function waitForRun(
+function authHeaders(orgId: string, userId: string): HeadersInit {
+  return { "X-Org-Id": orgId, "X-User-Id": userId };
+}
+
+export function getRunEvents(runId: string, orgId: string, userId: string, after = 0): Promise<RunEvent[]> {
+  const query = after > 0 ? `?after=${after}` : "";
+  return api<RunEvent[]>(`/api/runs/${encodeURIComponent(runId)}/events${query}`, {
+    headers: authHeaders(orgId, userId),
+  });
+}
+
+function parseSse(chunk: string): RunEvent | null {
+  let sequence = 0;
+  let eventType = "";
+  let data = "";
+  for (const line of chunk.split("\n")) {
+    if (!line || line.startsWith(":")) continue;
+    if (line.startsWith("id:")) sequence = Number(line.slice(3).trim());
+    else if (line.startsWith("event:")) eventType = line.slice(6).trim();
+    else if (line.startsWith("data:")) data = line.slice(5).trim();
+  }
+  if (!eventType || !Number.isInteger(sequence) || sequence <= 0) return null;
+  let payload: RunEvent["payload_json"] = {};
+  if (data) {
+    try {
+      const parsed = JSON.parse(data) as RunEvent["payload_json"];
+      if (parsed && typeof parsed === "object") payload = parsed;
+    } catch {
+      payload = {};
+    }
+  }
+  return { sequence, event_type: eventType, payload_json: payload };
+}
+
+/** Load the run and its public events, then follow the stream until it settles.
+
+The activity list comes from events. Reply text is read from the run, because
+writing that text does not append a `run_events` row.
+*/
+export async function followRun(
   runId: string,
   orgId: string,
   userId: string,
   signal?: AbortSignal,
-  onTrace?: (trace: RunTrace) => void,
+  onUpdate?: (events: RunEvent[], run: AgentRun) => void,
 ): Promise<AgentRun> {
-  for (;;) {
-    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    const trace = await getRunTrace(runId, orgId, userId);
-    onTrace?.(trace);
-    if (RUN_SETTLED.has(trace.run.status)) return trace.run;
-    await new Promise((resolve) => {
-      const timer = window.setTimeout(resolve, 800);
-      const abort = () => {
-        window.clearTimeout(timer);
-        resolve(undefined);
-      };
-      signal?.addEventListener("abort", abort, { once: true });
-    });
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+  const local = new AbortController();
+  const stop = () => local.abort();
+  signal?.addEventListener("abort", stop);
+  const seen: RunEvent[] = [];
+  const known = new Set<number>();
+  let after = 0;
+  let run = await getRun(runId, orgId, userId);
+
+  function add(events: RunEvent[]) {
+    for (const event of events) {
+      if (!Number.isInteger(event.sequence) || known.has(event.sequence)) continue;
+      known.add(event.sequence);
+      seen.push(event);
+      if (event.sequence > after) after = event.sequence;
+    }
+    seen.sort((left, right) => left.sequence - right.sequence);
+  }
+
+  add(await getRunEvents(runId, orgId, userId, 0));
+  onUpdate?.(seen, run);
+  if (RUN_SETTLED.has(run.status)) {
+    signal?.removeEventListener("abort", stop);
+    return run;
+  }
+
+  const headers = authHeaders(orgId, userId);
+  let closed = false;
+  const pump = (async () => {
+    while (!closed && !local.signal.aborted) {
+      try {
+        const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/events/stream?after=${after}`, {
+          headers,
+          signal: local.signal,
+        });
+        if (!res.ok || !res.body) throw new Error("stream closed");
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (closed || local.signal.aborted) return;
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const chunks = buf.split("\n\n");
+          buf = chunks.pop() ?? "";
+          const before = seen.length;
+          for (const chunk of chunks) {
+            const event = parseSse(chunk);
+            if (event) add([event]);
+          }
+          if (seen.length !== before) onUpdate?.(seen, run);
+        }
+      } catch {
+        if (closed || local.signal.aborted) return;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 400));
+    }
+  })();
+  void pump.catch(() => undefined);
+
+  try {
+    for (;;) {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+      run = await getRun(runId, orgId, userId);
+      if (RUN_SETTLED.has(run.status)) {
+        add(await getRunEvents(runId, orgId, userId, after));
+        onUpdate?.(seen, run);
+        return run;
+      }
+      onUpdate?.(seen, run);
+      await new Promise((resolve) => {
+        const timer = window.setTimeout(resolve, 800);
+        const abort = () => {
+          window.clearTimeout(timer);
+          resolve(undefined);
+        };
+        signal?.addEventListener("abort", abort, { once: true });
+      });
+    }
+  } finally {
+    closed = true;
+    local.abort();
+    signal?.removeEventListener("abort", stop);
   }
 }
 

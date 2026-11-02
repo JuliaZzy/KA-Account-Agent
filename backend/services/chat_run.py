@@ -1,13 +1,12 @@
 """Chat turns enter the queue. The worker claims and runs them.
 
 `enqueue_chat_run` writes the queued row and the outbox, then dispatches.
-It does not claim the job. Closing the HTTP stream is not a cancel.
+It does not claim the run. Closing the HTTP stream is not a cancel.
 """
 
 from __future__ import annotations
 
 import base64
-import logging
 import uuid
 from collections.abc import Callable
 from datetime import datetime
@@ -20,10 +19,9 @@ from ..repositories.run_repository import (
     find_agent_run_by_id,
 )
 from .dispatcher import dispatch_pending
-from .run_names import RunType
+from .run_names import RunType, ToolCallStatus
 from .run_worker import work_once
 
-log = logging.getLogger(__name__)
 
 def enqueue_chat_run(
     db: Database,
@@ -35,10 +33,13 @@ def enqueue_chat_run(
     model: str | None = None,
     attachments: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Create through the outbox and put the job on the queue. Do not claim it."""
+    """Create through the outbox and dispatch. Do not claim the run."""
     user_id = str(session.get("user_id") or "")
     if not user_id:
         raise ValueError("session has no user_id")
+    partnership = db.partnership(str(session["partnership_id"]))
+    if partnership is None:
+        raise ValueError("session has no partnership")
     key = f"chat:{session['id']}:{uuid.uuid4().hex}"
     filed = [
         {"name": name, "data": base64.b64encode(data).decode()}
@@ -46,7 +47,7 @@ def enqueue_chat_run(
         if name and data
     ]
     run, _created = create_agent_run(
-        db, str(session["partnership_id"]), user_id, RunType.CHAT, key, {
+        db, partnership.distributor_id, user_id, RunType.CHAT, key, {
             "session_id": session["id"],
             "message": (message or "")[:4000],
             "images": [url for url in (images or []) if isinstance(url, str)],
@@ -57,18 +58,6 @@ def enqueue_chat_run(
     )
     dispatch_pending(db)
     return run
-
-
-def wake_chat_worker(run_id: str) -> None:
-    """Ask the compose worker to claim this run. Tests call `work_chat` themselves."""
-    import os
-    if os.environ.get("PYTEST_CURRENT_TEST"):
-        return
-    try:
-        from ..celery.tasks import execute_run
-        execute_run.delay(run_id)
-    except Exception:
-        log.exception("chat worker was not woken for %s", run_id)
 
 
 def work_chat(db: Database, llm: Any, run_id: str | None = None) -> bool:
@@ -140,9 +129,11 @@ def desk_from_tools(
     extra: dict[str, Any] = {}
     fields: dict[str, Any] = {}
     side: list[dict[str, Any]] = []
-    trace = db.run_trace(session["partnership_id"], run_id) or {}
+    partnership = db.partnership(str(session["partnership_id"]))
+    org_id = partnership.distributor_id if partnership is not None else ""
+    trace = (db.run_trace(org_id, run_id) or {}) if org_id else {}
     for call in trace.get("tool_calls") or []:
-        if call.get("status") != "succeeded":
+        if call.get("status") != ToolCallStatus.SUCCEEDED:
             continue
         name = call.get("tool_name")
         payload = call.get("result_json") or {}

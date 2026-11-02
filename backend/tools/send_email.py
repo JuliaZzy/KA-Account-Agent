@@ -146,14 +146,50 @@ def send(
     }
 
 
+class MailError(Exception):
+    """A refusal before SMTP accepts the message. `code` is a `ToolErrorCode` value."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def preflight(arguments: dict[str, Any]) -> tuple[str, str] | None:
+    """Reject a message that must not be handed to SMTP.
+
+    None means the executor may claim the business key and call `run`.
+    A bad address or missing SMTP config stays out of that key, so a later
+    corrected call can still send.
+    """
+    to_address = _addr(arguments.get("to"))
+    cc_address = _addr(arguments.get("cc"))
+    subject = str(arguments.get("subject") or "").strip()
+    body = str(arguments.get("body") or "").strip()
+    if not _valid(to_address):
+        return ("TOOL_VALIDATION_ERROR", "to must be a valid email address")
+    if cc_address and not _valid(cc_address):
+        return ("TOOL_VALIDATION_ERROR", "cc must be a valid email address")
+    if not subject:
+        return ("TOOL_VALIDATION_ERROR", "subject required")
+    if not body:
+        return ("TOOL_VALIDATION_ERROR", "body required")
+    if env("EMAIL_DRY_RUN") in ("1", "true", "yes"):
+        return None
+    if not env("SMTP_HOST"):
+        return ("TOOL_UPSTREAM_ERROR", "SMTP_HOST is not set")
+    if not (env("SMTP_FROM") or env("SMTP_USER")).strip():
+        return ("TOOL_UPSTREAM_ERROR", "SMTP_FROM or SMTP_USER required")
+    return None
+
+
 def run(arguments: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
-    try:
-        data = send(
-            to=str(arguments.get("to") or ""),
-            subject=str(arguments.get("subject") or ""),
-            body=str(arguments.get("body") or ""),
-            cc=str(arguments.get("cc") or ""),
-        )
-        return {"ok": True, "data": data, "error": None}
-    except Exception as err:
-        return {"ok": False, "data": None, "error": str(err)}
+    refusal = preflight(arguments)
+    if refusal is not None:
+        raise MailError(*refusal)
+    data = send(
+        to=str(arguments.get("to") or ""),
+        subject=str(arguments.get("subject") or ""),
+        body=str(arguments.get("body") or ""),
+        cc=str(arguments.get("cc") or ""),
+    )
+    return {"ok": True, "data": data, "error": None}

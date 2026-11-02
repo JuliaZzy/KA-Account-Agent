@@ -56,6 +56,7 @@ def _search_query(
     try:
         raw = model_calls.school_json(
             model_calls.SCHOOL_CHAT,
+            client=llm,
             system=attach(FOLLOWUP, remembered),
             messages=[{"role": "user", "content": (
                 f"=== 最近对话 ===\n{recent}\n\n=== 最新消息 ===\n{text[:4000]}"

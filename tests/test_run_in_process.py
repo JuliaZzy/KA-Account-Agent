@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
-
 from backend.llm.types import AssistantTurn, ToolCall
 from backend.services.run_loop import Tool, ToolRegistry, run_in_this_process
 from backend.services.run_names import RunType
-from backend.services.run_worker import PermanentRunError, sweep_expired_leases
+from backend.services.run_worker import sweep_expired_leases
 
 
 def _echo_tools():
@@ -28,6 +26,7 @@ def _callers(decide, answer):
 
 def test_in_process_loop_consumes_the_outbox_and_writes_the_trace(make_db):
     db = make_db("in-process")
+    db.upsert_distributor("org-1", "Org 1")
     script = [
         AssistantTurn(
             content="先看一下",
@@ -51,7 +50,6 @@ def test_in_process_loop_consumes_the_outbox_and_writes_the_trace(make_db):
     assert row["status"] == "succeeded"
     assert row["output_json"]["text"] == "看到了 hi"
     assert db.find_pending_outbox_jobs() == []
-    assert db.claim_queued_job("worker-a") is None
     assert sweep_expired_leases(db) == 0
 
     trace = db.run_trace("org-1", row["id"])
@@ -70,6 +68,7 @@ def test_in_process_loop_consumes_the_outbox_and_writes_the_trace(make_db):
 
 def test_in_process_permanent_error_fails_the_job(make_db):
     db = make_db("in-process-fail")
+    db.upsert_distributor("org-1", "Org 1")
 
     def decide(context, schemas):
         return AssistantTurn(content="")
@@ -84,4 +83,3 @@ def test_in_process_permanent_error_fails_the_job(make_db):
     assert row["status"] == "failed"
     assert row["error_json"]["kind"] == "permanent"
     assert db.find_pending_outbox_jobs() == []
-    assert db.claim_queued_job("worker-a") is None

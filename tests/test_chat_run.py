@@ -23,19 +23,18 @@ def test_a_turn_enqueues_and_the_worker_records_the_loop(db):
     assert all(event.get("type") != "token" for event in events)
     assert all(event.get("type") != "done" for event in events)
 
-    queued = db.find_agent_run("ps-1", run_id)
+    queued = db.find_agent_run("dist-1", run_id)
     assert queued["status"] == "queued"
     assert queued["run_type"] == "chat"
     assert queued["user_id"] == "u-a"
 
     assert work_chat(db, llm, run_id) is True
-    run = db.find_agent_run("ps-1", run_id)
+    run = db.find_agent_run("dist-1", run_id)
     assert run["status"] == "succeeded"
     assert run["output_json"]["text"] == "Got it."
     assert db.find_pending_outbox_jobs() == []
-    assert db.claim_queued_job("worker-a") is None
 
-    trace = db.run_trace("ps-1", run_id)
+    trace = db.run_trace("dist-1", run_id)
     assert {step["name"] for step in trace["steps"]} == {"model"}
     assert [step["step_type"] for step in trace["steps"]] == ["model"]
     saved = db.session(sid)["history"][-1]
@@ -49,10 +48,10 @@ def test_closing_the_stream_leaves_the_run_queued(db):
     turn = handle_message(db, llm, sid, "hello")
     opened = next(turn)
     turn.close()
-    run = db.find_agent_run("ps-1", opened["run_id"])
+    run = db.find_agent_run("dist-1", opened["run_id"])
     assert run["status"] == "queued"
     assert work_chat(db, llm, opened["run_id"]) is True
-    run = db.find_agent_run("ps-1", opened["run_id"])
+    run = db.find_agent_run("dist-1", opened["run_id"])
     assert run["status"] == "succeeded"
 
 
@@ -62,7 +61,7 @@ def test_a_model_error_fails_the_run_on_the_worker(db):
     events = list(handle_message(db, llm, sid, "hello"))
     assert events[0]["type"] == "run"
     assert work_chat(db, llm, events[0]["run_id"]) is True
-    run = db.find_agent_run("ps-1", events[0]["run_id"])
+    run = db.find_agent_run("dist-1", events[0]["run_id"])
     assert run["status"] == "queued"
     assert run["error_json"]["kind"] == "transient"
 
@@ -84,9 +83,9 @@ def test_po_extract_is_recorded_on_the_chat_run(db):
     run_id = events[0]["run_id"]
     assert work_chat(db, llm, run_id) is True
 
-    run = db.find_agent_run("ps-1", run_id)
+    run = db.find_agent_run("dist-1", run_id)
     assert run["status"] == "succeeded"
-    trace = db.run_trace("ps-1", run_id)
+    trace = db.run_trace("dist-1", run_id)
     models = [row["model"] for row in trace["model_calls"]]
     assert "deepseek-flash" in models
     extract = next(row for row in trace["model_calls"] if row["model"] == "deepseek-flash")
@@ -130,9 +129,9 @@ def test_po_claim_is_recorded_on_the_chat_run(db):
     run_id = events[0]["run_id"]
     assert work_chat(db, llm, run_id) is True
 
-    run = db.find_agent_run("ps-1", run_id)
+    run = db.find_agent_run("dist-1", run_id)
     assert run["status"] == "succeeded"
-    trace = db.run_trace("ps-1", run_id)
+    trace = db.run_trace("dist-1", run_id)
     claim = next(row for row in trace["model_calls"] if row["model"] == "deepseek-chat")
     assert claim["status"] == "succeeded"
     assert claim["step_id"] == next(step["id"] for step in trace["steps"] if step["name"] == "po.draft")
@@ -165,9 +164,9 @@ def test_report_plan_is_recorded_on_the_chat_run(db):
     run_id = events[0]["run_id"]
     assert work_chat(db, llm, run_id) is True
 
-    run = db.find_agent_run("ps-1", run_id)
+    run = db.find_agent_run("dist-1", run_id)
     assert run["status"] == "succeeded"
-    trace = db.run_trace("ps-1", run_id)
+    trace = db.run_trace("dist-1", run_id)
     planned = next(
         row for row in trace["model_calls"]
         if row["model"] == "deepseek-reasoner"
@@ -183,12 +182,12 @@ def test_a_running_reply_is_visible_on_the_trace(db):
 
     from backend.db import utcnow
 
-    run, _created = db.create_agent_run("ps-1", "u-a", "chat", "partial-reply", {"message": "hello"})
+    run, _created = db.create_agent_run("dist-1", "u-a", "chat", "partial-reply", {"message": "hello"})
     assert db.note_running_reply(run["id"], "Hel") is None
     claimed = db.claim_run(run["id"], "worker-test", utcnow() + timedelta(minutes=5))
     assert claimed is not None
     assert db.note_running_reply(run["id"], "Hello")["output_json"]["text"] == "Hello"
-    trace = db.run_trace("ps-1", run["id"])
+    trace = db.run_trace("dist-1", run["id"])
     assert trace["run"]["status"] == "running"
     assert trace["run"]["output_json"]["text"] == "Hello"
 
@@ -213,6 +212,6 @@ def test_a_prose_reply_is_published_while_the_model_is_still_writing(db):
     assert seen[-1] == "Hello there friend"
     assert seen[0] != seen[-1]
     assert all(len(seen[i]) < len(seen[i + 1]) and seen[i + 1].startswith(seen[i]) for i in range(len(seen) - 1))
-    run = db.find_agent_run("ps-1", run_id)
+    run = db.find_agent_run("dist-1", run_id)
     assert run["status"] == "succeeded"
     assert run["output_json"]["text"] == "Hello there friend"

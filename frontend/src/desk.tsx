@@ -107,6 +107,7 @@ const NAV = [
   ["/contracts", "Contracts"],
   ["/reports", "Reports"],
   ["/memory", "Memory"],
+  ["/monitor", "Monitor"],
 ] as const;
 
 const CHAT_MENU = [

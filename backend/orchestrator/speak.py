@@ -116,7 +116,8 @@ def answer_directly(
         standing_block(db, session["partnership_id"], session.get("user_id")), summary_block(session.get("summary")),
     ))
     for chunk in model_calls.school_text(
-        model_calls.SCHOOL_CHAT, system=system, messages=_chat_messages(session, prompt_text or text),
+        model_calls.SCHOOL_CHAT, client=llm, system=system,
+        messages=_chat_messages(session, prompt_text or text),
     ):
         parts.append(chunk)
         yield {"type": "token", "text": chunk}

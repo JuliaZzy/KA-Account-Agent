@@ -13,7 +13,6 @@ text2sql 执行取数，并对返回的行打分。80 分及以上就用这些�
 from __future__ import annotations
 
 import json
-import time
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -21,8 +20,10 @@ from datetime import date
 from typing import Any
 
 from ..codefix import format_failures, with_reflection
+from ..config import LLMSettings
 from ..db import Database, utcnow
 from ..llm import calls as model_calls
+from ..llm.client import DeepSeekClient
 from ..memory import actor_id, attach, prompt_context, prompt_turns, standing_block, summary_block
 from ..text2sql import QueryResult, answer_question
 from ..text2sql.table_metadata import catalog_text
@@ -71,40 +72,22 @@ def _call_json(
     flash: bool = False,
     trace: _RunTrace | None = None,
 ) -> dict[str, Any]:
-    request = {"model": model, "system": system, "messages": messages, "schema": schema}
-    raw: dict[str, Any] = {}
-    error: Exception | None = None
-    started = time.perf_counter()
-    try:
-        if flash:
-            client = llm if callable(getattr(llm, "response", None)) else None 
-            raw = model_calls.flash_json(
-                system=system, messages=messages, schema=schema, temperature=temperature, client=client
-            )
-        else:
-            raw = model_calls.school_json(
-                model=model, system=system, messages=messages, schema=schema, temperature=temperature, client=llm
-            )
-    except Exception as e:
-        error = e
-    usage = getattr(llm, "last_usage", None)
+    ledger: dict[str, Any] = {}
     if trace is not None and trace.db is not None and trace.run_id and trace.step_id:
-        usage = usage if isinstance(usage, dict) else {}
-        trace.db.insert_model_call(
-            trace.run_id, trace.step_id,
-            provider=str(getattr(llm, "provider", None) or ("deepseek" if flash else "sjtu")),
-            model=model,
-            request=request,
-            response={"json": raw} if raw else {},
-            prompt_tokens=int(usage.get("prompt_tokens") or 0),
-            completion_tokens=int(usage.get("completion_tokens") or 0),
-            latency_ms=int((time.perf_counter() - started) * 1000),
-            status="failed" if error is not None else "succeeded",
-            error={"message": str(error)} if error is not None else None,
+        ledger = {
+            "db": trace.db, "run_id": trace.run_id, "step_id": trace.step_id, "purpose": "report",
+        }
+    if flash:
+        can_call = callable(getattr(llm, "response", None)) or callable(getattr(llm, "complete_json", None))
+        client = llm if can_call else DeepSeekClient(LLMSettings(base_url=None, api_key=""))
+        return model_calls.flash_json(
+            system=system, messages=messages, schema=schema, temperature=temperature,
+            client=client, **ledger,
         )
-    if error is not None:
-        raise error
-    return raw
+    return model_calls.school_json(
+        model=model, system=system, messages=messages, schema=schema, temperature=temperature,
+        client=llm, **ledger,
+    )
 
 @dataclass(frozen=True)
 class ReportDraft:

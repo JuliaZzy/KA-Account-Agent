@@ -489,6 +489,7 @@ class SJTUClient:
         stream: bool = False,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        top_p: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
     ) -> Any:
@@ -501,6 +502,8 @@ class SJTUClient:
             body["max_tokens"] = max_tokens
         if temperature is not None:
             body["temperature"] = temperature
+        if top_p is not None:
+            body["top_p"] = top_p
         if tools:
             body["tools"] = tools
         if tool_choice:

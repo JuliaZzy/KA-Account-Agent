@@ -19,6 +19,7 @@ import {
   revenueLabel,
   sumBy,
   unitsLabel,
+  activitiesFromEvents,
   stepsFromTrace,
 } from "./format";
 
@@ -143,6 +144,18 @@ describe("desk formatters", () => {
       [fact("units_sold", "FO-100", 60, "2025-08-01")],
     );
     expect(rows).toEqual([{ sku: "FO-100", product: "Fish Oil", ordered: 120, sold: 60, sellThrough: 0.5 }]);
+  });
+
+  it("paints a run timeline from event display text", () => {
+    expect(activitiesFromEvents([
+      { sequence: 2, event_type: "model.started", payload_json: { display: "正在思考", purpose: "hidden" } },
+      { sequence: 1, event_type: "run.created", payload_json: { display: "已开始" } },
+      { sequence: 3, event_type: "step.started", payload_json: {} },
+    ], "running")).toEqual([
+      { id: "1", title: "已开始", detail: "", state: "done" },
+      { id: "2", title: "正在思考", detail: "", state: "running" },
+    ]);
+    expect(activitiesFromEvents(null)).toEqual([]);
   });
 
   it("reads a run trace as the step list", () => {

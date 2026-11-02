@@ -14,7 +14,7 @@ import time
 
 from .config import env
 from .db import Database
-from .services.run_names import StepType, step_name
+from .services.run_names import StepStatus, StepType, ToolCallStatus, ToolErrorCode, step_name, tool_error
 
 PSEUDO_PAGE_CHARS = 3500
 # GLM-OCR本身有 PDF 大约 50MB、最多 100 页的限制
@@ -91,22 +91,24 @@ def _close_ocr(
 ) -> None:
     if db is None or not run_id or not step_id:
         return 
-    status = "failed" if error is not None else "succeeded"
+    tool_status = ToolCallStatus.FAILED if error is not None else ToolCallStatus.SUCCEEDED
+    step_status = StepStatus.FAILED if error is not None else StepStatus.SUCCEEDED
     result = {"file_name": file_name, "pages": pages}
+    failure = None if error is None else tool_error(ToolErrorCode.UPSTREAM, str(error))
     db.insert_tool_call(
         run_id, step_id,
         tool_name="document.ocr",
         args={"file_name": file_name},
         result={} if error is not None else result,
-        status=status,
+        status=tool_status,
         idempotency_key=f"document.ocr:{run_id}:{file_name}",
         latency_ms=latency_ms,
-        error={"message": str(error)} if error is not None else None,
+        error=failure,
     )
     db.finish_step(
-        step_id, status,
+        step_id, step_status,
         None if error is not None else result,
-        {"message": str(error)} if error is not None else None,
+        failure,
     )
 
 def ocr_pdf(

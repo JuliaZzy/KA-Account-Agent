@@ -125,7 +125,7 @@ def test_a_fold_on_a_running_chat_is_recorded_on_that_run(db):
     from backend.db import utcnow
 
     sid = service.new_session(db, "ps-1")["id"]
-    run, _created = db.create_agent_run("ps-1", "u-a", "chat", "fold-trace", {"message": "fold", "session_id": sid})
+    run, _created = db.create_agent_run("dist-1", "u-a", "chat", "fold-trace", {"message": "fold", "session_id": sid})
     assert db.claim_run(run["id"], "worker-test", utcnow() + timedelta(minutes=5)) is not None
     history = [
         bulky("user", 2000, "Q"), bulky("assistant", 2000, "A"),
@@ -135,7 +135,7 @@ def test_a_fold_on_a_running_chat_is_recorded_on_that_run(db):
     record_history(db, db.session(sid), history, llm=llm, run_id=run["id"])
 
     assert db.session(sid)["summary"] == "Their fiscal year starts in April"
-    trace = db.run_trace("ps-1", run["id"])
+    trace = db.run_trace("dist-1", run["id"])
     assert [(step["step_type"], step["name"], step["status"]) for step in trace["steps"]] == [
         ("tool", "memory.fold", "succeeded"),
     ]

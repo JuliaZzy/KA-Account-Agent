@@ -15,12 +15,13 @@ from ..repositories.run_repository import (
     create_agent_run,
     find_run_by_id,
     find_run_by_idempotency_key,
+    list_agent_runs,
     list_run_events,
     request_run_cancel,
     run_trace,
     transition_run,
 )
-from .run_names import RunType
+from .run_names import PRIVATE_PAYLOAD_KEYS, PUBLIC_RUN_EVENTS, RunType
 
 
 class AppError(Exception):
@@ -103,11 +104,36 @@ def get_run(db: Database, org_id: str, run_id: str) -> dict[str, Any]:
     return _require_run(db, org_id, run_id)
 
 
-def list_events(db: Database, org_id: str, run_id: str) -> list[dict[str, Any]]:
-    events = list_run_events(db, org_id, run_id)
+def event_cursor(after: int | None, last_event_id: str | None) -> int:
+    """`after` wins. Otherwise the `Last-Event-ID` header. Neither means 0."""
+    if after is not None:
+        if after < 0:
+            raise AppError(422, "VALIDATION_ERROR", "after must be zero or greater")
+        return after
+    if last_event_id is None or last_event_id == "":
+        return 0
+    try:
+        cursor = int(last_event_id)
+    except ValueError:
+        raise AppError(422, "VALIDATION_ERROR", "Last-Event-ID must be an integer") from None
+    if cursor < 0:
+        raise AppError(422, "VALIDATION_ERROR", "Last-Event-ID must be zero or greater")
+    return cursor
+
+
+def _public_event(row: dict[str, Any]) -> dict[str, Any]:
+    payload = row.get("payload_json") if isinstance(row.get("payload_json"), dict) else {}
+    copied = dict(row)
+    copied["payload_json"] = {key: value for key, value in payload.items() if key not in PRIVATE_PAYLOAD_KEYS}
+    return copied
+
+
+def list_events(db: Database, org_id: str, run_id: str, after: int = 0) -> list[dict[str, Any]]:
+    """Public events after `after`. Trace still returns the stored rows."""
+    events = list_run_events(db, org_id, run_id, after)
     if events is None:
         raise AppError(404, "RUN_NOT_FOUND", "Run not found")
-    return events
+    return [_public_event(row) for row in events if row.get("event_type") in PUBLIC_RUN_EVENTS]
 
 
 def cancel_run(db: Database, org_id: str, run_id: str, reason: str | None = None) -> dict[str, Any]:
@@ -145,12 +171,35 @@ def resume_run(
     if updated is None:
         raise AppError(404, "RUN_NOT_FOUND", "Run not found")
         
-    from .chat_run import wake_chat_worker
     from .dispatcher import dispatch_pending
 
     dispatch_pending(db)
-    wake_chat_worker(run_id)
     return updated
+
+def repair_run(
+    db: Database,
+    org_id: str,
+    user_id: str,
+    run_id: str,
+    *,
+    reason: str,
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> dict[str, Any]:
+    """A person changed stored data. Only an audit row is written."""
+    updated = db.record_repair(
+        org_id, run_id, user_id, reason=reason, before=before, after=after,
+    )
+    if updated is None:
+        raise AppError(404, "RUN_NOT_FOUND", "Run not found")
+    return updated
+
+
+def list_runs(
+    db: Database, org_id: str, *, user_id: str | None, status: str | None, limit: int,
+) -> list[dict[str, Any]]:
+    return list_agent_runs(db, org_id, user_id=user_id, status=status, limit=limit)
+
 
 def get_trace(db: Database, org_id: str, run_id: str) -> dict[str, Any]:
     trace = run_trace(db, org_id, run_id)

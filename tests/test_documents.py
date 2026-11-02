@@ -94,16 +94,16 @@ def test_pdf_ocr_is_a_tool_step_while_the_run_is_running(db, monkeypatch):
         return _response({"md_results": "# Agreement\n\nMinimum order USD 500."})
 
     monkeypatch.setattr("backend.llm.client.urllib.request.urlopen", fake_urlopen)
-    run, _created = db.create_agent_run("ps-1", "u-a", "chat", "ocr-trace", {"message": "read the file"})
+    run, _created = db.create_agent_run("dist-1", "u-a", "chat", "ocr-trace", {"message": "read the file"})
     assert load_pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"]) == [
         (1, "# Agreement\n\nMinimum order USD 500."),
     ]
-    assert db.run_trace("ps-1", run["id"])["steps"] == []
+    assert db.run_trace("dist-1", run["id"])["steps"] == []
     assert db.claim_run(run["id"], "worker-test", utcnow() + timedelta(minutes=5)) is not None
     pages = load_pages("notes.txt", b"hello\n\nthere", db=db, run_id=run["id"])
     assert pages == [(1, "hello\n\nthere")]
     pages = load_pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"])
-    trace = db.run_trace("ps-1", run["id"])
+    trace = db.run_trace("dist-1", run["id"])
     assert trace["run"]["status"] == "running"
     assert [(step["step_type"], step["name"], step["status"]) for step in trace["steps"]] == [
         ("tool", "document.ocr", "succeeded"),

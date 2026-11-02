@@ -7,20 +7,11 @@ Routes call the service, and the service decides which of these to call together
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from enum import StrEnum
 from typing import Any
 
 from ..db import Database
-
-
-class RunStatus(StrEnum):
-    QUEUED = "queued"
-    RUNNING = "running"
-    WAITING_FOR_USER = "waiting_for_user"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
+from ..services.run_names import OutboxStatus as OutboxStatus
+from ..services.run_names import RunStatus
 
 RUN_TERMINAL_STATUSES = frozenset({
     RunStatus.SUCCEEDED,
@@ -46,8 +37,8 @@ def request_run_cancel(db: Database, org_id: str, run_id: str, reason: str | Non
 def cancel_run(db: Database, run_id: str) -> dict[str, Any] | None:
     return db.cancel_run(run_id)
 
-def list_run_events(db: Database, org_id: str, run_id: str) -> list[dict[str, Any]] | None:
-    return db.list_run_events(org_id, run_id)
+def list_run_events(db: Database, org_id: str, run_id: str, after: int = 0) -> list[dict[str, Any]] | None:
+    return db.list_run_events(org_id, run_id, after)
 
 
 def append_run_event(
@@ -59,6 +50,12 @@ def append_run_event(
 def run_trace(db: Database, org_id: str, run_id: str) -> dict[str, Any] | None:
     return db.run_trace(org_id, run_id)
 
+
+def list_agent_runs(
+    db: Database, org_id: str, *, user_id: str | None, status: str | None, limit: int,
+) -> list[dict[str, Any]]:
+    return db.list_agent_runs(org_id, user_id=user_id, status=status, limit=limit)
+
 def create_agent_run(
     db: Database,
     org_id: str,
@@ -67,9 +64,15 @@ def create_agent_run(
     idempotency_key: str,
     run_input: dict[str, Any],
     parent_run_id: str | None = None,
+    max_model_calls: int | None = None,
+    max_tokens: int | None = None,
+    max_tool_calls: int | None = None,
+    max_duration_seconds: int | None = None,
 ) -> tuple[dict[str, Any], bool]:
     return db.create_agent_run(
         org_id, user_id, run_type, idempotency_key, run_input, parent_run_id,
+        max_model_calls=max_model_calls, max_tokens=max_tokens,
+        max_tool_calls=max_tool_calls, max_duration_seconds=max_duration_seconds,
     )
 
 
@@ -77,20 +80,11 @@ def find_pending_outbox_jobs(db: Database, limit: int = 100) -> list[dict[str, A
     return db.find_pending_outbox_jobs(limit)
 
 
-def enqueue_job(db: Database, job_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-    return db.enqueue_job(job_type, payload)
-
-def requeue_job(db: Database, job_id: str, run_id: str, error: str) -> dict[str, Any] | None:
-    return db.requeue_job(job_id, run_id, error)
-
 def mark_outbox_dispatched(db: Database, outbox_id: str) -> dict[str, Any] | None:
     return db.mark_outbox_dispatched(outbox_id)
 
 def mark_outbox_retry(db: Database, outbox_id: str, error: str) -> dict[str, Any] | None:
     return db.mark_outbox_retry(outbox_id, error)
-
-def claim_queued_job(db: Database, worker_id: str, run_id: str | None = None) -> dict[str, Any] | None:
-    return db.claim_queued_job(worker_id, run_id)
 
 
 def find_agent_run_by_id(db: Database, run_id: str) -> dict[str, Any] | None:
@@ -104,7 +98,7 @@ def claim_run(
 
 def claim_chat_turn(
     db: Database, run_id: str, worker_id: str, lease_expires_at: datetime,
-) -> tuple[dict[str, Any], str] | None:
+) -> dict[str, Any] | None:
     return db.claim_chat_turn(run_id, worker_id, lease_expires_at)
 
 def sweep_expired_leases(db: Database, limit: int = 100) -> int:
@@ -116,22 +110,18 @@ def complete_run(db: Database, run_id: str, output: dict[str, Any]) -> dict[str,
 def note_running_reply(db: Database, run_id: str, text: str) -> dict[str, Any] | None:
     return db.note_running_reply(run_id, text)
 
-def ack_job(db: Database, job_id: str) -> dict[str, Any] | None:
-    return db.ack_job(job_id)
-
-def fail_run(
-    db: Database, job_id: str, run_id: str, error: dict[str, Any],
-) -> dict[str, Any] | None:
-    return db.fail_run(job_id, run_id, error)
+def fail_run(db: Database, run_id: str, error: dict[str, Any]) -> dict[str, Any] | None:
+    return db.fail_run(run_id, error)
 
 def schedule_retry(
     db: Database,
-    job_id: str,
     run_id: str,
     error: dict[str, Any],
     delays: tuple[timedelta, ...],
+    *,
+    spend_attempt: bool = True,
 ) -> str | None:
-    return db.schedule_retry(job_id, run_id, error, delays)
+    return db.schedule_retry(run_id, error, delays, spend_attempt=spend_attempt)
 
 def latest_checkpoint(db: Database, run_id: str) -> dict[str, Any] | None:
     return db.latest_checkpoint(run_id)
@@ -153,8 +143,14 @@ def finish_step(
     status: str,
     output: dict[str, Any] | None = None,
     error: dict[str, Any] | None = None,
+    checkpoint: dict[str, Any] | None = None,
+    extra_event: str | None = None,
+    extra_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    return db.finish_step(step_id, status, output, error)
+    return db.finish_step(
+        step_id, status, output, error,
+        checkpoint=checkpoint, extra_event=extra_event, extra_payload=extra_payload,
+    )
 
 
 def insert_model_call(db: Database, run_id: str, step_id: str, **fields: Any) -> dict[str, Any] | None:
@@ -183,8 +179,22 @@ def complete_tool_call(
     status: str, 
     latency_ms: int, 
     error: dict[str, Any] | None = None,
+    checkpoint: dict[str, Any] | None = None,
+    audit: bool = False,
+    step_status: str | None = None,
+    step_output: dict[str, Any] | None = None,
+    step_error: dict[str, Any] | None = None,
+    manual_review: bool = False,
 ) -> dict[str, Any] | None:
-    return db.complete_tool_call(tool_call_id, result=result, status=status, latency_ms=latency_ms, error=error)
+    return db.complete_tool_call(
+        tool_call_id, result=result, status=status, latency_ms=latency_ms, error=error,
+        checkpoint=checkpoint, audit=audit, step_status=step_status,
+        step_output=step_output, step_error=step_error, manual_review=manual_review,
+    )
+
+
+def count_tool_calls(db: Database, run_id: str) -> int:
+    return db.count_tool_calls(run_id)
 
 def mark_waiting_for_user(
     db: Database, run_id: str, payload: dict[str, Any] | None = None,

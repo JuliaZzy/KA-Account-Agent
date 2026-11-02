@@ -49,7 +49,7 @@ def make_engine(url: str) -> Engine:
         # Read `timestamptz` back in UTC whatever the server's own timezone is. The instant
         # is the same either way, but without this the datetimes the app formats and
         # compares carry whatever offset the database host happens to be set to.
-        connect_args={"options": "-c timezone=UTC"},
+        connect_args={"options": f"-c timezone=UTC -c statement_timeout={_int_env('KA_ACCOUNT_STATEMENT_TIMEOUT_MS', 120000)}"},
         pool_size=_int_env("KA_ACCOUNT_POOL_SIZE", 10),
         max_overflow=_int_env("KA_ACCOUNT_MAX_OVERFLOW", 20),
         pool_timeout=_int_env("KA_ACCOUNT_POOL_TIMEOUT", 30),

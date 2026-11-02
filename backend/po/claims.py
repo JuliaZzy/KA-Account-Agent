@@ -9,7 +9,6 @@ turns a verdict into a status change. The pure parts have no I/O so they test co
 from __future__ import annotations
 
 import math
-import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -117,68 +116,20 @@ def _conf(raw: dict[str, Any]) -> float:
         return 0.0
     return c if 0 <= c <= 1 else 0.0
 
-def _record_claim_call(
-    db: Database | None,
-    run_id: str | None,
-    step_id: str | None,
-    *,
-    provider: str,
-    model: str,
-    request: dict[str, Any],
-    response: dict[str, Any],
-    usage: dict[str, int],
-    latency_ms: int,
-    error: Exception | None,
-) -> None:
-    if db is None or not run_id or not step_id:
-        return
-    db.insert_model_call(
-        run_id, step_id,
-        provider=provider,
-        model=model,
-        request=request,
-        response=response,
-        prompt_tokens=int(usage.get("prompt_tokens") or 0),
-        completion_tokens=int(usage.get("completion_tokens") or 0),
-        latency_ms=latency_ms,
-        status="failed" if error is not None else "succeeded",
-        error={"message": str(error) if error is not None else None}
-    )
-
 def _school_llm(
     llm: Any,
     system: str,
-    message: str, 
+    message: str,
     *,
     db: Database | None,
     run_id: str | None,
     step_id: str | None,
 ) -> dict[str, Any]:
     msg = [{"role": "user", "content": message[:4000]}]
-    request = {"model": model_calls.SCHOOL_CHAT, "system": system, "messages": msg}
-    raw: dict[str, Any] = {}
-    error: Exception | None = None
-    started = time.perf_counter()
-    try:
-        raw = model_calls.school_json(
-            model_calls.SCHOOL_CHAT, system=system, messages=msg, temperature=0, client=llm
-        )
-    except Exception as e:
-        error = e
-    usage = getattr(llm, "last_usage", None) or {}
-    _record_claim_call(
-        db, run_id, step_id, 
-        provider=str(getattr(llm, "provider", None) or "sjtu"), 
-        model=model_calls.SCHOOL_CHAT, 
-        request=request, 
-        response={"json": raw} if raw else {}, 
-        usage=usage if isinstance(usage, dict) else None, 
-        latency_ms=int((time.perf_counter() - started) * 1000), 
-        error=error
+    return model_calls.school_json(
+        model_calls.SCHOOL_CHAT, system=system, messages=msg, temperature=0, client=llm,
+        db=db, run_id=run_id, step_id=step_id, purpose="po.claim",
     )
-    if error is not None:
-        raise error
-    return raw
 
 def classify_receipt(llm: Any, message: str, *, 
     db: Database | None = None, run_id: str | None = None, step_id: str | None = None

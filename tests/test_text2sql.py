@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,12 +14,13 @@ from backend.app import create_app
 from backend.db.orm import Base
 from backend.llm import FakeLLM
 from backend.llm.types import AssistantTurn, ToolCall
-from backend.services.chat_run import work_chat
 from backend.schemas import Partnership, Product, PurchaseOrder
+from backend.services.chat_run import work_chat
 from backend.text2sql import answer_question
 from backend.text2sql.analyze_badcase import analyze, classify_error
 from backend.text2sql.sql_validator import validate
 from backend.text2sql.table_metadata import EXCLUDED_TABLES, HIDDEN_COLUMNS, TABLES, scope_views
+from backend.text2sql.text2sql import _json_rows, _rows_for_prompt
 
 
 def _models(monkeypatch, replies: list[dict]):
@@ -61,6 +64,30 @@ def test_metadata_matches_the_tables_and_hides_bytes_and_sessions():
     views = dict(scope_views())
     assert "file_bytes" not in views["brand_documents"]
     assert "sessions" not in views
+
+
+def test_returned_rows_keep_every_cell_and_the_prompt_copy_is_short():
+    note = "甲" * 500
+    raw = [
+        {
+            "note": note,
+            "when": datetime(2026, 1, 2, 3, 4, tzinfo=UTC),
+            "amount": Decimal("1.25"),
+            "blob": "café".encode(),
+            "n": index,
+        }
+        for index in range(60)
+    ]
+    kept = _json_rows(raw)
+    assert len(kept) == 60
+    assert kept[0]["note"] == note
+    assert kept[0]["when"] == "2026-01-02T03:04:00+00:00"
+    assert kept[0]["amount"] == 1.25
+    assert kept[0]["blob"] == "café"
+    prompt = _rows_for_prompt(kept)
+    assert len(prompt) == 50
+    assert prompt[0]["note"].endswith("…")
+    assert len(prompt[0]["note"]) < len(note)
 
 
 def test_validator_accepts_a_read_and_caps_the_limit():
@@ -473,7 +500,7 @@ def test_data_query_records_model_calls_on_the_chat_run(db, monkeypatch):
     run_id = events[0]["run_id"]
     assert work_chat(db, llm, run_id) is True
 
-    trace = db.run_trace("ps-1", run_id)
+    trace = db.run_trace("dist-1", run_id)
     step_id = next(step["id"] for step in trace["steps"] if step["name"] == "data.query")
     models = [
         (row["provider"], row["model"])
@@ -509,7 +536,7 @@ def test_data_query_records_a_low_score_retry(db, monkeypatch):
     run_id = events[0]["run_id"]
     assert work_chat(db, llm, run_id) is True
 
-    trace = db.run_trace("ps-1", run_id)
+    trace = db.run_trace("dist-1", run_id)
     step_id = next(step["id"] for step in trace["steps"] if step["name"] == "data.query")
     models = [
         (row["provider"], row["model"])

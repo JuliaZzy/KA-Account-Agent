@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from backend.llm import AssistantTurn, FakeLLM, ToolCall
 from backend.orchestrator import run_tool_calls
 from backend.tools import SCHEMAS, TOOLS
 from backend.tools.exchange_rate import quote
 from backend.tools.exchange_rate import run as fx_run
 from backend.tools.lang_translate import run as translate_run
+from backend.tools.send_email import MailError
 from backend.tools.send_email import run as email_run
 from backend.tools.send_email import send as email_send
 from backend.tools.web_search import run as search_run
@@ -170,10 +173,17 @@ def test_send_email_dry_run_and_validation(monkeypatch):
         "body": "10 cases fish oil",
     })
     assert out["ok"] and out["data"]["dry_run"] is True and out["data"]["to"] == "buyer@example.com"
-    assert email_run({"to": "not-an-email", "subject": "x", "body": "y"})["ok"] is False
-    assert email_run({"to": "a@b.com", "subject": "", "body": "y"})["ok"] is False
+    with pytest.raises(MailError) as bad_address:
+        email_run({"to": "not-an-email", "subject": "x", "body": "y"})
+    assert bad_address.value.code == "TOOL_VALIDATION_ERROR"
+    with pytest.raises(MailError) as empty_subject:
+        email_run({"to": "a@b.com", "subject": "", "body": "y"})
+    assert empty_subject.value.code == "TOOL_VALIDATION_ERROR"
     monkeypatch.delenv("EMAIL_DRY_RUN", raising=False)
     monkeypatch.delenv("SMTP_HOST", raising=False)
+    with pytest.raises(MailError) as missing_smtp:
+        email_run({"to": "a@b.com", "subject": "x", "body": "y"})
+    assert missing_smtp.value.code == "TOOL_UPSTREAM_ERROR"
     try:
         email_send(to="a@b.com", subject="x", body="y", dry_run=False)
         raise AssertionError("expected SMTP_HOST error")

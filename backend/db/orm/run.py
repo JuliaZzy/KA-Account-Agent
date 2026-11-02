@@ -25,7 +25,7 @@ class AgentRun(Base):
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    org_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    org_id: Mapped[str] = mapped_column(String(64), ForeignKey("distributors.id"), nullable=False)
     user_id: Mapped[str] = mapped_column(String(64), nullable=False)
     run_type: Mapped[str] = mapped_column(String(64), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -44,6 +44,12 @@ class AgentRun(Base):
     parent_run_id: Mapped[str | None] = mapped_column(
         String(64), ForeignKey("agent_runs.id", ondelete="SET NULL"), index=True,
     )
+    trace_id: Mapped[str | None] = mapped_column(String(64))
+    # Null means this run is not capped. The model entry reads these before it calls.
+    max_model_calls: Mapped[int | None] = mapped_column(Integer)
+    max_tokens: Mapped[int | None] = mapped_column(Integer)
+    max_tool_calls: Mapped[int | None] = mapped_column(Integer)
+    max_duration_seconds: Mapped[int | None] = mapped_column(Integer)
 
 
 class AgentStep(Base):
@@ -99,7 +105,7 @@ class UsageRecord(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     run_id: Mapped[str] = mapped_column(String(64), ForeignKey("agent_runs.id", ondelete="CASCADE"), index=True, nullable=False)
-    org_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    org_id: Mapped[str] = mapped_column(String(64), ForeignKey("distributors.id"), nullable=False)
     user_id: Mapped[str] = mapped_column(String(64), nullable=False)
     provider: Mapped[str] = mapped_column(String(64), nullable=False)
     model: Mapped[str] = mapped_column(String(64))
@@ -107,6 +113,8 @@ class UsageRecord(Base):
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     total_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     estimated_cost_cents: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # actual when the vendor sent usage; estimated when this row was counted locally.
+    usage_source: Mapped[str | None] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(TimestampCol, server_default=func.now())
 
 
@@ -123,6 +131,7 @@ class ModelCall(Base):
     response_json: Mapped[dict[str, Any]] = mapped_column(JSONCol)
     prompt_tokens: Mapped[int] = mapped_column(Integer)
     completion_tokens: Mapped[int] = mapped_column(Integer)
+    usage_source: Mapped[str | None] = mapped_column(String(32))
     latency_ms: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(64), nullable=False)
     error_json: Mapped[dict[str, Any] | None] = mapped_column(JSONCol)
@@ -139,6 +148,8 @@ class ToolCall(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     run_id: Mapped[str] = mapped_column(String(64), ForeignKey("agent_runs.id", ondelete="CASCADE"), index=True, nullable=False)
+    org_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("distributors.id"), nullable=True)
+    user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     step_id: Mapped[str] = mapped_column(String(64), ForeignKey("agent_steps.id", ondelete="CASCADE"), index=True)
     tool_name: Mapped[str] = mapped_column(String(64), nullable=False)
     args_json: Mapped[dict[str, Any]] = mapped_column(JSONCol, nullable=False)
@@ -148,6 +159,7 @@ class ToolCall(Base):
     latency_ms: Mapped[int] = mapped_column(Integer)
     error_json: Mapped[dict[str, Any] | None] = mapped_column(JSONCol)
     created_at: Mapped[datetime] = mapped_column(TimestampCol, server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(TimestampCol, nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(TimestampCol)
 
 class AuditLog(Base):
@@ -156,7 +168,7 @@ class AuditLog(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    org_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    org_id: Mapped[str] = mapped_column(String(64), ForeignKey("distributors.id"), nullable=False)
     run_id: Mapped[str] = mapped_column(String(64), ForeignKey("agent_runs.id", ondelete="CASCADE"), index=True)
     action: Mapped[str] = mapped_column(String(64), nullable=False)
     target_type: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -191,21 +203,3 @@ class DeadLetterJob(Base):
     attempts: Mapped[int] = mapped_column(Integer, nullable=False)
     error_json: Mapped[dict[str, Any] | None] = mapped_column(JSONCol, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TimestampCol, server_default=func.now())
-
-class JobQueue(Base):
-    __tablename__ = "job_queue"
-
-    # 轻量队列表，生产时替换为 redis / celery / RQ
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    job_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSONCol, nullable=False)
-    status: Mapped[str] = mapped_column(String(64), nullable=False) # queued / running / succeeded / failed / dead
-    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    max_attempts: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
-    available_at: Mapped[datetime] = mapped_column(TimestampCol, server_default=func.now())
-    # lock 避免多个worker执行同一个 job
-    lock_by: Mapped[str | None] = mapped_column(String(64))
-    lock_until: Mapped[datetime | None] = mapped_column(TimestampCol)
-    last_error_json: Mapped[dict[str, Any] | None] = mapped_column(JSONCol)
-    created_at: Mapped[datetime] = mapped_column(TimestampCol, server_default=func.now())
-    finished_at: Mapped[datetime | None] = mapped_column(TimestampCol)
