@@ -2,7 +2,7 @@
 
 Redis database 0 is the app's own keys (session locks, turn results, FX cache).
 The broker is database 1 and task results are database 2, both derived from
-`PARTNERDESK_REDIS_URL`, so there is no second URL to point at localhost.
+`KA_ACCOUNT_REDIS_URL`, so there is no second URL to point at localhost.
 
 A task runs here, after the request that enqueued it has finished. Chat turns
 are claimed from `job_queue` here. Side effects in a task have to be idempotent
@@ -18,10 +18,10 @@ from celery import Celery
 
 from ..config import celery_broker_url, celery_result_url
 
-celery = Celery("partnerdesk", broker=celery_broker_url(), backend=celery_result_url())
+celery = Celery("ka_account", broker=celery_broker_url(), backend=celery_result_url())
 celery.conf.update(
     include=["backend.celery.tasks"],
-    task_default_queue="partnerdesk",
+    task_default_queue="ka_account",
     # One reserved task per child. A long model call should not sit on a prefetch.
     worker_prefetch_multiplier=1,
     task_track_started=True,

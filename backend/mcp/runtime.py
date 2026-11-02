@@ -93,12 +93,12 @@ def _content_to_text(result: Any) -> str:
 def mcp_enabled() -> bool:
     """SocialCrawl only when a key is present.
 
-    Under pytest the server is skipped unless PARTNERDESK_MCP=1 — otherwise every
+    Under pytest the server is skipped unless KA_ACCOUNT_MCP=1 — otherwise every
     empty-plan turn would open a network MCP session in CI.
     """
     if not env("SOCIALCRAWL_API_KEY"):
         return False
-    if os.environ.get("PYTEST_CURRENT_TEST") and env("PARTNERDESK_MCP") != "1":
+    if os.environ.get("PYTEST_CURRENT_TEST") and env("KA_ACCOUNT_MCP") != "1":
         return False
     return True
 
@@ -228,7 +228,7 @@ class McpHub:
             ready.set()
             loop.run_forever()
 
-        thread = threading.Thread(target=_run_loop, name="partnerdesk-mcp", daemon=True)
+        thread = threading.Thread(target=_run_loop, name="ka_account-mcp", daemon=True)
         thread.start()
         ready.wait(timeout=5)
         self._loop = loop

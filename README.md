@@ -1,4 +1,4 @@
-# PartnerDesk
+# KA Account Agent
 
 面向品牌商与经销商的对话式运营工作台。支持通过聊天起草采购单、读取合同、生成叙述报告、查询业务数据，并在桌面页面管理产品、订单、合同、报表和长期记忆。
 
@@ -37,7 +37,7 @@ cp .env.example .env
 桌面：<http://localhost:5173>
 API 文档：<http://127.0.0.1:8000/docs>
 
-首次启动会下载镜像；Milvus 镜像较大，启动时间更长。Compose 会注入数据库、Redis 和 Milvus 的容器网络地址。不要在 `.env` 中配置 `PARTNERDESK_DB_URL`、`PARTNERDESK_REDIS_URL` 或 `MILVUS_URI`，也不要将容器地址改成 `127.0.0.1`。
+首次启动会下载镜像；Milvus 镜像较大，启动时间更长。Compose 会注入数据库、Redis 和 Milvus 的容器网络地址。不要在 `.env` 中配置 `KA_ACCOUNT_DB_URL`、`KA_ACCOUNT_REDIS_URL` 或 `MILVUS_URI`，也不要将容器地址改成 `127.0.0.1`。
 
 ### 常用命令
 
@@ -63,6 +63,12 @@ API 文档：<http://127.0.0.1:8000/docs>
 
 `./dev catalog --dry-run` 只统计，不写入数据库。目录基于 Open Food Facts，批发字段由商品规格确定性推导；使用源数据请遵循其 ODbL 条款。
 
+如果需要加载仓库自带的演示品牌、经销商、用户和产品数据：
+
+```bash
+./dev py scripts/seed_demo.py
+```
+
 ## 配置
 
 `.env.example` 列出全部可选项。常用配置：
@@ -78,7 +84,7 @@ API 文档：<http://127.0.0.1:8000/docs>
 | `SOCIALCRAWL_API_KEY` | 可选 SocialCrawl MCP |
 | `SMTP_*`、`EMAIL_DRY_RUN` | 邮件发送配置及 dry run |
 
-聊天下拉选项的 endpoint 和调用名由 `backend/llm_config.py` 管理。数据库连接池可通过 `PARTNERDESK_POOL_SIZE`、`PARTNERDESK_MAX_OVERFLOW`、`PARTNERDESK_POOL_TIMEOUT` 调整。不要提交 `.env`，也不要在日志或文档中暴露密钥。
+聊天下拉选项的 endpoint 和调用名由 `backend/llm_config.py` 管理。数据库连接池可通过 `KA_ACCOUNT_POOL_SIZE`、`KA_ACCOUNT_MAX_OVERFLOW`、`KA_ACCOUNT_POOL_TIMEOUT` 调整。不要提交 `.env`，也不要在日志或文档中暴露密钥。
 
 ## 架构
 
@@ -110,7 +116,7 @@ tests/                   Python 与前端测试
 docs/                    设计、运行状态和迁移说明
 ```
 
-执行路径详图见 [`docs/agent-call-paths.html`](docs/agent-call-paths.html)，run 状态说明见 [`docs/run-roadmap.md`](docs/run-roadmap.md)。
+执行路径详图见 [`docs/agent-call-paths.html`](docs/agent-call-paths.html)。
 
 ### HTTP API
 
@@ -158,5 +164,3 @@ PostgreSQL 是唯一数据库引擎，不提供 SQLite 回落。业务数据按�
 ## 项目状态
 
 已实现桌面多页面、异步聊天 run、采购及合同确认流程、销售事实导入、叙述报告、只读业务查询、品牌资料检索和长期记忆。目录页面支持数据库搜索与分页。
-
-后续事项包括 run 监控台、多块非规整销售表格导入，以及将完整产品目录改为按需检索后再放入模型上下文。详见 [`docs/run-roadmap.md`](docs/run-roadmap.md) 和 [`docs/porting/06-report-core.md`](docs/porting/06-report-core.md)。

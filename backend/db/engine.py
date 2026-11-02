@@ -1,9 +1,9 @@
 """Engine construction and schema migration.
 
-One engine per `Database`, always PostgreSQL — `PARTNERDESK_DB_URL` is required and there
+One engine per `Database`, always PostgreSQL — `KA_ACCOUNT_DB_URL` is required and there
 is no fallback engine (see `config.db_url` for why).
 
-Pool size is env-tunable (`PARTNERDESK_POOL_SIZE`, `PARTNERDESK_MAX_OVERFLOW`) because load
+Pool size is env-tunable (`KA_ACCOUNT_POOL_SIZE`, `KA_ACCOUNT_MAX_OVERFLOW`) because load
 testing is exactly the exercise of moving it: the ceiling on concurrent in-flight requests is
 `pool_size + max_overflow`, and past it callers queue rather than fail. `pool_pre_ping`
 discards connections the server closed under us — without it a restarted or idle-timed-out
@@ -50,9 +50,9 @@ def make_engine(url: str) -> Engine:
         # is the same either way, but without this the datetimes the app formats and
         # compares carry whatever offset the database host happens to be set to.
         connect_args={"options": "-c timezone=UTC"},
-        pool_size=_int_env("PARTNERDESK_POOL_SIZE", 10),
-        max_overflow=_int_env("PARTNERDESK_MAX_OVERFLOW", 20),
-        pool_timeout=_int_env("PARTNERDESK_POOL_TIMEOUT", 30),
+        pool_size=_int_env("KA_ACCOUNT_POOL_SIZE", 10),
+        max_overflow=_int_env("KA_ACCOUNT_MAX_OVERFLOW", 20),
+        pool_timeout=_int_env("KA_ACCOUNT_POOL_TIMEOUT", 30),
         pool_recycle=1800,
         pool_pre_ping=True,
     )

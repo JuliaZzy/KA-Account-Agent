@@ -78,11 +78,11 @@ def rerank_settings() -> RerankSettings:
 
 
 def redis_url() -> str:
-    """Redis, from `PARTNERDESK_REDIS_URL`. Compose injects `redis://redis:6379/0`."""
-    url = env("PARTNERDESK_REDIS_URL")
+    """Redis, from `KA_ACCOUNT_REDIS_URL`. Compose injects `redis://redis:6379/0`."""
+    url = env("KA_ACCOUNT_REDIS_URL")
     if not url:
         raise RuntimeError(
-            "PARTNERDESK_REDIS_URL is not set. Run via ./dev (Docker Compose injects it). "
+            "KA_ACCOUNT_REDIS_URL is not set. Run via ./dev (Docker Compose injects it). "
             "Inside the stack it is redis://redis:6379/0"
         )
     return url
@@ -99,7 +99,7 @@ def celery_broker_url() -> str:
 
     Database 0 is the app's own keys (session locks, turn results, FX cache).
     A separate database keeps Celery's key layout off those keys, and keeps a
-    flush of the queue from wiping them. Derived from `PARTNERDESK_REDIS_URL`,
+    flush of the queue from wiping them. Derived from `KA_ACCOUNT_REDIS_URL`,
     so there is no broker URL to point at `127.0.0.1`.
     """
     return _redis_with_db(1)
@@ -116,17 +116,17 @@ def milvus_uri() -> str:
 
 
 def db_url() -> str:
-    """The application database, from `PARTNERDESK_DB_URL`. PostgreSQL only.
+    """The application database, from `KA_ACCOUNT_DB_URL`. PostgreSQL only.
 
     There is deliberately no fallback engine. A second engine means every schema decision
     has to hold on both, which is what kept timestamps as ISO-8601 text instead of
     `timestamptz`; and a silent fallback would let a misconfigured deploy come up on an
     empty database instead of failing. Missing config is an error, not a different mode."""
-    url = env("PARTNERDESK_DB_URL")
+    url = env("KA_ACCOUNT_DB_URL")
     if not url:
         raise RuntimeError(
-            "PARTNERDESK_DB_URL is not set. Run via ./dev (Docker Compose injects it). "
+            "KA_ACCOUNT_DB_URL is not set. Run via ./dev (Docker Compose injects it). "
             "If you are inside a container without compose, set it to "
-            "postgresql+psycopg://partnerdesk:partnerdesk@postgres:5432/partnerdesk"
+            "postgresql+psycopg://ka_account:ka_account@postgres:5432/ka_account"
         )
     return url

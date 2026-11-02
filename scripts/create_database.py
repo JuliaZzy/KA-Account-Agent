@@ -1,4 +1,4 @@
-"""Create the database named in PARTNERDESK_DB_URL, if it is not there yet.
+"""Create the database named in KA_ACCOUNT_DB_URL, if it is not there yet.
 
     ./dev db
 
@@ -20,7 +20,7 @@ from backend.config import db_url
 def main() -> int:
     url = make_url(db_url())
     if "YOUR_PASSWORD" in str(url):
-        print("PARTNERDESK_DB_URL still has the YOUR_PASSWORD placeholder — edit .env first.", file=sys.stderr)
+        print("KA_ACCOUNT_DB_URL still has the YOUR_PASSWORD placeholder — edit .env first.", file=sys.stderr)
         return 1
 
     target = url.database

@@ -15,13 +15,13 @@ from .worker import celery
 log = logging.getLogger(__name__)
 
 
-@celery.task(name="partnerdesk.ping")
+@celery.task(name="ka_account.ping")
 def ping() -> str:
     """Broker round-trip. The worker is up when this returns ``pong``."""
     return "pong"
 
 
-@celery.task(bind=True, name="partnerdesk.execute_run", max_retries=None)
+@celery.task(bind=True, name="ka_account.execute_run", max_retries=None)
 def execute_run(self, run_id: str) -> str:
     """Claim this chat run and execute it. Tests call `work_chat` instead.
     

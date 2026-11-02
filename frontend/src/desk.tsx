@@ -195,9 +195,9 @@ function ChatMenu({ title, onAction }: { title: string; onAction: (action: ChatA
 
 function storedPick(): { brandId: string | null; distributorId: string | null; userId: string | null } {
   return {
-    brandId: localStorage.getItem("partnerdesk.brand"),
-    distributorId: localStorage.getItem("partnerdesk.distributor"),
-    userId: localStorage.getItem("partnerdesk.user"),
+    brandId: localStorage.getItem("ka_account.brand"),
+    distributorId: localStorage.getItem("ka_account.distributor"),
+    userId: localStorage.getItem("ka_account.user"),
   };
 }
 
@@ -206,10 +206,10 @@ function rememberPick(brandId: string | null, distributorId: string | null, user
     if (value) localStorage.setItem(key, value);
     else localStorage.removeItem(key);
   };
-  write("partnerdesk.brand", brandId);
-  write("partnerdesk.distributor", distributorId);
-  write("partnerdesk.user", userId);
-  write("partnerdesk.partnership", partnershipId);
+  write("ka_account.brand", brandId);
+  write("ka_account.distributor", distributorId);
+  write("ka_account.user", userId);
+  write("ka_account.partnership", partnershipId);
 }
 
 export function DeskProvider({ children }: { children: ReactNode }) {
@@ -229,7 +229,7 @@ export function DeskProvider({ children }: { children: ReactNode }) {
     Promise.all([api<Meta>("/api/meta"), api<Partnership[]>("/api/partnerships"), api<DeskUser[]>("/api/users")])
       .then(([nextMeta, nextPartnerships, nextUsers]) => {
         const saved = storedPick();
-        const previous = nextPartnerships.find((row) => row.id === localStorage.getItem("partnerdesk.partnership"));
+        const previous = nextPartnerships.find((row) => row.id === localStorage.getItem("ka_account.partnership"));
         const pick = resolvePick(
           nextPartnerships,
           nextUsers,

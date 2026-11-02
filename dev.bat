@@ -68,5 +68,5 @@ exit /b
 
 :db
 docker compose up -d postgres
-docker compose exec postgres pg_isready -U partnerdesk -d partnerdesk
+docker compose exec postgres pg_isready -U ka_account -d ka_account
 exit /b

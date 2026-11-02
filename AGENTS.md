@@ -29,10 +29,10 @@
 
 - **PostgreSQL 是唯一的引擎，没有 SQLite 回落**，这是刻意的——双引擎意味着每个 schema 决策都要在两边都成立，
   Postgres 的原生类型就一直用不上（时间戳卡在字符串上很久，就是那段历史留下的）。不要为了"方便测试"把它加回来。
-- Postgres 跑在 Compose 服务 `postgres` 里（镜像 `postgres:17`，库名 `partnerdesk`），**不往本机暴露 5432**。
-  连接串由 compose 注入，不要在 `.env` 里写 `PARTNERDESK_DB_URL`（宿主机上的 `127.0.0.1:5432` 在容器里是错的）。
-  Redis（`PARTNERDESK_REDIS_URL`）和 Milvus（`MILVUS_URI`）同样由 compose 注入，不要写成 `127.0.0.1`。
-- 测试用 `PARTNERDESK_TEST_DB_URL`（同样由 compose 注入，指向容器内的 `postgres` 库当管理连接）。
+- Postgres 跑在 Compose 服务 `postgres` 里（镜像 `postgres:17`，库名 `ka_account`），**不往本机暴露 5432**。
+  连接串由 compose 注入，不要在 `.env` 里写 `KA_ACCOUNT_DB_URL`（宿主机上的 `127.0.0.1:5432` 在容器里是错的）。
+  Redis（`KA_ACCOUNT_REDIS_URL`）和 Milvus（`MILVUS_URI`）同样由 compose 注入，不要写成 `127.0.0.1`。
+- 测试用 `KA_ACCOUNT_TEST_DB_URL`（同样由 compose 注入，指向容器内的 `postgres` 库当管理连接）。
   每个测试建一个一次性库、结束丢弃。测试拿数据库只有一个入口：
   `tests/conftest.py` 的 `make_db` 夹具，不要在测试里直接构造 `Database(...)`。没设这个变量测试会 skip，不会静默换引擎。
 - 改表的流程是固定的：改 `db/orm.py` → `./dev py -m alembic revision --autogenerate -m "..."` → **人工检查生成的迁移文件** →
@@ -60,7 +60,7 @@
 ## 坑
 
 - **`.env` 里有真实的 API key**，已被 gitignore。不要提交、不要打印它的内容、不要把它的值写进任何输出。
-  改配置示例改 `.env.example`。数据库密码不进 `.env`：compose 写死本地开发用的 `partnerdesk/partnerdesk`。
+  改配置示例改 `.env.example`。数据库密码不进 `.env`：compose 写死本地开发用的 `ka_account/ka_account`。
 - **时间戳是 `timestamptz`，写入的值一律是 UTC-aware 的 `datetime`**（`database.utcnow`），不要再写 ISO 字符串。
   但**纯日期**（合同期限、报表期间）仍然是 `YYYY-MM-DD` 文本，这是有意的——它们是日历标签，背后没有具体时刻。
   改这两类字段前先确认自己在改哪一类。

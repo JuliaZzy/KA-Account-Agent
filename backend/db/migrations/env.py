@@ -3,7 +3,7 @@
   - in-process: `backend.db.engine.run_migrations(engine)` hands a live connection over
     `config.attributes["connection"]` — used by the app on startup and by every test;
   - CLI: `alembic upgrade head` / `alembic revision --autogenerate` from the repo root,
-    against `PARTNERDESK_DB_URL`.
+    against `KA_ACCOUNT_DB_URL`.
 """
 
 from __future__ import annotations

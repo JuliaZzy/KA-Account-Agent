@@ -3,7 +3,7 @@
 #   ./dev            bring the stack up (desk http://localhost:5173)
 #   ./dev test       pytest inside the api container (needs Postgres)
 #
-# The worker and the API share one image (`partnerdesk-api`). Celery's broker
+# The worker and the API share one image (`ka-account-api`). Celery's broker
 # is Redis database 1 and its results are database 2; database 0 stays the
 # app's own keys. Task code is imported when the worker starts — after a
 # change, `docker compose restart worker` (the tree is bind-mounted).
@@ -11,10 +11,10 @@
 # Base images default to DaoCloud because Docker Hub auth often times out on
 # campus networks. Override with POSTGRES_IMAGE / REDIS_IMAGE / MILVUS_IMAGE /
 # PYTHON_IMAGE / NODE_IMAGE if you can reach docker.io.
-name: partnerdesk
+name: ka_account
 
 x-python: &python
-  image: partnerdesk-api
+  image: ka-account-api
   build:
     context: .
     args:
@@ -25,9 +25,9 @@ x-python: &python
       required: false
   environment:
     # Compose wins over a leftover .env that still points at 127.0.0.1.
-    PARTNERDESK_DB_URL: postgresql+psycopg://partnerdesk:partnerdesk@postgres:5432/partnerdesk
-    PARTNERDESK_TEST_DB_URL: postgresql+psycopg://partnerdesk:partnerdesk@postgres:5432/postgres
-    PARTNERDESK_REDIS_URL: redis://redis:6379/0
+    KA_ACCOUNT_DB_URL: postgresql+psycopg://ka_account:ka_account@postgres:5432/ka_account
+    KA_ACCOUNT_TEST_DB_URL: postgresql+psycopg://ka_account:ka_account@postgres:5432/postgres
+    KA_ACCOUNT_REDIS_URL: redis://redis:6379/0
     # Compose wins over a .env that still points Milvus at 127.0.0.1.
     MILVUS_URI: http://milvus:19530
     PYTHONPATH: /app
@@ -41,13 +41,13 @@ services:
   postgres:
     image: ${POSTGRES_IMAGE:-docker.m.daocloud.io/library/postgres:17-alpine}
     environment:
-      POSTGRES_USER: partnerdesk
-      POSTGRES_PASSWORD: partnerdesk
-      POSTGRES_DB: partnerdesk
+      POSTGRES_USER: ka_account
+      POSTGRES_PASSWORD: ka_account
+      POSTGRES_DB: ka_account
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U partnerdesk -d partnerdesk"]
+      test: ["CMD-SHELL", "pg_isready -U ka_account -d ka_account"]
       interval: 2s
       timeout: 5s
       retries: 30

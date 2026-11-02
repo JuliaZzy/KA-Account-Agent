@@ -204,7 +204,7 @@ function ChatDesk() {
   const [snap, setSnap] = useState<Snap | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
   const [attachNote, setAttachNote] = useState<string | null>(null);
-  const [model, setModel] = useState(() => localStorage.getItem("partnerdesk.model") || "");
+  const [model, setModel] = useState(() => localStorage.getItem("ka_account.model") || "");
   const threadRef = useRef<HTMLDivElement>(null);
   const bootKey = useRef("");
   const sidRef = useRef<string | null>(null);
@@ -265,7 +265,7 @@ useEffect(() => {
   const [panelOpen, setPanelOpen] = useState(true);
   const panelWidthRef = useRef(480);
   const [panelWidth, setPanelWidth] = useState(() => {
-    const saved = Number(localStorage.getItem("partnerdesk.panelWidth"));
+    const saved = Number(localStorage.getItem("ka_account.panelWidth"));
     const width = Number.isFinite(saved) && saved >= 300 ? Math.round(saved) : 480;
     panelWidthRef.current = width;
     return width;
@@ -719,7 +719,7 @@ useEffect(() => {
     const stop = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", stop);
-      localStorage.setItem("partnerdesk.panelWidth", String(panelWidthRef.current));
+      localStorage.setItem("ka_account.panelWidth", String(panelWidthRef.current));
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop);
@@ -846,7 +846,7 @@ useEffect(() => {
               value={modelId}
               onChange={(event) => {
                 setModel(event.target.value);
-                localStorage.setItem("partnerdesk.model", event.target.value);
+                localStorage.setItem("ka_account.model", event.target.value);
               }}
             >
               {models.map((item) => <option key={item.id} value={item.id}>{item.short}</option>)}

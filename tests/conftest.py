@@ -1,7 +1,7 @@
 """Shared fixtures.
 
 `make_db` is the one way tests get a database: a throwaway PostgreSQL database per name,
-created on the server `PARTNERDESK_TEST_DB_URL` points at and dropped at teardown. Asking
+created on the server `KA_ACCOUNT_TEST_DB_URL` points at and dropped at teardown. Asking
 for the same `name` twice returns the same database, so a test can close one and reopen it.
 
 Tests run on the same engine the app deploys on — there is no lighter stand-in, because a
@@ -66,9 +66,9 @@ def _admin(server: str, statement: str) -> None:
 
 @pytest.fixture
 def make_db():
-    server = env("PARTNERDESK_TEST_DB_URL")
+    server = env("KA_ACCOUNT_TEST_DB_URL")
     if not server:
-        pytest.skip("PARTNERDESK_TEST_DB_URL is not set — see .env.example")
+        pytest.skip("KA_ACCOUNT_TEST_DB_URL is not set — see .env.example")
     stores: dict[str, str] = {}
     live: list[Database] = []
 

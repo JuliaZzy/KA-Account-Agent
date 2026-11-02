@@ -54,7 +54,7 @@ LIANCAI_USERS = (("user-liancai-chen", "陈思远"), ("user-liancai-lin", "林�
 HAINA_USERS = (("user-haina-zhao", "赵宁"), ("user-haina-wu", "吴倩"), ("user-haina-zheng", "郑浩"))
 CONTRACT_PATH = ROOT / "fixtures" / "demo" / "联采贸易-经销协议.md"
 CACHE_PATH = ROOT / "fixtures" / "demo" / "off-slice.json"
-UA = "PartnerDeskDemo/1.0 (local sales seed; not a crawl)"
+UA = "KAAccountAgentDemo/1.0 (local sales seed; not a crawl)"
 # More than fifteen: the API sometimes 503s, and some tags have no usable pack size.
 BRAND_TAGS = [
     "barilla", "kellogg-s", "nestle", "oreo", "haribo", "ferrero", "lavazza", "lindt",

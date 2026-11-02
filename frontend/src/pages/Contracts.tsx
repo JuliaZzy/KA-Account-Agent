@@ -79,7 +79,7 @@ function ContractsDesk() {
       const saved = await postForm<{ id: string; title: string; discount_rules: number; po_rules: number; skipped: string[] }>(
         `/api/partnerships/${p.id}/contracts`,
         file,
-        { title, model: localStorage.getItem("partnerdesk.model") || meta?.default_model || "" },
+        { title, model: localStorage.getItem("ka_account.model") || meta?.default_model || "" },
       );
       setNotice(`Imported ${saved.title}: ${saved.discount_rules} discount rule(s), ${saved.po_rules} PO rule(s).${saved.skipped.length ? ` Skipped: ${saved.skipped.join("; ")}` : ""}`);
       setFile(null);
