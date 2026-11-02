@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import * as echarts from "echarts";
 
 import { api } from "../api";
 import { useDesk } from "../desk";
@@ -9,6 +10,14 @@ type Board = {
   slo: { name: string; target: string; value: string; ok: boolean | null }[];
   alerts: { signal: string; action: string; runbook: string | null }[];
   runbooks: { id: string; title: string; body: string }[];
+  charts: {
+    hours: { at: string; created: number; failed: number }[];
+    duration: { label: string; count: number; tail: boolean }[];
+    duration_p95: number | null;
+    queue: { label: string; count: number; tail: boolean }[];
+    queue_p95: number | null;
+    levels: { label: string; value: number; limit: number | null }[];
+  };
   metrics: {
     created: number;
     succeeded: number;
@@ -148,25 +157,27 @@ export function MonitorPage() {
     <>
       <PageHead
         title="监控台"
-        caption="数字来自已经写入的 run、模型和工具记录。三个开关显示当前环境变量，改它们要改环境并重启。"
+        caption="看最近 24 小时的失败有没有爬升，完成时间和排队时间的尾巴，以及当前卡住和待领的水位。累计总数不在这里。"
       />
       {error && <div className="error">{error}</div>}
       {!userId && <div className="empty">先在左侧选一个用户。</div>}
       {board && (
         <>
-          <Metrics items={[
-            { label: "已创建", value: String(board.metrics.created) },
-            { label: "已完成", value: String(board.metrics.succeeded) },
-            { label: "已失败", value: String(board.metrics.failed) },
-            { label: "完成 P95", value: seconds(board.metrics.duration_p95) },
-            { label: "排队 P95", value: seconds(board.metrics.queue_lag_p95) },
-            { label: "待领任务", value: String(board.metrics.pending_jobs) },
-            { label: "正在跑", value: String(board.metrics.active_runs) },
-            { label: "卡住", value: String(board.metrics.stuck_runs) },
-            { label: "在线订阅", value: String(board.metrics.sse_connections) },
-            { label: "挡住的重复", value: String(board.metrics.duplicates) },
-            { label: "费用（分）", value: String(board.metrics.cost_cents) },
-          ]} />
+          <Metrics items={headlines(board)} />
+          <div className="monitor-grid">
+            <ChartCard title="每小时新建与失败" note="看失败那条是不是在往上走，不看累计了多少。">
+              <MonitorChart option={hourOption(board.charts.hours)} />
+            </ChartCard>
+            <ChartCard title="完成时间" note={`近 24 小时的分布，P95 ${seconds(board.charts.duration_p95)}。超过 60 秒的落在右边。`}>
+              <MonitorChart option={barOption(board.charts.duration)} />
+            </ChartCard>
+            <ChartCard title="排队时长" note={`近 24 小时从创建到开始，P95 ${seconds(board.charts.queue_p95)}。超过 10 秒的落在右边。`}>
+              <MonitorChart option={barOption(board.charts.queue)} />
+            </ChartCard>
+            <ChartCard title="当前水位" note="卡住和待领没有历史曲线，这里只是打开页面这一刻。虚线是卡住和正在跑的上限。">
+              <MonitorChart option={levelOption(board.charts.levels)} />
+            </ChartCard>
+          </div>
           <div className="filters">
             <span className="badge info">发信 {board.switches.send_email ? "开" : "关"}</span>
             <span className="badge info">MCP {board.switches.mcp ? "开" : "关"}</span>
@@ -302,6 +313,144 @@ export function MonitorPage() {
       )}
     </>
   );
+}
+
+const MOSS = "#2c6b4a";
+const BAD = "#9d2c2c";
+const INK = "#6f675e";
+const LINE = "#e4dccf";
+
+function headlines(board: Board): { label: string; value: string }[] {
+  const created = board.charts.hours.reduce((sum, point) => sum + point.created, 0);
+  const failed = board.charts.hours.reduce((sum, point) => sum + point.failed, 0);
+  const stuck = board.charts.levels.find((item) => item.label === "卡住")?.value ?? 0;
+  const pending = board.charts.levels.find((item) => item.label === "待领")?.value ?? 0;
+  const ratio = created === 0 ? "—" : `${((failed / created) * 100).toFixed(1)}%`;
+  return [
+    { label: "24h 新建", value: String(created) },
+    { label: "24h 失败", value: `${failed} · ${ratio}` },
+    { label: "完成 P95", value: seconds(board.charts.duration_p95) },
+    { label: "排队 P95", value: seconds(board.charts.queue_p95) },
+    { label: "卡住", value: String(stuck) },
+    { label: "待领", value: String(pending) },
+  ];
+}
+
+function hourOption(hours: Board["charts"]["hours"]): echarts.EChartsOption {
+  return {
+    tooltip: { trigger: "axis" },
+    legend: { top: 0, right: 8, data: ["新建", "失败"], textStyle: { color: INK, fontSize: 12 } },
+    grid: { left: 36, right: 12, top: 36, bottom: 28 },
+    xAxis: {
+      type: "category",
+      data: hours.map((point) => hourLabel(point.at)),
+      axisLabel: { color: INK, fontSize: 10 },
+      axisLine: { lineStyle: { color: LINE } },
+    },
+    yAxis: {
+      type: "value",
+      minInterval: 1,
+      axisLabel: { color: INK, fontSize: 10 },
+      splitLine: { lineStyle: { color: LINE } },
+    },
+    series: [
+      { name: "新建", type: "bar", data: hours.map((point) => point.created), itemStyle: { color: MOSS }, barMaxWidth: 10 },
+      { name: "失败", type: "bar", data: hours.map((point) => point.failed), itemStyle: { color: BAD }, barMaxWidth: 10 },
+    ],
+  };
+}
+
+function barOption(bars: { label: string; count: number; tail: boolean }[]): echarts.EChartsOption {
+  return {
+    tooltip: { trigger: "axis" },
+    grid: { left: 36, right: 12, top: 16, bottom: 28 },
+    xAxis: {
+      type: "category",
+      data: bars.map((bar) => bar.label),
+      axisLabel: { color: INK, fontSize: 10 },
+      axisLine: { lineStyle: { color: LINE } },
+    },
+    yAxis: {
+      type: "value",
+      minInterval: 1,
+      axisLabel: { color: INK, fontSize: 10 },
+      splitLine: { lineStyle: { color: LINE } },
+    },
+    series: [{
+      type: "bar",
+      data: bars.map((bar) => ({ value: bar.count, itemStyle: { color: bar.tail ? BAD : MOSS } })),
+      barMaxWidth: 22,
+    }],
+  };
+}
+
+function levelOption(levels: Board["charts"]["levels"]): echarts.EChartsOption {
+  const marks = levels.flatMap((level) => (
+    level.limit == null ? [] : [{ xAxis: level.limit, label: { formatter: `${level.label} ${level.limit}`, color: INK, fontSize: 10 } }]
+  ));
+  return {
+    tooltip: { trigger: "axis" },
+    grid: { left: 56, right: 24, top: 16, bottom: 24 },
+    xAxis: {
+      type: "value",
+      minInterval: 1,
+      axisLabel: { color: INK, fontSize: 10 },
+      splitLine: { lineStyle: { color: LINE } },
+    },
+    yAxis: {
+      type: "category",
+      data: levels.map((level) => level.label),
+      axisLabel: { color: INK },
+      axisLine: { lineStyle: { color: LINE } },
+    },
+    series: [{
+      type: "bar",
+      data: levels.map((level) => ({
+        value: level.value,
+        itemStyle: { color: level.limit != null && level.value >= level.limit ? BAD : MOSS },
+      })),
+      barMaxWidth: 18,
+      markLine: marks.length === 0 ? undefined : {
+        symbol: "none",
+        lineStyle: { type: "dashed", color: "#8a5a12" },
+        data: marks,
+      },
+    }],
+  };
+}
+
+function hourLabel(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+}
+
+function ChartCard({ title, note, children }: { title: string; note: string; children: ReactNode }) {
+  return (
+    <section className="panel">
+      <h2>{title}</h2>
+      <p className="muted">{note}</p>
+      {children}
+    </section>
+  );
+}
+
+function MonitorChart({ option }: { option: echarts.EChartsOption }) {
+  const node = useRef<HTMLDivElement>(null);
+  const signature = JSON.stringify(option);
+  useEffect(() => {
+    const el = node.current;
+    if (!el) return;
+    const view = echarts.init(el);
+    view.setOption(option);
+    const observer = new ResizeObserver(() => view.resize());
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      view.dispose();
+    };
+  }, [signature, option]);
+  return <div className="chart-echarts" ref={node} />;
 }
 
 function RecordTable({ rows }: { rows: string[] }) {

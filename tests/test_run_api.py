@@ -2004,6 +2004,8 @@ def test_the_monitor_lists_one_org_and_reads_the_ledger(make_db):
     assert board.status_code == 200
     assert board.json()["switches"]["queue"] is True
     assert board.json()["metrics"]["created"] == 1
+    assert len(board.json()["charts"]["hours"]) == 24
+    assert sum(point["created"] for point in board.json()["charts"]["hours"]) == 1
     assert board.json()["metrics"]["failed"] == 0
     assert all(item["signal"] != "run.failed 比例升高" for item in board.json()["alerts"])
 

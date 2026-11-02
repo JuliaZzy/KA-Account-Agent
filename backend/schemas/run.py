@@ -276,9 +276,37 @@ class MonitorMetrics(BaseModel):
     daily_tokens: int
 
 
+class MonitorHour(BaseModel):
+    at: str
+    created: int
+    failed: int
+
+
+class MonitorBar(BaseModel):
+    label: str
+    count: int
+    tail: bool
+
+
+class MonitorLevel(BaseModel):
+    label: str
+    value: int
+    limit: int | None = None
+
+
+class MonitorCharts(BaseModel):
+    hours: list[MonitorHour]
+    duration: list[MonitorBar]
+    duration_p95: float | None = None
+    queue: list[MonitorBar]
+    queue_p95: float | None = None
+    levels: list[MonitorLevel]
+
+
 class MonitorResponse(BaseModel):
     switches: MonitorSwitches
     slo: list[SloRow]
     alerts: list[MonitorAlert]
     runbooks: list[RunbookResponse]
+    charts: MonitorCharts
     metrics: MonitorMetrics

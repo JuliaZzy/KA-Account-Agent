@@ -130,6 +130,7 @@ def monitor(db: Database, org_id: str) -> dict[str, Any]:
         "slo": _slo(facts, cap.daily_tokens, cap.daily_cost_cents),
         "alerts": _alerts(facts, cap.daily_tokens, cap.daily_cost_cents),
         "runbooks": [dict(item) for item in RUNBOOKS],
+        "charts": _charts(db, org_id, facts),
         "metrics": {
             "created": facts["created"],
             "succeeded": facts["succeeded"],
@@ -149,6 +150,23 @@ def monitor(db: Database, org_id: str) -> dict[str, Any]:
             "daily_cost_cents": facts["daily_cost_cents"],
             "daily_tokens": facts["daily_tokens"],
         },
+    }
+
+
+def _charts(db: Database, org_id: str, facts: dict[str, Any]) -> dict[str, Any]:
+    window = db.monitor_charts(org_id)
+    cap = limits()
+    return {
+        "hours": window["hours"],
+        "duration": window["duration"],
+        "duration_p95": window["duration_p95"],
+        "queue": window["queue"],
+        "queue_p95": window["queue_p95"],
+        "levels": [
+            {"label": "卡住", "value": facts["stuck_runs"], "limit": 10},
+            {"label": "正在跑", "value": facts["active_runs"], "limit": cap.org_running or None},
+            {"label": "待领", "value": facts["pending_jobs"], "limit": None},
+        ],
     }
 
 

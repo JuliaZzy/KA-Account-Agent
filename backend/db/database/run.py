@@ -9,7 +9,7 @@ per class and the queue mixin could not call them.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, func, or_, select, text
@@ -38,6 +38,39 @@ from .support import (
 _DURATION_EDGES = (1, 5, 15, 30, 60, 120, 300)
 _LAG_EDGES = (0.1, 0.3, 1, 5, 10, 30, 60)
 _MODEL_EDGES = (0.5, 1, 2, 5, 10, 30, 60)
+_DURATION_LABELS = ("≤1s", "≤5s", "≤15s", "≤30s", "≤60s", "≤2min", "≤5min", ">5min")
+_LAG_LABELS = ("≤0.1s", "≤0.3s", "≤1s", "≤5s", "≤10s", "≤30s", "≤1min", ">1min")
+
+
+def _hour_key(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
+
+
+def _fill_hours(start: datetime, rows: list[Any]) -> list[dict[str, Any]]:
+    found: dict[datetime, tuple[int, int]] = {}
+    for stamp, created, failed in rows:
+        found[_hour_key(stamp)] = (int(created or 0), int(failed or 0))
+    points: list[dict[str, Any]] = []
+    cursor = _hour_key(start)
+    for _ in range(24):
+        created, failed = found.get(cursor, (0, 0))
+        points.append({"at": cursor.isoformat(), "created": created, "failed": failed})
+        cursor += timedelta(hours=1)
+    return points
+
+
+def _bars(hist: dict[str, Any], labels: tuple[str, ...], *, tail_from: int) -> list[dict[str, Any]]:
+    """Turn cumulative histogram buckets into one bar per range."""
+    counts = [*hist["buckets"], hist["count"]]
+    previous = 0
+    bars: list[dict[str, Any]] = []
+    for index, label in enumerate(labels):
+        count = int(counts[index] or 0) - previous
+        previous = int(counts[index] or 0)
+        bars.append({"label": label, "count": count, "tail": index >= tail_from})
+    return bars
 
 
 def _histogram(
@@ -895,6 +928,43 @@ class RunMixin:
                 "failed_codes": self._failed_codes(s, org_id),
             }
             return facts
+
+    def monitor_charts(self, org_id: str) -> dict[str, Any]:
+        """The last 24 hours, from rows that already exist.
+
+        Gauges such as the queue depth are not here: nothing stores their history.
+        """
+        now = utcnow()
+        start = (now - timedelta(hours=23)).replace(minute=0, second=0, microsecond=0)
+        with self.tx() as s:
+            org = orm.AgentRun.org_id == org_id
+            recent = orm.AgentRun.created_at >= start
+            hour = func.date_trunc("hour", orm.AgentRun.created_at)
+            rows = s.execute(
+                select(
+                    hour,
+                    func.count(),
+                    func.count().filter(orm.AgentRun.status == RunStatus.FAILED),
+                )
+                .where(org, recent)
+                .group_by(hour)
+            ).all()
+            duration = func.extract("epoch", orm.AgentRun.ended_at - orm.AgentRun.started_at)
+            lag = func.extract(
+                "epoch", func.coalesce(orm.AgentRun.started_at, func.now()) - orm.AgentRun.created_at,
+            )
+            duration_hist = _histogram(
+                s, duration, _DURATION_EDGES,
+                org, recent, orm.AgentRun.started_at.is_not(None), orm.AgentRun.ended_at.is_not(None),
+            )
+            lag_hist = _histogram(s, lag, _LAG_EDGES, org, recent)
+        return {
+            "hours": _fill_hours(start, rows),
+            "duration": _bars(duration_hist, _DURATION_LABELS, tail_from=5),
+            "duration_p95": duration_hist["p95"],
+            "queue": _bars(lag_hist, _LAG_LABELS, tail_from=5),
+            "queue_p95": lag_hist["p95"],
+        }
 
     @staticmethod
     def _count(s: Session, model: type, *filters: Any, joined: type | None = None) -> int:
