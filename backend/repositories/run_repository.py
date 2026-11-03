@@ -64,6 +64,7 @@ def create_agent_run(
     idempotency_key: str,
     run_input: dict[str, Any],
     parent_run_id: str | None = None,
+    owner_run_id: str | None = None,
     max_model_calls: int | None = None,
     max_tokens: int | None = None,
     max_tool_calls: int | None = None,
@@ -71,6 +72,7 @@ def create_agent_run(
 ) -> tuple[dict[str, Any], bool]:
     return db.create_agent_run(
         org_id, user_id, run_type, idempotency_key, run_input, parent_run_id,
+        owner_run_id=owner_run_id,
         max_model_calls=max_model_calls, max_tokens=max_tokens,
         max_tool_calls=max_tool_calls, max_duration_seconds=max_duration_seconds,
     )
@@ -103,6 +105,14 @@ def claim_chat_turn(
 
 def sweep_expired_leases(db: Database, limit: int = 100) -> int:
     return db.sweep_expired_leases(limit)
+
+
+def sweep_waiting_for_tasks(
+    db: Database, limit: int = 100, stale_after: timedelta | None = None,
+) -> int:
+    if stale_after is None:
+        return db.sweep_waiting_for_tasks(limit)
+    return db.sweep_waiting_for_tasks(limit, stale_after=stale_after)
 
 def complete_run(db: Database, run_id: str, output: dict[str, Any]) -> dict[str, Any] | None:
     return db.complete_run(run_id, output)
@@ -200,3 +210,19 @@ def mark_waiting_for_user(
     db: Database, run_id: str, payload: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     return db.mark_waiting_for_user(run_id, payload)
+
+
+def mark_waiting_for_tasks(
+    db: Database, run_id: str, payload: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    return db.mark_waiting_for_tasks(run_id, payload)
+
+
+def requeue_waiting_tasks(
+    db: Database, run_id: str, payload: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    return db.requeue_waiting_tasks(run_id, payload)
+
+
+def find_runs_by_owner(db: Database, owner_run_id: str) -> list[dict[str, Any]]:
+    return db.find_runs_by_owner(owner_run_id)

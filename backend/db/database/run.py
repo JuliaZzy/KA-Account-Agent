@@ -17,9 +17,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ...services.run_names import (
+    PROJECTED_CHILD_EVENTS,
     RUN_EVENT_CHANNEL,
     OutboxStatus,
     RunStatus,
+    RunType,
     StepEvent,
     ToolCallStatus,
     event_display,
@@ -194,7 +196,7 @@ class RunMixin:
         event_payload.update(payload)
         self._append_event(s, run.id, RUN_TRANSITION_EVENTS[(source, to_status)], event_payload, now)
         self._append_audit(s, run, event_payload, now, who)
-        if source == RunStatus.WAITING_FOR_USER and to_status == RunStatus.QUEUED:
+        if source in (RunStatus.WAITING_FOR_USER, RunStatus.WAITING_FOR_TASKS) and to_status == RunStatus.QUEUED:
             self._add_execute_outbox(s, run, now)
             s.flush()
 
@@ -219,7 +221,7 @@ class RunMixin:
             run.attempts = int(run.attempts) + 1
             run.lease_owner = lease_owner
             run.lease_expires_at = lease_expires_at
-        elif to_status == RunStatus.WAITING_FOR_USER:
+        elif to_status in (RunStatus.WAITING_FOR_USER, RunStatus.WAITING_FOR_TASKS):
             run.lease_owner = None
             run.lease_expires_at = None
         elif to_status == RunStatus.QUEUED:
@@ -290,15 +292,13 @@ class RunMixin:
         return payload
 
     @staticmethod
-    def _append_event(
+    def _write_event(
         s: Session,
         run_id: str,
         event_type: str,
         payload: dict[str, Any],
         now: datetime,
     ) -> orm.RunEvent:
-        # Serialize sequence assignment on this run. A second lock in the same
-        # transaction is the one `_transition` already holds.
         s.scalars(
             select(orm.AgentRun).where(orm.AgentRun.id == run_id).with_for_update()
         ).first()
@@ -319,7 +319,6 @@ class RunMixin:
             created_at=now,
         )
         s.add(event)
-        # NOTIFY is delivered on commit. A failure here must not roll back the event.
         try:
             with s.begin_nested():
                 s.execute(
@@ -328,6 +327,33 @@ class RunMixin:
                 )
         except Exception:
             pass
+        return event
+
+    @staticmethod
+    def _append_event(
+        s: Session,
+        run_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+        now: datetime,
+    ) -> orm.RunEvent:
+        # Serialize sequence assignment on this run. A second lock in the same
+        # transaction is the one `_transition` already holds.
+        event = RunMixin._write_event(s, run_id, event_type, payload, now)
+        if event_type not in PROJECTED_CHILD_EVENTS or payload.get("projected_from"):
+            return event
+        locked = s.get(orm.AgentRun, run_id)
+        if locked is not None and locked.run_type == RunType.OPEN:
+            return event
+        owner_id = None if locked is None else locked.owner_run_id
+        source_id = run_id
+        while owner_id:
+            copy = dict(payload)
+            copy["projected_from"] = source_id
+            copy["child_run_id"] = source_id
+            RunMixin._write_event(s, owner_id, event_type, copy, now)
+            owner = s.get(orm.AgentRun, owner_id)
+            owner_id = None if owner is None else owner.owner_run_id
         return event
 
     def _append_audit(
@@ -373,6 +399,7 @@ class RunMixin:
         idempotency_key: str,
         run_input: dict[str, Any],
         parent_run_id: str | None = None,
+        owner_run_id: str | None = None,
         max_model_calls: int | None = None,
         max_tokens: int | None = None,
         max_tool_calls: int | None = None,
@@ -395,6 +422,7 @@ class RunMixin:
                     status=RunStatus.QUEUED,
                     input_json=run_input,
                     parent_run_id=parent_run_id,
+                    owner_run_id=owner_run_id,
                     trace_id=uuid.uuid4().hex,
                     max_model_calls=max_model_calls,
                     max_tokens=max_tokens,
@@ -408,6 +436,8 @@ class RunMixin:
                 created = {"status": RunStatus.QUEUED}
                 if parent_run_id is not None:
                     created["parent_run_id"] = parent_run_id
+                if owner_run_id is not None:
+                    created["owner_run_id"] = owner_run_id
                 self._append_event(s, run_id, StepEvent.RUN_CREATED, created, now)
                 self._add_execute_outbox(s, run, now)
                 s.flush()
@@ -462,7 +492,7 @@ class RunMixin:
                     select(orm.AgentRun.id)
                     .where(
                         orm.AgentRun.id != run_id,
-                        orm.AgentRun.status == RunStatus.RUNNING,
+                        orm.AgentRun.status.in_((RunStatus.RUNNING, RunStatus.WAITING_FOR_TASKS)),
                         orm.AgentRun.run_type == "chat",
                         orm.AgentRun.input_json["session_id"].as_string() == session_id,
                     )
@@ -522,6 +552,40 @@ class RunMixin:
                 )
             s.flush()
             return len(runs)
+
+    def sweep_waiting_for_tasks(
+        self, limit: int = 100, stale_after: timedelta = timedelta(minutes=15),
+    ) -> int:
+        """Wake owners whose children already finished. Lost Redis counts leave them parked.
+
+        A run still has queued or running children is left waiting. This does not
+        treat the row as `waiting_for_user`.
+        """
+        now = utcnow()
+        cutoff = now - stale_after
+        woke = 0
+        with self.tx() as s:
+            runs = list(s.scalars(
+                select(orm.AgentRun)
+                .where(
+                    orm.AgentRun.status == RunStatus.WAITING_FOR_TASKS,
+                    orm.AgentRun.updated_at < cutoff,
+                )
+                .order_by(orm.AgentRun.updated_at)
+                .limit(limit)
+                .with_for_update()
+            ))
+            busy = (RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_FOR_TASKS)
+            for run in runs:
+                children = list(s.scalars(
+                    select(orm.AgentRun).where(orm.AgentRun.owner_run_id == run.id)
+                ))
+                if any(child.status in busy for child in children):
+                    continue
+                self._transition(s, run, RunStatus.QUEUED, {"reason": "waiting_tasks_stale"}, now)
+                woke += 1
+            s.flush()
+            return woke
 
     def sweep_attention(
         self,
@@ -790,6 +854,48 @@ class RunMixin:
             self._transition(s, run, RunStatus.WAITING_FOR_USER, payload or {}, now)
             s.flush()
             return _row_dict(run)
+
+    def mark_waiting_for_tasks(self, run_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        """Park a running run while child tasks execute. The actor is the worker.
+
+        None when the run is not running, or `cancel_requested_at` is already set.
+        """
+        now = utcnow()
+        with self.tx() as s:
+            run = s.scalars(
+                select(orm.AgentRun)
+                .where(orm.AgentRun.id == run_id, orm.AgentRun.status == RunStatus.RUNNING)
+                .with_for_update()
+            ).first()
+            if run is None or run.cancel_requested_at is not None:
+                return None
+            self._transition(s, run, RunStatus.WAITING_FOR_TASKS, payload or {}, now)
+            s.flush()
+            return _row_dict(run)
+
+    def requeue_waiting_tasks(self, run_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        """Wake a run that was waiting for a wave. Adds an execute outbox."""
+        now = utcnow()
+        with self.tx() as s:
+            run = s.scalars(
+                select(orm.AgentRun)
+                .where(orm.AgentRun.id == run_id, orm.AgentRun.status == RunStatus.WAITING_FOR_TASKS)
+                .with_for_update()
+            ).first()
+            if run is None or run.cancel_requested_at is not None:
+                return None
+            self._transition(s, run, RunStatus.QUEUED, payload or {"reason": "wave_ready"}, now)
+            s.flush()
+            return _row_dict(run)
+
+    def find_runs_by_owner(self, owner_run_id: str) -> list[dict[str, Any]]:
+        with self.tx() as s:
+            rows = s.scalars(
+                select(orm.AgentRun)
+                .where(orm.AgentRun.owner_run_id == owner_run_id)
+                .order_by(orm.AgentRun.created_at)
+            ).all()
+            return [_row_dict(row) for row in rows]
 
     def run_trace(self, org_id: str, run_id: str) -> dict[str, Any] | None:
         """Run plus its steps, events, model calls, tool calls and checkpoints.

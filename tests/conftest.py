@@ -20,7 +20,7 @@ from sqlalchemy.engine import make_url
 
 from backend.config import env
 from backend.db import Database
-from backend.llm.client import DeepSeekClient, SJTUClient
+from backend.llm.client import DeepSeekClient, QwenClient, SJTUClient
 from backend.po.catalog import Catalog
 from backend.schemas import AgentSettings, CommercialRule, Partnership, Product
 
@@ -69,7 +69,7 @@ def _admin(server: str, statement: str) -> None:
 def make_db():
     server = env("KA_ACCOUNT_TEST_DB_URL")
     if not server:
-        pytest.skip("KA_ACCOUNT_TEST_DB_URL is not set — see .env.example")
+        pytest.skip("KA_ACCOUNT_TEST_DB_URL is not set — run tests via ./dev test")
     stores: dict[str, str] = {}
     live: list[Database] = []
 
@@ -139,9 +139,11 @@ def _scripted_models(monkeypatch):
         client = kwargs["client"]
         expect = kwargs.get("expect")
         if callable(getattr(client, "complete_json", None)):
+            if kwargs.get("on_text") is not None:
+                return real(**kwargs)
             return calls._Transport(response=_scripted(client, expect, kwargs), client=client)
         # A real vendor client built at the call site. Tests still answer from the FakeLLM.
-        if isinstance(client, (DeepSeekClient, SJTUClient)):
+        if isinstance(client, (DeepSeekClient, QwenClient, SJTUClient)):
             method = {"text": "stream_text", "tools": "complete"}.get(expect, "complete_json")
             llm = _nearest_double(method)
             if llm is not None:

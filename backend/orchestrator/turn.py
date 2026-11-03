@@ -1,6 +1,6 @@
-"""聊天入口：新会话的标题在 worker 里取，然后把这一轮交给工具循环。
+"""聊天入口：无标题会话另排一条 OPEN run，父 run 直接 PLAN。
 
-会话取名只写聊天列表上的标题和标签。
+OPEN 只写标题和标签，不进 tasks，也不向聊天 SSE 推事件。见 `docs/orchestrator.md`。
 """
 
 from __future__ import annotations
@@ -8,15 +8,11 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextvars import copy_context
 from dataclasses import dataclass
 from typing import Any
 
-from ..config import LLMSettings
 from ..db import Database
 from ..llm import calls as model_calls
-from ..llm.client import DeepSeekClient
 from ..llm.types import AssistantTurn
 from ..memory import attach, prompt_turns
 from ..services.chat_run import enqueue_chat_run
@@ -94,17 +90,35 @@ def open_session(llm: Any, *, message: str, attachments: list[str],
 
 def name_new_chat(db: Database, llm:Any, session: dict[str, Any], run: dict[str, Any]) -> None:
     """Name a chat that has no title yet. A model failure leaves the title empty."""
+    execute_open(db, llm, run)
+
+
+def execute_open(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
+    """Background OPEN: tags and title only. No wave box, no events on the chat run."""
+    from ..turn_lock import hold_session
+
     payload = run.get("input_json") if isinstance(run.get("input_json"), dict) else {}
+    session_id = str(payload.get("session_id") or "")
+    session = db.session(session_id)
+    if not session:
+        return {"ok": False, "error": "chat run has no session"}
+    if session.get("title"):
+        return {"ok": True, "title": session.get("title"), "tags": list(session.get("tags") or [])}
     message = str(payload.get("message") or "")
     attachments = [name for name in (payload.get("attachments") or []) if isinstance(name, str)]
     try:
         opened = open_session(
-            llm, message=message, attachments=attachments, db=db, run_id=str(run["id"])
+            llm, message=message, attachments=attachments, db=db, run_id=str(run["id"]),
         )
-    except Exception:
+    except Exception as exc:
         log.exception("Failed to name new chat")
-        return 
-    db.update_session(session["id"], title=opened.title, tags=opened.tags)
+        return {"ok": False, "error": str(exc)}
+    with hold_session(session_id):
+        current = db.session(session_id) or session
+        if current.get("title"):
+            return {"ok": True, "title": current.get("title"), "tags": list(current.get("tags") or [])}
+        db.update_session(session_id, title=opened.title, tags=opened.tags)
+    return {"ok": True, "title": opened.title, "tags": opened.tags}
 
 def _run_one_tool(
     call: Any, runners: dict[str, Any], llm: Any, context: dict[str, Any],
@@ -128,15 +142,9 @@ def run_tool_calls(
     llm: Any, *, text: str, history: list[dict[str, Any]], extra: dict[str, Any] | None = None,
     include_mcp: bool | None = None, memory: str | None = None, folded_through: int = 0,
 ) -> str | None:
-    """Native function-calling loop (tools= / tool_choice=auto).
+    """Native function-calling loop for tests and leftover callers.
 
-    One loop covers single, chain, and parallel:
-    - one tool_call → single
-    - several tool_calls in the same assistant turn → run in parallel (ThreadPool)
-    - tools again after results → chain (next while iteration)
-
-    The model chooses which; we do not ask it to pick a "strategy" first.
-    Returns final prose, or None if no tool was used.
+    Chat turns do not use this. They go through PLAN and child runs.
     """
     schemas = all_schemas(include_mcp=include_mcp)
     runners = all_tools(include_mcp=include_mcp)
@@ -152,10 +160,8 @@ def run_tool_calls(
     used = False
     last: AssistantTurn | None = None
     for _ in range(MAX_TOOL_ROUNDS):
-        can_call = callable(getattr(llm, "response", None)) or callable(getattr(llm, "complete_json", None))
-        flash = llm if can_call else DeepSeekClient(LLMSettings(base_url=None, api_key=""))
         last = model_calls.flash_tools(
-            client=flash, system=attach(REACT, memory or ""), messages=messages, tools=schemas,
+            client=llm, system=attach(REACT, memory or ""), messages=messages, tools=schemas,
         )
         if not last.tool_calls:
             if used:
@@ -163,21 +169,9 @@ def run_tool_calls(
             return None
         used = True
         messages.append(last.as_message())
-        calls = last.tool_calls
-        if len(calls) == 1:
-            messages.append(_run_one_tool(calls[0], runners, llm, context))
-        else:
-            # Same-turn fan-out: model asked for several tools at once → parallel.
-            by_id: dict[str, dict[str, Any]] = {}
-            # Workers outlive the call. Run them in this turn's context.
-            parent = copy_context()
-            with ThreadPoolExecutor(max_workers=min(5, len(calls))) as pool:
-                futs = {pool.submit(parent.run, _run_one_tool, c, runners, llm, context): c.id for c in calls}
-                for fut in as_completed(futs):
-                    msg = fut.result()
-                    by_id[msg["tool_call_id"]] = msg
-            # Preserve the model's call order when appending (API is happier that way).
-            messages.extend(by_id[c.id] for c in calls)
+        # Not the chat worker path. Chat parallelism is child runs, not a thread pool.
+        for call in last.tool_calls:
+            messages.append(_run_one_tool(call, runners, llm, context))
     return (last.content if last else None) or "Done."
 
 def handle_message(

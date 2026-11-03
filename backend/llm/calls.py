@@ -1,28 +1,34 @@
 """One place that picks a model and calls it.
 
 Campus `deepseek-chat` is the small text model. Campus `deepseek-reasoner` is the
-same model with thinking on, for report planning and prose. Campus `minimax` plans
-a turn. Campus `qwen` reads an order photo. Official `deepseek-flash` writes strict
-JSON, Python, and tool calls, with thinking off. None of these calls set `max_tokens`.
+same model with thinking on, for report planning and prose. Campus `qwen` reads
+an order photo. Official `qwen3.7-flash` plans a turn. Official `deepseek-flash`
+writes strict JSON, Python, and tool calls, with thinking off. None of these
+calls set `max_tokens`.
 
-`call_model` is the only entry that calls a client and writes the run ledger.
-The caller passes the client. The four wrappers keep the shapes callers already
-expect. Vendors usually
-send token counts on the final response. A stream, or a gateway that drops usage,
-leaves both counts at 0. Those calls are estimated and labeled `estimated`.
+`call_model` is the only entry. It opens the vendor client from `brand` when the
+caller did not pass a test double. The four wrappers keep the shapes callers
+already expect. Vendors usually send token counts on the final response. A stream,
+or a gateway that drops usage, leaves both counts at 0. Those calls are estimated
+and labeled `estimated`. OCR stays in `documents`.
 """
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import logging
+import re
 import time
-from collections.abc import Iterator
-from dataclasses import asdict, dataclass
+from collections.abc import Callable, Iterator
+from dataclasses import asdict, dataclass, field
+from types import SimpleNamespace
 from typing import Any, Literal
 
 from ..services.entry_guard import acquire_model, org_budget, release_model
 from ..services.run_names import EntryErrorCode, StepEvent, StepStatus
+from .client import VENDORS, client_for
 from .parse import parse_json_loose
 from .types import AssistantTurn, ToolCall
 
@@ -33,9 +39,15 @@ SCHOOL_REASONER = "deepseek-reasoner"
 SCHOOL_PLAN = "minimax"
 SCHOOL_VISION = "qwen"
 DEEPSEEK_FLASH = "deepseek-flash"
+QWEN_PLAN = "qwen3.7-flash"
 
 Kind = Literal["chat_completion", "response"]
 Expect = Literal["json", "text", "tools"]
+Brand = Literal["sjtu", "deepseek", "glm", "qwen"]
+
+_PROVIDER = {"sjtu": "sjtu", "deepseek": "ds", "glm": "glm", "qwen": "qwen"}
+# Official OpenAI-compatible APIs reject dots. Internal names keep them (`po.draft`).
+_VENDOR_TOOL_NAME = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 class ModelBudgetExceeded(Exception):
@@ -61,6 +73,7 @@ class ModelResult:
 class _Transport:
     response: Any
     client: Any
+    tool_alias: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -97,10 +110,12 @@ def _prompt_text(system: str, messages: list[dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
-def _provider(model_name: str, client: Any) -> str:
+def _provider(model_name: str, client: Any, brand: str | None = None) -> str:
     named = getattr(client, "provider", None)
     if isinstance(named, str) and named.strip():
         return named
+    if brand in _PROVIDER:
+        return _PROVIDER[brand]
     if model_name == DEEPSEEK_FLASH:
         return "ds"
     return "sjtu"
@@ -131,7 +146,7 @@ def _school_text(resp: Any) -> str:
     try:
         if isinstance(resp, dict):
             return str(resp["choices"][0]["message"]["content"] or "")
-        return str(resp.choice[0].message.content or "")
+        return str(resp.choices[0].message.content or "")
     except (KeyError, IndexError, TypeError, AttributeError) as err:
         raise ValueError("Campus model did not return a message.") from err
 
@@ -160,8 +175,302 @@ def _json_format(schema: dict[str, Any] | None) -> dict[str, Any]:
     return {"format": {"type": "json_object"}}
 
 
+def _await(result: Any) -> Any:
+    if inspect.iscoroutine(result):
+        return asyncio.run(result)
+    return result
+
+
+def _call_sjtu(
+    client: Any, *, model: str, messages: list[dict[str, Any]], stream: bool,
+    temperature: float | None, top_p: float | None,
+    tools: list[dict[str, Any]] | None, tool_choice: str | None,
+) -> Any:
+    kwargs: dict[str, Any] = {"model": model, "messages": messages, "stream": stream}
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    if top_p is not None:
+        kwargs["top_p"] = top_p
+    if tools:
+        kwargs["tools"] = tools
+        kwargs["tool_choice"] = tool_choice or "auto"
+    return client.chat_completion(**kwargs)
+
+
+def _call_deepseek(
+    client: Any, *, kind: Kind, model: str, system: str, messages: list[dict[str, Any]],
+    stream: bool, temperature: float | None, top_p: float | None,
+    schema: dict[str, Any] | None, tools: list[dict[str, Any]] | None,
+    tool_choice: str | None, reasoning_effort: str | None,
+) -> Any:
+    if kind == "response":
+        return client.response(
+            model=model, instructions=system, input=_flash_input(messages),
+            text=_json_format(schema), reasoning_effort=reasoning_effort,
+            temperature=temperature, **({} if top_p is None else {"top_p": top_p}),
+        )
+    kwargs: dict[str, Any] = {"model": model, "messages": [{"role": "system", "content": system}, *messages]}
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    if top_p is not None:
+        kwargs["top_p"] = top_p
+    if tools:
+        kwargs["tools"] = tools
+        kwargs["tool_choice"] = tool_choice or "auto"
+    if reasoning_effort:
+        kwargs["reasoning_effort"] = reasoning_effort
+    if stream:
+        kwargs["stream"] = True
+        kwargs["stream_options"] = {"include_usage": True}
+    return client.chat_completion(**kwargs)
+
+
+def _call_glm(
+    client: Any, *, kind: Kind, model: str, system: str, messages: list[dict[str, Any]],
+    stream: bool, temperature: float | None, schema: dict[str, Any] | None,
+    tools: list[dict[str, Any]] | None, tool_choice: str | None, reasoning_effort: str | None,
+) -> Any:
+    if kind != "response":
+        raise ValueError("GLM chat goes through the Responses API")
+    del schema
+    kwargs: dict[str, Any] = {"model": model, "input": [{"role": "system", "content": system}, *messages]}
+    if stream:
+        kwargs["stream"] = True
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    if tools:
+        kwargs["tools"] = tools
+    if tool_choice:
+        kwargs["tool_choice"] = tool_choice
+    if reasoning_effort:
+        kwargs["reasoning_effort"] = reasoning_effort
+    return client.response(**kwargs)
+
+
+def _qwen_schema(schema: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not schema:
+        return None
+    body = schema.get("schema") if isinstance(schema.get("schema"), dict) else schema
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": str(schema.get("name") or "response"),
+            "strict": bool(schema.get("strict", True)),
+            "schema": body,
+        },
+    }
+
+
+def _call_qwen(
+    client: Any, *, kind: Kind, model: str, system: str, messages: list[dict[str, Any]],
+    stream: bool, temperature: float | None, tools: list[dict[str, Any]] | None,
+    tool_choice: str | None, reasoning_effort: str | None,
+    schema: dict[str, Any] | None = None,
+) -> Any:
+    thinking = None
+    if reasoning_effort == "none":
+        thinking = {"enable_thinking": False}
+    elif reasoning_effort:
+        thinking = {"enable_thinking": True}
+    if kind == "response":
+        return _await(client.response(
+            model=model, input=[{"role": "system", "content": system}, *messages],
+            stream=stream, tools=tools, tool_choice=tool_choice,
+            reasoning_effort=reasoning_effort, extra_body=thinking,
+        ))
+    kwargs: dict[str, Any] = {
+        "model": model, "messages": [{"role": "system", "content": system}, *messages],
+    }
+    if stream:
+        kwargs["stream"] = True
+    if tools:
+        kwargs["tools"] = tools
+        kwargs["tool_choice"] = tool_choice or "auto"
+    fmt = _qwen_schema(schema)
+    if fmt is not None:
+        kwargs["response_format"] = fmt
+    if thinking:
+        kwargs["extra_body"] = thinking
+    del temperature
+    return _await(client.chat_completion(**kwargs))
+
+
+def _call_double(
+    client: Any, *, kind: Kind, model: str, system: str, messages: list[dict[str, Any]],
+    stream: bool, temperature: float | None, top_p: float | None,
+    schema: dict[str, Any] | None, tools: list[dict[str, Any]] | None,
+    tool_choice: str | None, reasoning_effort: str | None,
+) -> Any:
+    """FakeLLM and the other test doubles. They are not one of the four clients."""
+    if kind == "response":
+        response = getattr(client, "response", None)
+        if response is None:
+            raise TypeError(f"{type(client).__name__} cannot answer a Responses call")
+        return _await(response(
+            model=model, instructions=system, input=_flash_input(messages),
+            text=_json_format(schema), reasoning_effort=reasoning_effort,
+            temperature=temperature, **({} if top_p is None else {"top_p": top_p}),
+        ))
+    chat = getattr(client, "chat_completion", None)
+    if chat is None:
+        raise TypeError(f"{type(client).__name__} cannot answer a run")
+    kwargs: dict[str, Any] = {
+        "model": model, "messages": [{"role": "system", "content": system}, *messages],
+    }
+    extras = {
+        "temperature": temperature, "top_p": top_p, "tools": tools,
+        "tool_choice": (tool_choice or "auto") if tools else None,
+        "reasoning_effort": reasoning_effort, "stream": True if stream else None,
+    }
+    params = inspect.signature(chat).parameters
+    accept_any = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+    for key, value in extras.items():
+        if value is None:
+            continue
+        if accept_any or key in params:
+            kwargs[key] = value
+    return _await(chat(**kwargs))
+
+
+def _publish(on_text: Callable[[str], None] | None, text: str) -> None:
+    if on_text is not None and text:
+        on_text(text)
+
+
+def _assemble_stream(chunks: Any, on_text: Callable[[str], None]) -> Any:
+    parts: list[str] = []
+    calls: dict[int, dict[str, str]] = {}
+    for chunk in chunks:
+        delta = _choice_delta(chunk)
+        piece = _delta_text(delta)
+        if piece:
+            parts.append(piece)
+            on_text("".join(parts))
+        _take_tool_delta(calls, delta)
+    message = SimpleNamespace(
+        content="".join(parts) or None,
+        tool_calls=[_tool_namespace(calls[index]) for index in sorted(calls)] or None,
+    )
+    return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+
+def _choice_delta(chunk: Any) -> Any:
+    if isinstance(chunk, dict):
+        choices = chunk.get("choices") or []
+        if not choices:
+            return None
+        return (choices[0] or {}).get("delta")
+    choices = getattr(chunk, "choices", None) or []
+    if not choices:
+        return None
+    return getattr(choices[0], "delta", None)
+
+
+def _delta_text(delta: Any) -> str:
+    if delta is None:
+        return ""
+    content = delta.get("content") if isinstance(delta, dict) else getattr(delta, "content", None)
+    return content if isinstance(content, str) else ""
+
+
+def _take_tool_delta(calls: dict[int, dict[str, str]], delta: Any) -> None:
+    if delta is None:
+        return
+    raw = delta.get("tool_calls") if isinstance(delta, dict) else getattr(delta, "tool_calls", None)
+    for call in raw or []:
+        if isinstance(call, dict):
+            index = int(call.get("index") or 0)
+            slot = calls.setdefault(index, {"id": "", "name": "", "arguments": ""})
+            if call.get("id"):
+                slot["id"] = str(call["id"])
+            function = call.get("function") or {}
+            if function.get("name"):
+                slot["name"] = str(function["name"])
+            if function.get("arguments"):
+                slot["arguments"] += str(function["arguments"])
+            continue
+        index = int(getattr(call, "index", 0) or 0)
+        slot = calls.setdefault(index, {"id": "", "name": "", "arguments": ""})
+        if getattr(call, "id", None):
+            slot["id"] = str(call.id)
+        function = getattr(call, "function", None)
+        name = getattr(function, "name", None) if function is not None else None
+        arguments = getattr(function, "arguments", None) if function is not None else None
+        if name:
+            slot["name"] = str(name)
+        if arguments:
+            slot["arguments"] += str(arguments)
+
+
+def _safe_tool_name(name: str) -> str | None:
+    safe = name.replace(".", "_")
+    return safe if _VENDOR_TOOL_NAME.fullmatch(safe) else None
+
+
+def _tools_for_vendor(tools: list[dict[str, Any]] | None) -> tuple[list[dict[str, Any]] | None, dict[str, str]]:
+    """Post names the vendor accepts. The alias maps posted name → internal name."""
+    if not tools:
+        return tools, {}
+    alias: dict[str, str] = {}
+    out: list[dict[str, Any]] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        func = tool.get("function")
+        if not isinstance(func, dict):
+            out.append(tool)
+            continue
+        name = func.get("name")
+        if not isinstance(name, str):
+            continue
+        safe = _safe_tool_name(name)
+        if safe is None:
+            continue
+        if safe != name:
+            alias[safe] = name
+        out.append({**tool, "function": {**func, "name": safe}})
+    return out, alias
+
+
+def _messages_for_vendor(messages: list[dict[str, Any]], alias: dict[str, str]) -> list[dict[str, Any]]:
+    posted = {original: safe for safe, original in alias.items()}
+    rewritten: list[dict[str, Any]] = []
+    for msg in messages:
+        if not isinstance(msg, dict) or not msg.get("tool_calls"):
+            rewritten.append(msg)
+            continue
+        calls = []
+        for call in msg["tool_calls"]:
+            if not isinstance(call, dict):
+                calls.append(call)
+                continue
+            func = dict(call.get("function") or {})
+            name = func.get("name")
+            if isinstance(name, str):
+                safe = posted.get(name) or _safe_tool_name(name)
+                if safe:
+                    func = {**func, "name": safe}
+                    if safe != name:
+                        alias.setdefault(safe, name)
+            calls.append({**call, "function": func})
+        rewritten.append({**msg, "tool_calls": calls})
+    return rewritten
+
+
+def _restore_tool_name(name: str, alias: dict[str, str]) -> str:
+    return alias.get(name, name)
+
+
+def _tool_namespace(slot: dict[str, str]) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=slot["id"],
+        function=SimpleNamespace(name=slot["name"], arguments=slot["arguments"]),
+    )
+
+
 def _invoke(
     *,
+    brand: str,
     model_name: str,
     kind: Kind,
     expect: Expect,
@@ -174,40 +483,76 @@ def _invoke(
     tool_choice: str | None,
     reasoning_effort: str | None,
     client: Any,
+    on_text: Callable[[str], None] | None = None,
 ) -> _Transport:
     """One vendor call. Tests replace this; the ledger in `call_model` still runs."""
-    if kind == "response":
-        response = client.response(
-            model=model_name,
-            instructions=system,
-            input=_flash_input(messages),
-            text=_json_format(schema),
-            reasoning_effort=reasoning_effort,
-            temperature=temperature,
-            **({} if top_p is None else {"top_p": top_p}),
+    stream = on_text is not None and kind == "chat_completion"
+    alias: dict[str, str] = {}
+    if not isinstance(client, VENDORS):
+        response = _call_double(
+            client, kind=kind, model=model_name, system=system, messages=messages,
+            stream=stream, temperature=temperature, top_p=top_p, schema=schema,
+            tools=tools, tool_choice=tool_choice, reasoning_effort=reasoning_effort,
         )
-        return _Transport(response=response, client=client)
-    payload: dict[str, Any] = {
-        "model": model_name,
-        "messages": [{"role": "system", "content": system}, *messages],
-        "temperature": temperature,
-    }
-    if top_p is not None:
-        payload["top_p"] = top_p
-    if expect == "tools":
-        payload["tools"] = tools
-        payload["tool_choice"] = tool_choice or "auto"
-        payload["reasoning_effort"] = reasoning_effort
-    return _Transport(response=client.chat_completion(**payload), client=client)
+    else:
+        tools, alias = _tools_for_vendor(tools)
+        messages = _messages_for_vendor(messages, alias)
+        if brand == "sjtu":
+            response = _call_sjtu(
+                client, model=model_name,
+                messages=[{"role": "system", "content": system}, *messages],
+                stream=stream, temperature=temperature, top_p=top_p,
+                tools=tools, tool_choice=tool_choice,
+            )
+        elif brand == "deepseek":
+            response = _call_deepseek(
+                client, kind=kind, model=model_name, system=system, messages=messages,
+                stream=stream, temperature=temperature, top_p=top_p, schema=schema,
+                tools=tools, tool_choice=tool_choice, reasoning_effort=reasoning_effort,
+            )
+        elif brand == "glm":
+            response = _call_glm(
+                client, kind=kind, model=model_name, system=system, messages=messages,
+                stream=stream, temperature=temperature, schema=schema,
+                tools=tools, tool_choice=tool_choice, reasoning_effort=reasoning_effort,
+            )
+        elif brand == "qwen":
+            response = _call_qwen(
+                client, kind=kind, model=model_name, system=system, messages=messages,
+                stream=stream, temperature=temperature, tools=tools,
+                tool_choice=tool_choice, reasoning_effort=reasoning_effort,
+                schema=schema,
+            )
+        else:
+            raise ValueError(f"unknown model brand {brand}")
+    if stream:
+        return _Transport(response=_assemble_stream(response, on_text), client=client, tool_alias=alias)
+    return _Transport(response=response, client=client, tool_alias=alias)
 
 
-def _interpret(expect: Expect, raw: Any) -> tuple[Any, str]:
+def _interpret(expect: Expect, raw: Any, alias: dict[str, str] | None = None) -> tuple[Any, str]:
+    alias = alias or {}
     if expect == "tools":
         if isinstance(raw, AssistantTurn):
-            return raw, raw.content or ""
+            if not alias:
+                return raw, raw.content or ""
+            restored = AssistantTurn(
+                content=raw.content,
+                tool_calls=[
+                    ToolCall(id=c.id, name=_restore_tool_name(c.name, alias), arguments=c.arguments)
+                    for c in raw.tool_calls
+                ],
+                prompt_tokens=raw.prompt_tokens,
+                completion_tokens=raw.completion_tokens,
+            )
+            return restored, raw.content or ""
         message = raw.choices[0].message
         calls = [
-            ToolCall(id=call.id, name=call.function.name, arguments=_tool_arguments(call.function.arguments))
+            ToolCall(
+                id=call.id,
+                name=_restore_tool_name(call.function.name, alias),
+                arguments=_tool_arguments(call.function.arguments),
+            )
             for call in (message.tool_calls or [])
         ]
         turn = AssistantTurn(content=message.content, tool_calls=calls)
@@ -359,8 +704,9 @@ def _fail(
 def call_model(
     model_name: str,
     *,
+    brand: Brand,
     kind: Kind,
-    client: Any,
+    client: Any | None = None,
     expect: Expect = "json",
     temperature: float | None = None,
     top_p: float | None = None,
@@ -371,21 +717,26 @@ def call_model(
     tool_choice: str | None = None,
     reasoning_effort: str | None = None,
     purpose: str | None = None,
+    on_text: Callable[[str], None] | None = None,
     db: Any | None = None,
     run_id: str | None = None,
     step_id: str | None = None,
 ) -> ModelResult:
     """Call one model and, when a run is passed, write its row, usage, and events.
 
-    Over `max_model_calls` or `max_tokens` the vendor is not called. The result's
+    `brand` selects the vendor client. A test double is used as given. Over
+    `max_model_calls` or `max_tokens` the vendor is not called. The result's
     `error` is `COST_BUDGET_EXCEEDED`. A null cap does not block the call.
     """
+    if not str(model_name or "").strip():
+        raise ValueError("model is required")
     messages = list(messages or [])
+    used = client_for(brand, client)
     gate = _budget(db, run_id, step_id, purpose)
     if isinstance(gate, ModelResult):
         return gate
     ledger = gate
-    provider = _provider(model_name, client)
+    provider = _provider(model_name, used, brand)
     if ledger is not None:
         _note(ledger, StepEvent.MODEL_STARTED, {
             "display": "正在思考",
@@ -408,29 +759,33 @@ def call_model(
         )
     try:
         carried = _invoke(
-            model_name=model_name, kind=kind, expect=expect, temperature=temperature, top_p=top_p,
-            system=system, messages=messages, schema=schema, tools=tools, tool_choice=tool_choice,
-            reasoning_effort=reasoning_effort, client=client,
+            brand=brand, model_name=model_name, kind=kind, expect=expect,
+            temperature=temperature, top_p=top_p, system=system, messages=messages,
+            schema=schema, tools=tools, tool_choice=tool_choice,
+            reasoning_effort=reasoning_effort, client=used, on_text=on_text,
         )
     except Exception as exc:
         _fail(
             ledger, provider=provider, model_name=model_name, system=system, messages=messages,
-            schema=schema, tools=tools, client=client, started=started, error=exc, purpose=purpose,
+            schema=schema, tools=tools, client=used, started=started, error=exc, purpose=purpose,
         )
         raise
     finally:
         release_model(provider)
     try:
-        body, text = _interpret(expect, carried.response)
+        body, text = _interpret(expect, carried.response, getattr(carried, "tool_alias", None))
     except Exception as exc:
         _fail(
-            ledger, provider=_provider(model_name, carried.client), model_name=model_name,
+            ledger, provider=_provider(model_name, carried.client, brand), model_name=model_name,
             system=system, messages=messages, schema=schema, tools=tools, client=carried.client,
             started=started, error=exc, purpose=purpose,
         )
         raise
+    streamed = kind == "chat_completion" and on_text is not None
+    if on_text is not None and not streamed:
+        _publish(on_text, text)
     prompt, completion, source = _tokens(carried.client, system, messages, text)
-    provider = _provider(model_name, carried.client)
+    provider = _provider(model_name, carried.client, brand)
     response: dict[str, Any]
     if expect == "json" and isinstance(body, dict):
         response = {"json": body}
@@ -476,7 +831,7 @@ def _unwrap(result: ModelResult) -> Any:
 
 
 def school_json(
-    model: str, *, client: Any, system: str, messages: list[dict[str, Any]],
+    model: str, *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
     schema: dict[str, Any] | None = None, temperature: float = 0,
     db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
     purpose: str | None = None,
@@ -484,7 +839,7 @@ def school_json(
     """Campus chat. The gateway has no JSON schema; the reply text is the object."""
     # Thinking is on for this model name, so leave temperature at the gateway default.
     return _unwrap(call_model(
-        model, kind="chat_completion", expect="json",
+        model, brand="sjtu", kind="chat_completion", expect="json",
         temperature=None if model == SCHOOL_REASONER else temperature,
         system=system, messages=messages, schema=schema, client=client,
         db=db, run_id=run_id, step_id=step_id, purpose=purpose,
@@ -492,43 +847,59 @@ def school_json(
 
 
 def school_text(
-    model: str, *, client: Any, system: str, messages: list[dict[str, Any]], temperature: float = 0,
+    model: str, *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
+    temperature: float = 0, on_text: Callable[[str], None] | None = None,
     db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
     purpose: str | None = None,
 ) -> Iterator[str]:
     """Campus chat, one chunk. The desk still renders it as reply tokens."""
     text = _unwrap(call_model(
-        model, kind="chat_completion", expect="text", temperature=temperature,
-        system=system, messages=messages, client=client,
+        model, brand="sjtu", kind="chat_completion", expect="text", temperature=temperature,
+        system=system, messages=messages, client=client, on_text=on_text,
         db=db, run_id=run_id, step_id=step_id, purpose=purpose,
     ))
     if text:
         yield text
 
 
+def qwen_json(
+    *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
+    schema: dict[str, Any] | None = None, temperature: float = 0,
+    db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
+    purpose: str | None = None,
+) -> dict[str, Any]:
+    """Official qwen3.7-flash. Thinking off. A schema is sent when the caller has one."""
+    return _unwrap(call_model(
+        QWEN_PLAN, brand="qwen", kind="chat_completion", expect="json", temperature=temperature,
+        system=system, messages=messages, schema=schema, reasoning_effort="none", client=client,
+        db=db, run_id=run_id, step_id=step_id, purpose=purpose,
+    ))
+
+
 def flash_json(
-    *, client: Any, system: str, messages: list[dict[str, Any]],
+    *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
     schema: dict[str, Any] | None = None, temperature: float = 0,
     db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
     purpose: str | None = None,
 ) -> dict[str, Any]:
     """Official deepseek-flash, thinking off. A schema is sent when the caller has one."""
     return _unwrap(call_model(
-        DEEPSEEK_FLASH, kind="response", expect="json", temperature=temperature,
+        DEEPSEEK_FLASH, brand="deepseek", kind="response", expect="json", temperature=temperature,
         system=system, messages=messages, schema=schema, reasoning_effort="none", client=client,
         db=db, run_id=run_id, step_id=step_id, purpose=purpose,
     ))
 
 
 def flash_tools(
-    *, client: Any, system: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]],
+    *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]], on_text: Callable[[str], None] | None = None,
     db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
     purpose: str | None = None,
 ) -> AssistantTurn:
     """Official deepseek-flash function calls. Thinking stays off."""
     return _unwrap(call_model(
-        DEEPSEEK_FLASH, kind="chat_completion", expect="tools", temperature=0,
+        DEEPSEEK_FLASH, brand="deepseek", kind="chat_completion", expect="tools", temperature=0,
         system=system, messages=messages, tools=tools, tool_choice="auto",
-        reasoning_effort="none", client=client,
+        reasoning_effort="none", client=client, on_text=on_text,
         db=db, run_id=run_id, step_id=step_id, purpose=purpose,
     ))

@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 
 import { api } from "./api";
 import { chatPresence, forgetChat, isForgotten, useChatPresence } from "./chat-live";
@@ -51,7 +51,7 @@ function resolvePick(
 }
 
 export type Meta = {
-  models: { id: string; label: string; short: string; description: string; vision: boolean; thinking: boolean }[];
+  models: { id: string; label: string; short: string; vision: boolean; thinking: boolean }[];
   default_model: string;
   product_statuses: string[];
   memory_kinds: Record<string, string>;
@@ -101,14 +101,35 @@ export function useDesk(): DeskValue {
 }
 
 const NAV = [
-  ["/", "Chat"],
-  ["/products", "Products"],
-  ["/orders", "Orders"],
-  ["/contracts", "Contracts"],
-  ["/reports", "Reports"],
-  ["/memory", "Memory"],
-  ["/monitor", "Monitor"],
+  { to: "/", label: "Chat", hint: "对话协作", icon: "chat" },
+  { to: "/products", label: "Products", hint: "商品目录", icon: "inventory_2" },
+  { to: "/orders", label: "Orders", hint: "订单履约", icon: "receipt_long" },
+  { to: "/contracts", label: "Contracts", hint: "合同与协议", icon: "description" },
+  { to: "/reports", label: "Reports", hint: "数据报告", icon: "analytics" },
+  { to: "/memory", label: "Memory", hint: "智能记忆", icon: "neurology" },
+  { to: "/monitor", label: "Monitor", hint: "系统监控", icon: "monitoring" },
 ] as const;
+
+function initials(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return "?";
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return trimmed.slice(-2);
+}
+
+function ago(iso: string): string {
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return "";
+  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days === 1) return "Yesterday";
+  return `${days}d ago`;
+}
 
 const CHAT_MENU = [
   { id: "archive", label: "Archive", hint: "Hide this chat. Reports, contracts, and orders stay.", danger: false },
@@ -169,7 +190,7 @@ function ChatMenu({ title, onAction }: { title: string; onAction: (action: ChatA
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
       >
-        <span className="kebab" aria-hidden="true"><i /><i /><i /></span>
+        <span className="material-symbols-outlined" aria-hidden="true">more_vert</span>
       </button>
       {open && (
         <div className="chat-menu-pop" role="menu" ref={popRef}>
@@ -363,70 +384,114 @@ export function DeskProvider({ children }: { children: ReactNode }) {
 export function Shell({ children }: { children: ReactNode }) {
   const desk = useDesk();
   const presence = useChatPresence();
+  const { pathname } = useLocation();
+  const page = NAV.find((item) => item.to === pathname);
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand">
-          <strong>KA Account</strong>
-          <span>agent</span>
+        <div className="sidebar-scroll">
+          <div className="brand">
+            <span className="brand-mark" aria-hidden="true">KA</span>
+            <strong>KA Account</strong>
+          </div>
+          {desk.brands.length > 0 && (
+            <div className="account-card">
+              <div className="account-kicker">Account</div>
+              <label className="account-brand">
+                <span className="sr-only">Brand</span>
+                <select aria-label="Brand" value={desk.brand?.id ?? ""} onChange={(event) => desk.chooseBrand(event.target.value)}>
+                  {desk.brands.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+              </label>
+              <label className="account-line">
+                <span className="sr-only">Distributor</span>
+                <select
+                  aria-label="Distributor"
+                  value={desk.distributor?.id ?? ""}
+                  onChange={(event) => desk.chooseDistributor(event.target.value)}
+                >
+                  {desk.distributors.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+              </label>
+              <label className="account-line">
+                <span className="sr-only">User</span>
+                <select aria-label="User" value={desk.user?.id ?? ""} onChange={(event) => desk.chooseUser(event.target.value)}>
+                  {desk.users.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+              </label>
+            </div>
+          )}
+          <button className="btn-primary" type="button" onClick={() => desk.openChat("new")}>
+            <span className="material-symbols-outlined" aria-hidden="true">add</span>
+            新建对话
+          </button>
+          <nav className="nav">
+            {NAV.map((item) => (
+              <NavLink key={item.to} to={item.to} end={item.to === "/"} className={({ isActive }) => (isActive ? "on" : "")}>
+                <span className="material-symbols-outlined" aria-hidden="true">{item.icon}</span>
+                <span className="nav-copy">{item.label} <span className="nav-hint">{item.hint}</span></span>
+              </NavLink>
+            ))}
+          </nav>
+          <div className="side-label">
+            <span>Recent Sessions</span>
+            <span className="material-symbols-outlined" aria-hidden="true">history</span>
+          </div>
+          <div className="chat-list">
+            {desk.sessions.map((session) => {
+              const replying = presence.busyIds.includes(session.id);
+              const title = chatTitle(session);
+              const when = ago(session.updated_at);
+              return (
+                <div key={session.id} className={presence.activeId === session.id ? "chat-row on" : "chat-row"}>
+                  <button type="button" className="chat-open" onClick={() => desk.openChat(session.id)}>
+                    <span className="chat-name">{title}</span>
+                    <span className="chat-meta">
+                      {replying && <small className="replying">Replying…</small>}
+                      {tagLabel(session.tags) && <small className="chat-tag">{tagLabel(session.tags)}</small>}
+                      {when && <small className="chat-when">{when}</small>}
+                    </span>
+                  </button>
+                  <ChatMenu
+                    title={title}
+                    onAction={(action) => {
+                      if (action === "archive") void desk.archiveChat(session.id);
+                      else void desk.deleteChat(session.id);
+                    }}
+                  />
+                </div>
+              );
+            })}
+          </div>
         </div>
-        {desk.brands.length > 0 && (
-          <div className="side-picks">
-            <label>Brand
-              <select aria-label="Brand" value={desk.brand?.id ?? ""} onChange={(event) => desk.chooseBrand(event.target.value)}>
-                {desk.brands.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-            </label>
-            <label>Distributor
-              <select
-                aria-label="Distributor"
-                value={desk.distributor?.id ?? ""}
-                onChange={(event) => desk.chooseDistributor(event.target.value)}
-              >
-                {desk.distributors.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-            </label>
-            <label>User
-              <select aria-label="User" value={desk.user?.id ?? ""} onChange={(event) => desk.chooseUser(event.target.value)}>
-                {desk.users.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-            </label>
+        {desk.user && (
+          <div className="sidebar-foot">
+            <div className="avatar user" aria-hidden="true">{initials(desk.user.name)}</div>
+            <div className="foot-copy">
+              <div className="foot-name">{desk.user.name}</div>
+              {desk.distributor && <div className="foot-sub">{desk.distributor.name}</div>}
+            </div>
           </div>
         )}
-        <button className="btn-primary" type="button" onClick={() => desk.openChat("new")}>New chat</button>
-        <nav className="nav">
-          {NAV.map(([to, label]) => (
-            <NavLink key={to} to={to} end={to === "/"} className={({ isActive }) => (isActive ? "on" : "")}>{label}</NavLink>
-          ))}
-        </nav>
-        <div className="side-label">Chats</div>
-        <div className="chat-list">
-          {desk.sessions.map((session) => {
-            const replying = presence.busyIds.includes(session.id);
-            const title = chatTitle(session);
-            return (
-              <div key={session.id} className={presence.activeId === session.id ? "chat-row on" : "chat-row"}>
-                <button type="button" className="chat-open" onClick={() => desk.openChat(session.id)}>
-                  <span className="chat-name">{title}</span>
-                  {replying && <small className="replying">Replying…</small>}
-                  {tagLabel(session.tags) && <small>{tagLabel(session.tags)}</small>}
-                </button>
-                <ChatMenu
-                  title={title}
-                  onAction={(action) => {
-                    if (action === "archive") void desk.archiveChat(session.id);
-                    else void desk.deleteChat(session.id);
-                  }}
-                />
-              </div>
-            );
-          })}
-        </div>
       </aside>
-      <main className="main">
-        {desk.error && <div className="error">{desk.error}</div>}
-        {children}
-      </main>
+      <div className="workspace">
+        <header className="topbar">
+          <div className="crumbs">
+            {desk.brand ? <strong>{desk.brand.name}</strong> : <strong>KA Account</strong>}
+            {desk.distributor && <><span>·</span><span>{desk.distributor.name}</span></>}
+            {desk.user && <><span>·</span><span>{desk.user.name}</span></>}
+            {desk.partnership?.ship_to_country && <span className="chip">{desk.partnership.ship_to_country}</span>}
+          </div>
+          <div className="topbar-end">
+            {page && <span className="page-chip">{page.label}</span>}
+            {desk.user && <div className="avatar user sm" aria-hidden="true">{initials(desk.user.name)}</div>}
+          </div>
+        </header>
+        <main className={pathname === "/" ? "main main-chat" : "main"}>
+          {desk.error && <div className="error">{desk.error}</div>}
+          {children}
+        </main>
+      </div>
     </div>
   );
 }

@@ -84,6 +84,10 @@ def test_one_session_finishes_a_turn_before_the_next_starts(db):
 
     class Slow(FakeLLM):
         def complete_json(self, **kwargs):
+            schema = kwargs.get("schema") or {}
+            name = schema.get("name") if isinstance(schema, dict) else None
+            if name == "session_open":
+                return super().complete_json(**kwargs)
             with mu:
                 state["inside"] += 1
                 state["max"] = max(state["max"], state["inside"])

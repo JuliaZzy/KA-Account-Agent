@@ -27,6 +27,19 @@ describe("per-chat live state", () => {
     expect(chatPresence().activeId).toBe("a");
   });
 
+  it("keeps each chat's activity list", () => {
+    const shorter = [{ id: "1", title: "已开始", detail: "", state: "done" as const }];
+    const longer = [
+      { id: "1", title: "已开始", detail: "", state: "done" as const },
+      { id: "2", title: "正在思考", detail: "", state: "running" as const },
+    ];
+    patchFlight("a", { streaming: true, steps: shorter });
+    patchFlight("b", { streaming: true, steps: longer });
+    patchFlight("a", { steps: shorter });
+    expect(flightOf("a").steps).toEqual(shorter);
+    expect(flightOf("b").steps).toEqual(longer);
+  });
+
   it("a deleted chat ignores a reply that arrives late", () => {
     setActiveChat("a");
     patchFlight("a", { busy: true, live: "one" });

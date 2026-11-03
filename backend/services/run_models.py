@@ -11,16 +11,14 @@ session.
 
 from __future__ import annotations
 
-import asyncio
-import inspect
 import json
 from collections.abc import Callable
-from types import SimpleNamespace
 from typing import Any
 
 from ..db import Database
-from ..llm.client import DeepSeekClient, GLMClient
-from ..llm.types import AssistantTurn, ToolCall
+from ..llm import calls as model_calls
+from ..llm.calls import DEEPSEEK_FLASH, SCHOOL_CHAT
+from ..llm.types import AssistantTurn
 from ..memory import attach, prompt_context, standing_block, summary_block
 from ..orchestrator.prompt import ANSWER, REACT
 from ..repositories.run_repository import note_running_reply
@@ -34,26 +32,33 @@ def bind(
 ) -> tuple[Callable[..., AssistantTurn], Callable[..., str]]:
     """Turn one injected client into the harness callbacks.
 
-    `llm` is a DeepSeek, Qwen, campus, or GLM client. Set `llm.model` to the call
-    name. Token counts come from the `last_usage` that client stored. `on_text`
+    Tool choice is official `deepseek-flash`. The final reply is campus
+    `deepseek-chat`. `call_model` opens the matching vendor. `on_text`
     receives the prose as it grows.
     """
-    provider, model = _identity(llm)
 
     def decide(context: list[dict[str, Any]], schemas: list[dict[str, Any]]) -> AssistantTurn:
-        resp = _invoke(llm, system=decide_system, messages=_tool_messages(context), tools=schemas, on_text=on_text)
-        return _with_usage(_as_turn(llm, resp), _take_usage(llm))
+        called = model_calls.call_model(
+            DEEPSEEK_FLASH, brand="deepseek", kind="chat_completion", expect="tools",
+            client=llm, system=decide_system, messages=_tool_messages(context),
+            tools=schemas, tool_choice="auto", reasoning_effort="none", on_text=on_text,
+        )
+        turn = called.body if isinstance(called.body, AssistantTurn) else AssistantTurn()
+        return _with_usage(turn, (called.prompt_tokens, called.completion_tokens))
 
     def answer(context: list[dict[str, Any]]) -> str:
-        resp = _invoke(llm, system=answer_system, messages=_answer_messages(context), tools=None, on_text=on_text)
-        text = _as_text(llm, resp)
-        prompt_tokens, completion_tokens = _take_usage(llm)
-        answer.prompt_tokens = prompt_tokens
-        answer.completion_tokens = completion_tokens
+        called = model_calls.call_model(
+            SCHOOL_CHAT, brand="sjtu", kind="chat_completion", expect="text",
+            client=llm, system=answer_system, messages=_answer_messages(context),
+            on_text=on_text,
+        )
+        text = str(called.body or "").strip()
+        answer.prompt_tokens = called.prompt_tokens
+        answer.completion_tokens = called.completion_tokens
         return text
 
-    decide.provider, decide.model = provider, model
-    answer.provider, answer.model = provider, model
+    decide.provider, decide.model = "ds", DEEPSEEK_FLASH
+    answer.provider, answer.model = "sjtu", SCHOOL_CHAT
     return decide, answer
 
 
@@ -72,7 +77,7 @@ def execute_for(
     """The callable `work_once` takes for the tool loop."""
     if session is not None:
         memory = prompt_context(
-            standing_block(db, session["partnership_id"]),
+            standing_block(db, session["partnership_id"], session.get("user_id")),
             summary_block(session.get("summary")),
         )
         decide_system = attach(decide_system, memory)
@@ -90,220 +95,6 @@ def execute_for(
         return execute_run(db, tools, decide=decide, answer=answer)(run)
 
     return execute
-
-def _model_name(llm: Any) -> str:
-    model = getattr(llm, "model", None) or getattr(getattr(llm, "settings", None), "model", None)
-    if not model:
-        raise ValueError("injected client has no model")
-    return str(model)
-
-
-def _invoke(
-    llm: Any, *, system: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None,
-    on_text: Callable[[str], None] | None = None,
-) -> Any:
-    """One non-streaming call. The client records `last_usage` before returning."""
-    model = _model_name(llm)
-    full = [{"role": "system", "content": system}, *messages]
-    if isinstance(llm, GLMClient):
-        kwargs: dict[str, Any] = {"model": model, "input": full}
-        if tools:
-            kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
-        resp = llm.response(**kwargs)
-        _publish(on_text, _as_text(llm, resp))
-        return resp
-    chat = getattr(llm, "chat_completion", None)
-    if chat is None:
-        raise TypeError(f"{type(llm).__name__} cannot answer a run")
-    kwargs = {"model": model, "messages": full}
-    if tools:
-        kwargs["tools"] = tools
-        kwargs["tool_choice"] = "auto"
-        if isinstance(llm, DeepSeekClient):
-            # Official tool calls in this desk turn thinking off. Campus thinking is another model name.
-            kwargs["reasoning_effort"] = "none"
-    if inspect.iscoroutinefunction(chat):
-        return asyncio.run(chat(**kwargs))
-        _publish(on_text, _as_text(llm, resp))
-        return resp
-    if on_text is None:
-        return chat(**kwargs)
-    kwargs["stream"] = True
-    if isinstance(llm, DeepSeekClient):
-        kwargs["stream_options"] = {"include_usage": True}
-    return _assemble_stream(chat(**kwargs), on_text)
-
-def _publish(on_text: Callable[[str], None] | None, text: str) -> None:
-    if on_text is not None and text:
-        on_text(text)
-
-def _assemble_stream(chunks: Any, on_text: Callable[[str], None]) -> Any:
-    parts: list[str] = []
-    calls: dict[int, dict[str, str]] = {}
-    for chunk in chunks:
-        delta = _choice_delta(chunk)
-        piece = _delta_text(delta)
-        if piece:
-            parts.append(piece)
-            on_text("".join(parts))
-        _take_tool_delta(calls, delta)
-    message = SimpleNamespace(
-        content="".join(parts) or None,
-        tool_calls=[_tool_namespace(calls[index]) for index in sorted(calls)] or None,
-    )
-    return SimpleNamespace(choices=[SimpleNamespace(message=message)])
-
-def _choice_delta(chunk: Any) -> Any:
-    if isinstance(chunk, dict):
-        choices = chunk.get("choices") or []
-        if not choices:
-            return None
-        return (choices[0] or {}).get("delta")
-    choices = getattr(chunk, "choices", None) or []
-    if not choices:
-        return None
-    return getattr(choices[0], "delta", None)
-
-def _delta_text(delta: Any) -> str:
-    if delta is None:
-        return ""
-    content = delta.get("content") if isinstance(delta, dict) else getattr(delta, "content", None)
-    return content if isinstance(content, str) else ""
-
-def _take_tool_delta(calls: dict[int, dict[str, str]], delta: Any) -> None:
-    if delta is None:
-        return
-    raw = delta.get("tool_calls") if isinstance(delta, dict) else getattr(delta, "tool_calls", None)
-    for call in raw or []:
-        if isinstance(call, dict):
-            index = int(call.get("index") or 0)
-            slot = calls.setdefault(index, {"id": "", "name": "", "arguments": ""})
-            if call.get("id"):
-                slot["id"] = str(call["id"])
-            function = call.get("function") or {}
-            if function.get("name"):
-                slot["name"] = str(function["name"])
-            if function.get("arguments"):
-                slot["arguments"] += str(function["arguments"])
-            continue
-        index = int(getattr(call, "index", 0) or 0)
-        slot = calls.setdefault(index, {"id": "", "name": "", "arguments": ""})
-        if getattr(call, "id", None):
-            slot["id"] = str(call.id)
-        function = getattr(call, "function", None)
-        name = getattr(function, "name", None) if function is not None else None
-        arguments = getattr(function, "arguments", None) if function is not None else None
-        if name:
-            slot["name"] = str(name)
-        if arguments:
-            slot["arguments"] += str(arguments)
-
-def _tool_namespace(slot: dict[str, str]) -> SimpleNamespace:
-    return SimpleNamespace(
-        id=slot["id"],
-        function=SimpleNamespace(
-            name=slot["name"],
-            arguments=slot["arguments"],
-        ),
-    )
-
-def _as_turn(llm: Any, resp: Any) -> AssistantTurn:
-    if isinstance(llm, GLMClient):
-        return _turn_from_responses(resp)
-    return _turn_from_chat(resp)
-
-def _as_text(llm: Any, resp: Any) -> str:
-    if isinstance(llm, GLMClient):
-        return str(getattr(resp, "output_text", None) or "").strip()
-    text = _message_text(_chat_message(resp))
-    return text.strip() if text else ""
-
-
-def _turn_from_chat(resp: Any) -> AssistantTurn:
-    message = _chat_message(resp)
-    calls = [_one_call(call) for call in _tool_calls(message)]
-    return AssistantTurn(content=_message_text(message), tool_calls=calls)
-
-
-def _turn_from_responses(resp: Any) -> AssistantTurn:
-    calls: list[ToolCall] = []
-    for item in getattr(resp, "output", None) or []:
-        if getattr(item, "type", None) != "function_call":
-            continue
-        calls.append(ToolCall(
-            id=str(getattr(item, "call_id", None) or getattr(item, "id", None) or ""),
-            name=str(getattr(item, "name", None) or ""),
-            arguments=_arguments(getattr(item, "arguments", None)),
-        ))
-    text = getattr(resp, "output_text", None)
-    return AssistantTurn(content=str(text) if text else None, tool_calls=calls)
-
-
-def _chat_message(resp: Any) -> Any:
-    if isinstance(resp, dict):
-        return resp["choices"][0]["message"]
-    return resp.choices[0].message
-
-
-def _message_text(message: Any) -> str | None:
-    text = message.get("content") if isinstance(message, dict) else getattr(message, "content", None)
-    if text is None:
-        return None
-    text = str(text)
-    return text or None
-
-
-def _tool_calls(message: Any) -> list[Any]:
-    raw = message.get("tool_calls") if isinstance(message, dict) else getattr(message, "tool_calls", None)
-    return list(raw or [])
-
-
-def _one_call(call: Any) -> ToolCall:
-    if isinstance(call, dict):
-        function = call.get("function") or {}
-        return ToolCall(
-            id=str(call.get("id") or ""),
-            name=str(function.get("name") or ""),
-            arguments=_arguments(function.get("arguments")),
-        )
-    return ToolCall(
-        id=str(call.id),
-        name=str(call.function.name),
-        arguments=_arguments(call.function.arguments),
-    )
-
-
-def _arguments(raw: Any) -> dict[str, Any]:
-    if isinstance(raw, dict):
-        return raw
-    if not isinstance(raw, str) or not raw.strip():
-        return {}
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _identity(llm: Any) -> tuple[str, str]:
-    """Copy the labels the client was configured with. Recorded once per bind."""
-    settings = getattr(llm, "settings", None)
-    model = getattr(settings, "model", None) or getattr(llm, "model", None) or "unknown"
-    provider = getattr(llm, "provider", None) or getattr(settings, "provider", None) or type(llm).__name__
-    return str(provider), str(model)
-
-def _take_usage(llm: Any) -> tuple[int, int]:
-    """Read the token counts the client stored for the call that just returned."""
-    raw = getattr(llm, "last_usage", None)
-    if hasattr(llm, "last_usage"):
-        llm.last_usage = None
-    if not isinstance(raw, dict):
-        return 0, 0
-    try:
-        return max(0, int(raw.get("prompt_tokens") or 0)), max(0, int(raw.get("completion_tokens") or 0))
-    except (TypeError, ValueError):
-        return 0, 0
 
 
 def _with_usage(turn: AssistantTurn, usage: tuple[int, int]) -> AssistantTurn:

@@ -15,15 +15,13 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Any
 
 from ..codefix import format_failures, with_reflection
-from ..config import LLMSettings
 from ..db import Database, utcnow
 from ..llm import calls as model_calls
-from ..llm.client import DeepSeekClient
 from ..memory import actor_id, attach, prompt_context, prompt_turns, standing_block, summary_block
 from ..text2sql import QueryResult, answer_question
 from ..text2sql.table_metadata import catalog_text
@@ -78,11 +76,9 @@ def _call_json(
             "db": trace.db, "run_id": trace.run_id, "step_id": trace.step_id, "purpose": "report",
         }
     if flash:
-        can_call = callable(getattr(llm, "response", None)) or callable(getattr(llm, "complete_json", None))
-        client = llm if can_call else DeepSeekClient(LLMSettings(base_url=None, api_key=""))
         return model_calls.flash_json(
             system=system, messages=messages, schema=schema, temperature=temperature,
-            client=client, **ledger,
+            client=llm, **ledger,
         )
     return model_calls.school_json(
         model=model, system=system, messages=messages, schema=schema, temperature=temperature,
@@ -236,6 +232,168 @@ class RiskPlan:
     searches: list[str]
 
 
+@dataclass
+class NeedQueries:
+    """The nested path parks here and enqueues data children instead of querying inline."""
+
+    questions: list[str]
+    snapshot: dict[str, Any]
+
+
+def planned_questions(planned: list[SectionPlan]) -> list[str]:
+    """Distinct questions in plan order. Risks stays empty until after the chapters."""
+    seen: set[str] = set()
+    asked: list[str] = []
+    for section in planned:
+        for question in section.questions:
+            key = question.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            asked.append(question)
+    return asked
+
+
+def asks_from_payloads(
+    planned: list[SectionPlan],
+    results: dict[str, dict[str, Any]],
+    questions: list[tuple[str, str]],
+) -> tuple[list[_Ask], dict[str, list[_Ask]], list[str]]:
+    """Rebuild the first query wave from child `data.query` payloads."""
+    asked: list[_Ask] = []
+    by_question: dict[str, _Ask] = {}
+    failures: list[str] = []
+    for task_id, question in questions:
+        item = _ask_from_result(task_id, question, results.get(task_id) or {})
+        asked.append(item)
+        by_question[question.casefold()] = item
+        if item.result.handoff:
+            failures.append(item.result.handoff)
+    by_section: dict[str, list[_Ask]] = {section.id: [] for section in planned}
+    for section in planned:
+        for question in section.questions:
+            item = by_question.get(question.casefold())
+            if item is not None:
+                by_section[section.id].append(item)
+    return asked, by_section, failures
+
+
+def merge_extra_asks(
+    asked: list[_Ask],
+    by_section: dict[str, list[_Ask]],
+    questions: list[tuple[str, str]],
+    results: dict[str, dict[str, Any]],
+    *,
+    section_id: str = "risks",
+) -> list[str]:
+    """Append a later wave of data-query results to the draft's asks."""
+    notes: list[str] = []
+    seen = {item.question.casefold(): item for item in asked}
+    bucket = by_section.setdefault(section_id, [])
+    have = {item.id for item in bucket}
+    for task_id, question in questions:
+        item = seen.get(question.casefold())
+        if item is None:
+            item = _ask_from_result(task_id, question, results.get(task_id) or {})
+            seen[question.casefold()] = item
+            asked.append(item)
+            if item.result.handoff:
+                notes.append(item.result.handoff)
+        if item.id not in have:
+            have.add(item.id)
+            bucket.append(item)
+    return notes
+
+
+def snapshot_after_write(
+    *, planned: list[SectionPlan], report_title: str, asked: list[_Ask],
+    by_section: dict[str, list[_Ask]], failures: list[str],
+    charts: list[dict[str, Any]], charts_for: dict[str, list[dict[str, Any]]],
+    chart_failures: list[str], found: list[_Search],
+    insights_by_section: dict[str, list[dict[str, Any]]],
+    insight_failures: list[str], insight_errors: list[str],
+    texts: dict[str, str], searches: list[str],
+) -> dict[str, Any]:
+    return {
+        "planned": [asdict(section) for section in planned],
+        "title": report_title,
+        "asked": [_ask_dict(item) for item in asked],
+        "by_section": {
+            sid: [_ask_dict(item) for item in items] for sid, items in by_section.items()
+        },
+        "failures": list(failures),
+        "charts": charts,
+        "charts_for": charts_for,
+        "chart_failures": list(chart_failures),
+        "found": [asdict(item) for item in found],
+        "insights_by_section": insights_by_section,
+        "insight_failures": list(insight_failures),
+        "insight_errors": list(insight_errors),
+        "texts": texts,
+        "searches": list(searches),
+        "write": True,
+    }
+
+
+def load_write_snapshot(raw: dict[str, Any]) -> dict[str, Any]:
+    planned = [SectionPlan(**item) for item in raw.get("planned") or [] if isinstance(item, dict)]
+    asked = [_ask_from_dict(item) for item in raw.get("asked") or [] if isinstance(item, dict)]
+    by_section = {
+        str(sid): [_ask_from_dict(item) for item in items if isinstance(item, dict)]
+        for sid, items in (raw.get("by_section") or {}).items()
+        if isinstance(items, list)
+    }
+    found = [_Search(**item) for item in raw.get("found") or [] if isinstance(item, dict)]
+    return {
+        "planned": planned,
+        "report_title": str(raw.get("title") or ""),
+        "asked": asked,
+        "by_section": by_section,
+        "failures": [str(item) for item in raw.get("failures") or []],
+        "charts": list(raw.get("charts") or []),
+        "charts_for": dict(raw.get("charts_for") or {}),
+        "chart_failures": [str(item) for item in raw.get("chart_failures") or []],
+        "found": found,
+        "insights_by_section": dict(raw.get("insights_by_section") or {}),
+        "insight_failures": [str(item) for item in raw.get("insight_failures") or []],
+        "insight_errors": [str(item) for item in raw.get("insight_errors") or []],
+        "texts": dict(raw.get("texts") or {}),
+        "searches": [str(item) for item in raw.get("searches") or []],
+        "write": raw.get("write") is True,
+    }
+
+
+def _ask_dict(item: _Ask) -> dict[str, Any]:
+    return {"id": item.id, "question": item.question, "result": asdict(item.result)}
+
+
+def _ask_from_dict(raw: dict[str, Any]) -> _Ask:
+    result = raw.get("result") if isinstance(raw.get("result"), dict) else {}
+    return _Ask(str(raw.get("id") or ""), str(raw.get("question") or ""), _query_result(result))
+
+
+def _ask_from_result(task_id: str, question: str, result: dict[str, Any]) -> _Ask:
+    payload = result.get("payload") if isinstance(result.get("payload"), dict) else result
+    if not isinstance(payload, dict):
+        payload = {}
+    return _Ask(task_id, question, _query_result(payload))
+
+
+def _query_result(raw: dict[str, Any]) -> QueryResult:
+    return QueryResult(
+        ok=bool(raw.get("ok")),
+        sql=raw.get("sql") if isinstance(raw.get("sql"), str) else None,
+        rows=list(raw.get("rows") or []) if isinstance(raw.get("rows"), list) else [],
+        row_count=int(raw.get("row_count") or 0),
+        error=raw.get("error") if isinstance(raw.get("error"), str) else None,
+        error_type=raw.get("error_type") if isinstance(raw.get("error_type"), str) else None,
+        tables=[str(name) for name in raw.get("tables") or [] if name],
+        log_id=raw.get("log_id") if isinstance(raw.get("log_id"), int) else None,
+        handoff=str(raw.get("handoff") or ""),
+        score=raw.get("score") if isinstance(raw.get("score"), int) else None,
+    )
+
+
 def risk_plan_schema() -> dict[str, Any]:
     return {
         "name": "risk_plan", "strict": True,
@@ -337,6 +495,25 @@ def iter_draft(
         trace=trace,
     )
     yield status("report-query", "查数", f"查完 {len(asked)} 个问题", state="done")
+    yield from iter_after_queries(
+        db, llm, planned=planned, report_title=report_title, asked=asked, by_section=by_section,
+        failures=failures, message=message, history=history, remembered=remembered,
+        folded_through=folded_through, partnership_id=partnership_id, brand_id=brand_id,
+        distributor_id=distributor_id, session_id=session_id, summary=summary,
+        search_fn=search_fn, trace=trace, park_extra=False,
+    )
+
+
+def iter_after_queries(
+    db: Database, llm: Any, *, planned: list[SectionPlan], report_title: str,
+    asked: list[_Ask], by_section: dict[str, list[_Ask]], failures: list[str],
+    message: str, history: list[dict[str, Any]], remembered: str, folded_through: int,
+    partnership_id: str, brand_id: str, distributor_id: str, session_id: str,
+    summary: str, search_fn: Any = None, trace: _RunTrace | None = None,
+    park_extra: bool = False,
+) -> Iterator[dict[str, Any] | ReportDraft | NeedQueries]:
+    """Charts through review. `park_extra` yields NeedQueries instead of asking inline."""
+    from ..orchestrator.status import status
 
     yield status("report-chart", "图表", "正在给业绩和库存配图", state="running")
     charts: list[dict[str, Any]] = []
@@ -403,22 +580,67 @@ def iter_draft(
     if decision.write:
         if decision.questions or decision.searches:
             planned = _fill_risks(planned, decision.questions, decision.searches)
+        if decision.questions and park_extra:
+            yield NeedQueries(
+                questions=decision.questions,
+                snapshot=snapshot_after_write(
+                    planned=planned, report_title=report_title, asked=asked,
+                    by_section=by_section, failures=failures, charts=charts,
+                    charts_for=charts_for, chart_failures=chart_failures, found=found,
+                    insights_by_section=insights_by_section, insight_failures=insight_failures,
+                    insight_errors=insight_errors, texts=texts, searches=decision.searches,
+                ),
+            )
+            return
         if decision.questions:
             yield status(
                 "report-risks", "问题与风险", f"正在补查 {len(decision.questions)} 个问题", state="running",
             )
-            fresh, notes = _query_extra(
+            _fresh, notes = _query_extra(
                 db, llm, decision.questions, asked=asked, by_section=by_section, section_id="risks",
                 partnership_id=partnership_id, brand_id=brand_id, distributor_id=distributor_id,
                 session_id=session_id, history=history, folded_through=folded_through, summary=summary,
                 trace=trace,
             )
             failures.extend(notes)
-        if decision.searches:
+        yield from iter_from_risks(
+            db, llm, planned=planned, report_title=report_title, asked=asked, by_section=by_section,
+            failures=failures, charts=charts, charts_for=charts_for, chart_failures=chart_failures,
+            found=found, insights_by_section=insights_by_section, insight_failures=insight_failures,
+            insight_errors=insight_errors, texts=texts, searches=decision.searches,
+            message=message, history=history, remembered=remembered, folded_through=folded_through,
+            search_fn=search_fn, trace=trace, write=True,
+        )
+        return
+    yield from iter_from_risks(
+        db, llm, planned=planned, report_title=report_title, asked=asked, by_section=by_section,
+        failures=failures, charts=charts, charts_for=charts_for, chart_failures=chart_failures,
+        found=found, insights_by_section=insights_by_section, insight_failures=insight_failures,
+        insight_errors=insight_errors, texts=texts, searches=[],
+        message=message, history=history, remembered=remembered, folded_through=folded_through,
+        search_fn=search_fn, trace=trace, write=False,
+    )
+
+
+def iter_from_risks(
+    db: Database, llm: Any, *, planned: list[SectionPlan], report_title: str,
+    asked: list[_Ask], by_section: dict[str, list[_Ask]], failures: list[str],
+    charts: list[dict[str, Any]], charts_for: dict[str, list[dict[str, Any]]],
+    chart_failures: list[str], found: list[_Search],
+    insights_by_section: dict[str, list[dict[str, Any]]], insight_failures: list[str],
+    insight_errors: list[str], texts: dict[str, str], searches: list[str],
+    message: str, history: list[dict[str, Any]], remembered: str, folded_through: int,
+    search_fn: Any = None, trace: _RunTrace | None = None, write: bool,
+) -> Iterator[dict[str, Any] | ReportDraft]:
+    """Write risks (if chosen), then summary and review."""
+    from ..orchestrator.status import status
+
+    if write:
+        if searches:
             yield status(
-                "report-risks", "问题与风险", f"正在检索 {len(decision.searches)} 条", state="running",
+                "report-risks", "问题与风险", f"正在检索 {len(searches)} 条", state="running",
             )
-            _search_more(decision.searches, found, search_fn or search)
+            _search_more(searches, found, search_fn or search)
         risks_section = next(section for section in planned if section.id == "risks")
         got, err, fails = _code_wizard(llm, risks_section, _query_results(asked), trace=trace)
         if err:
@@ -430,7 +652,7 @@ def iter_draft(
         content, _points = _write_section(
             llm, message, history, risks_section, _asks_for(risks_section, by_section), found, [],
             _insights_for(risks_section, insights_by_section),
-            remembered=remembered, folded_through=folded_through, prior=prior,
+            remembered=remembered, folded_through=folded_through, prior=_body_for_summary(planned, texts),
             trace=trace,
         )
         if content.strip():

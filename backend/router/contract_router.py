@@ -7,12 +7,11 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
-from ..config import LLMSettings
 from ..contract import contract_discount_for_next_order, ingest_extraction, read_and_ingest
 from ..contract.chunks import nest_chunk_rows
 from ..db import Database
 from ..deps import get_db
-from ..llm import DeepSeekClient, SJTUClient
+from ..llm import campus_client, deepseek_client
 from ..schemas import Partnership
 from ._common import dump, partnership_or_404, read_upload
 
@@ -70,9 +69,8 @@ async def import_contract(
                 model=parsed.get("model") if isinstance(parsed, dict) else None,
             )
         else:
-            settings = LLMSettings(base_url=None, api_key="")
             rec = read_and_ingest(
-                db, DeepSeekClient(settings), SJTUClient(settings),
+                db, deepseek_client(), campus_client(),
                 brand_id=p.brand_id, partnership_id=p.id, file_name=name, data=data, title=label,
             )
     except HTTPException:

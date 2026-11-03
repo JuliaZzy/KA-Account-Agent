@@ -18,7 +18,7 @@ from typing import Any
 import requests
 from openai import AsyncOpenAI, OpenAI
 
-from ..config import LLMSettings, env
+from ..config import LLMSettings, vendor_endpoint
 
 
 def _usage_count(usage: Any, *names: str) -> int:
@@ -78,13 +78,14 @@ def _finish_async_response(client: Any, resp: Any, *, stream: bool) -> Any:
 class GLMClient:
     """One Responses API call. The caller supplies the model and this turn's input."""
 
-    def __init__(self, settings: LLMSettings):
-        self.settings = settings
+    def __init__(self, settings: LLMSettings | None = None):
+        self.settings = settings or LLMSettings()
+        endpoint = vendor_endpoint("glm")
         self._client = OpenAI(
-            api_key=env("GLM_API_KEY"),
-            base_url=env("GLM_BASE_URL"),
-            timeout=settings.timeout,
-            max_retries=settings.max_retries,
+            api_key=endpoint.api_key,
+            base_url=endpoint.base_url,
+            timeout=self.settings.timeout,
+            max_retries=self.settings.max_retries,
         )
 
     def response(
@@ -152,13 +153,14 @@ class GLMClient:
 class QwenClient:
     """DashScope. `chat_completion` is Chat Completions; `response` is one Responses call."""
 
-    def __init__(self, settings: LLMSettings):
-        self.settings = settings
+    def __init__(self, settings: LLMSettings | None = None):
+        self.settings = settings or LLMSettings()
+        endpoint = vendor_endpoint("qwen")
         self._client = AsyncOpenAI(
-            api_key=env("QWEN_API_KEY"),
-            base_url=env("QWEN_BASE_URL"),
-            timeout=settings.timeout,
-            max_retries=settings.max_retries,
+            api_key=endpoint.api_key,
+            base_url=endpoint.base_url,
+            timeout=self.settings.timeout,
+            max_retries=self.settings.max_retries,
         )
 
     async def chat_completion(
@@ -319,13 +321,14 @@ class DeepSeekClient:
     by omission. Send the whole history in `input`.
     """
 
-    def __init__(self, settings: LLMSettings):
-        self.settings = settings
+    def __init__(self, settings: LLMSettings | None = None):
+        self.settings = settings or LLMSettings()
+        endpoint = vendor_endpoint("deepseek")
         self._client = OpenAI(
-            api_key=env("DEEPSEEK_API_KEY"),
-            base_url=env("DEEPSEEK_BASE_URL"),
-            timeout=settings.timeout,
-            max_retries=settings.max_retries,
+            api_key=endpoint.api_key,
+            base_url=endpoint.base_url,
+            timeout=self.settings.timeout,
+            max_retries=self.settings.max_retries,
         )
 
     def chat_completion(
@@ -443,11 +446,17 @@ if __name__ == "__main__":
     print(query(question))
 """
 
+def _campus_endpoint() -> tuple[str, dict[str, str]]:
+    endpoint = vendor_endpoint("sjtu")
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {endpoint.api_key}"}
+    return endpoint.base_url.rstrip("/") + "/chat/completions", headers
+
+
 def _campus_stream(client: Any, body: dict[str, Any]) -> Iterator[Any]:
     """Campus SSE. Each yielded object is one chat-completion chunk."""
     _remember_usage(client, None)
     resp = requests.post(
-        env("SCHOOL_BASE_URL") + "/chat/completions",
+        client.url,
         headers=client.headers,
         json=body,
         timeout=(30, 600),
@@ -475,12 +484,9 @@ def _campus_stream(client: Any, body: dict[str, Any]) -> Iterator[Any]:
 class SJTUClient:
     """SJTU gateway, called with requests as in the campus sample."""
 
-    def __init__(self, settings: LLMSettings):
-        self.settings = settings
-        self.headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {env('SCHOOL_API_KEY')}",
-        }
+    def __init__(self, settings: LLMSettings | None = None):
+        self.settings = settings or LLMSettings()
+        self.url, self.headers = _campus_endpoint()
 
     def chat_completion(
         self,
@@ -513,9 +519,7 @@ class SJTUClient:
             return _campus_stream(self, body)
         for attempt in range(1, 6):
             try:
-                resp = requests.post(
-                    env("SCHOOL_BASE_URL") + "/chat/completions", headers=self.headers, json=body, timeout=(30, 600),
-                )
+                resp = requests.post(self.url, headers=self.headers, json=body, timeout=(30, 600))
             except requests.RequestException:
                 time.sleep(2)
                 continue
@@ -562,3 +566,58 @@ class GLMOCRClient:
         if payload.get("error"):
             raise ValueError(f"GLM-OCR error: {payload['error']}")
         return payload
+
+
+def campus_client() -> SJTUClient:
+    return SJTUClient()
+
+
+def deepseek_client() -> DeepSeekClient:
+    return DeepSeekClient()
+
+
+def glm_client() -> GLMClient:
+    return GLMClient()
+
+
+def qwen_client() -> QwenClient:
+    return QwenClient()
+
+
+VENDORS = (SJTUClient, DeepSeekClient, GLMClient, QwenClient)
+
+
+def open_client(brand: str) -> Any:
+    """The vendor client for this brand. Keys come from the environment."""
+    if brand == "sjtu":
+        return campus_client()
+    if brand == "deepseek":
+        return deepseek_client()
+    if brand == "glm":
+        return glm_client()
+    if brand == "qwen":
+        return qwen_client()
+    raise ValueError(f"unknown model brand {brand}")
+
+
+def client_for(brand: str, injected: Any | None) -> Any:
+    """Reuse the injected object when it already is this brand, or when it is a test double.
+
+    A campus client passed for official DeepSeek is replaced. FakeLLM and the other
+    doubles are not one of the four vendors and are used as given.
+    """
+    wanted = {
+        "sjtu": SJTUClient,
+        "deepseek": DeepSeekClient,
+        "glm": GLMClient,
+        "qwen": QwenClient,
+    }.get(brand)
+    if wanted is None:
+        raise ValueError(f"unknown model brand {brand}")
+    if injected is None:
+        return open_client(brand)
+    if isinstance(injected, wanted):
+        return injected
+    if isinstance(injected, VENDORS):
+        return open_client(brand)
+    return injected

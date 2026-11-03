@@ -10,6 +10,7 @@ from backend.app import create_app
 from backend.llm import FakeLLM
 from backend.services.chat_run import work_chat
 
+
 def open_meta(tags=("po",), title="10 cases fish oil"):
     return {"tags": list(tags), "title": title}
 
@@ -35,10 +36,13 @@ def test_full_flow(db):
     assert [event["type"] for event in ev if event["type"] == "session"] == []
     run_id = _of(ev, "run")["run_id"]
     assert db.find_agent_run("dist-1", run_id)["status"] == "queued"
+    assert any(row["run_type"] == "open" and row["status"] == "queued" for row in db.find_runs_by_owner(run_id))
     assert work_chat(db, llm, run_id) is True
     assert db.session(sid)["title"] == "10 cases fish oil"
     assert db.session(sid)["tags"] == ["po"]
-    trace = db.run_trace("dist-1", run_id)
+    opened = next(row for row in db.find_runs_by_owner(run_id) if row["run_type"] == "open")
+    assert opened["status"] == "succeeded"
+    trace = db.run_trace("dist-1", opened["id"])
     named = next(
         row for row in trace["model_calls"]
         if (row.get("request_json") or {}).get("schema", {}).get("name") == "session_open"
@@ -46,6 +50,11 @@ def test_full_flow(db):
     assert named["model"] == "deepseek-chat" and named["status"] == "succeeded"
     step = next(step for step in trace["steps"] if step["id"] == named["step_id"])
     assert (step["step_type"], step["name"], step["status"]) == ("model", "model", "succeeded")
+    parent_trace = db.run_trace("dist-1", run_id)
+    assert not any(
+        (row.get("request_json") or {}).get("schema", {}).get("name") == "session_open"
+        for row in parent_trace["model_calls"]
+    )
     run = db.find_agent_run("dist-1", run_id)
     assert run["status"] == "succeeded"
     assert run["output_json"]["text"] == "All set — press Confirm."
@@ -60,7 +69,9 @@ def test_empty_plan_answers_directly(db):
     sid = c.post("/api/sessions", json={"user_id": "u-a"}).json()["id"]
     ev = events(c.post(f"/api/sessions/{sid}/message", json={"message": "happy new year!"}))
     assert [event["type"] for event in ev if event["type"] == "session"] == []
-    assert work_chat(db, llm, _of(ev, "run")["run_id"]) is True
+    run_id = _of(ev, "run")["run_id"]
+    assert any(row["run_type"] == "open" for row in db.find_runs_by_owner(run_id))
+    assert work_chat(db, llm, run_id) is True
     assert db.session(sid)["title"] == "hello"
     assert "Happy to help" in db.session(sid)["history"][-1]["content"]
 
@@ -107,7 +118,7 @@ def test_a_long_chat_folds_after_the_worker_saves(db, monkeypatch):
     monkeypatch.setattr(memory, "fold_session", spy_fold)
 
     llm = FakeLLM(
-        json_replies=[{"summary": "They ship on Tuesdays"}],
+        json_replies=[{"tasks": []}, {"summary": "They ship on Tuesdays"}],
         text_reply="Noted.",
     )
     db.upsert_user("u-a", "dist-1", "Ada")

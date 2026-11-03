@@ -146,7 +146,10 @@ def cancel_run(db: Database, org_id: str, run_id: str, reason: str | None = None
     if reason:
         payload["reason"] = reason
     try:
-        updated = transition_run(db, org_id, run["id"], RunStatus.CANCELLED, payload, from_status=frozenset({RunStatus.QUEUED, RunStatus.WAITING_FOR_USER}))
+        updated = transition_run(
+            db, org_id, run["id"], RunStatus.CANCELLED, payload,
+            from_status=frozenset({RunStatus.QUEUED, RunStatus.WAITING_FOR_USER, RunStatus.WAITING_FOR_TASKS}),
+        )
     except InvalidRunTransition as e:
         if e.from_status == RunStatus.RUNNING:
             return _request_cancel(db, org_id, run["id"], reason)

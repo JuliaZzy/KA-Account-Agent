@@ -44,6 +44,10 @@ class AgentRun(Base):
     parent_run_id: Mapped[str | None] = mapped_column(
         String(64), ForeignKey("agent_runs.id", ondelete="SET NULL"), index=True,
     )
+    # Who scheduled this run this turn. Rerun lineage stays on parent_run_id.
+    owner_run_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("agent_runs.id", ondelete="SET NULL"), index=True,
+    )
     trace_id: Mapped[str | None] = mapped_column(String(64))
     # Null means this run is not capped. The model entry reads these before it calls.
     max_model_calls: Mapped[int | None] = mapped_column(Integer)

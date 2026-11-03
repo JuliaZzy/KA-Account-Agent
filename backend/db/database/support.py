@@ -43,9 +43,13 @@ ALLOWED_RUN_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
         RunStatus.FAILED,
         RunStatus.QUEUED,
         RunStatus.WAITING_FOR_USER,
+        RunStatus.WAITING_FOR_TASKS,
         RunStatus.CANCELLED,
     }),
     RunStatus.WAITING_FOR_USER: frozenset({RunStatus.QUEUED, RunStatus.CANCELLED}),
+    RunStatus.WAITING_FOR_TASKS: frozenset({
+        RunStatus.QUEUED, RunStatus.CANCELLED, RunStatus.FAILED,
+    }),
 }
 
 RUN_TRANSITION_EVENTS: dict[tuple[RunStatus, RunStatus], StepEvent] = {
@@ -55,9 +59,13 @@ RUN_TRANSITION_EVENTS: dict[tuple[RunStatus, RunStatus], StepEvent] = {
     (RunStatus.RUNNING, RunStatus.FAILED): StepEvent.RUN_FAILED,
     (RunStatus.RUNNING, RunStatus.QUEUED): StepEvent.RUN_RETRY_SCHEDULED,
     (RunStatus.RUNNING, RunStatus.WAITING_FOR_USER): StepEvent.RUN_WAITING_FOR_USER,
+    (RunStatus.RUNNING, RunStatus.WAITING_FOR_TASKS): StepEvent.RUN_WAITING_FOR_TASKS,
     (RunStatus.RUNNING, RunStatus.CANCELLED): StepEvent.RUN_CANCELLED,
     (RunStatus.WAITING_FOR_USER, RunStatus.QUEUED): StepEvent.RUN_RESUMED,
     (RunStatus.WAITING_FOR_USER, RunStatus.CANCELLED): StepEvent.RUN_CANCELLED,
+    (RunStatus.WAITING_FOR_TASKS, RunStatus.QUEUED): StepEvent.RUN_RESUMED,
+    (RunStatus.WAITING_FOR_TASKS, RunStatus.CANCELLED): StepEvent.RUN_CANCELLED,
+    (RunStatus.WAITING_FOR_TASKS, RunStatus.FAILED): StepEvent.RUN_FAILED,
 }
 
 

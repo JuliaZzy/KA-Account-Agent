@@ -51,6 +51,11 @@ class FakeLLM:
             self.last_usage = {"prompt_tokens": 1, "completion_tokens": 1}
             if self.fail_json:
                 raise RuntimeError("model unavailable")
+            name = (schema or {}).get("name") if isinstance(schema, dict) else None
+            if name == "orchestrator_plan":
+                return _take_reply(self.json_replies, "tasks") or {"tasks": []}
+            if name == "session_open":
+                return _take_open(self.json_replies) or {"tags": [], "title": "New chat"}
             if not self.json_replies:
                 raise RuntimeError("FakeLLM: no scripted JSON reply left")
             return self.json_replies.pop(0)
@@ -86,6 +91,20 @@ class FakeLLM:
         if kwargs.get("stream"):
             return _stream_turn(turn)
         return _chat_response(turn)
+
+
+def _take_reply(replies: list[dict[str, Any]], key: str) -> dict[str, Any] | None:
+    for index, reply in enumerate(replies):
+        if isinstance(reply, dict) and key in reply:
+            return replies.pop(index)
+    return None
+
+
+def _take_open(replies: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for index, reply in enumerate(replies):
+        if isinstance(reply, dict) and "title" in reply and "tasks" not in reply:
+            return replies.pop(index)
+    return None
 
 
 def _stream_turn(turn: AssistantTurn):

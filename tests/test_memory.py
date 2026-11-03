@@ -201,7 +201,7 @@ def test_a_plain_answer_and_the_tool_loop_see_the_memory(db):
     db.update_session(sid, title="Hello", tags=[])
     events = list(service.handle_message(db, llm, sid, "hello"))
     assert work_chat(db, llm, events[0]["run_id"]) is True
-    systems = [c["system"] for c in llm.calls if c["kind"] == "complete"]
+    systems = [c["system"] for c in llm.calls if c["kind"] in ("json", "text")]
     assert systems and all("fiscal year" in system and "只作背景" in system for system in systems)
 
 
@@ -232,7 +232,7 @@ def test_sql_prompt_includes_standing_memory(monkeypatch):
             calls.append(kwargs)
             return type("Reply", (), {"output_text": '{"sql": "SELECT 1"}'})()
 
-    monkeypatch.setattr("backend.text2sql.text2sql.DeepSeekClient", lambda settings: _DeepSeek())
+    monkeypatch.setattr("backend.text2sql.text2sql.deepseek_client", lambda: _DeepSeek())
     _write_sql("how many orders", "purchase_orders(id)", context="[fact] fiscal year starts in April")
     assert "fiscal year" in calls[0]["instructions"]
     calls.clear()
@@ -248,3 +248,34 @@ def test_an_unsummarised_prefix_stays_in_the_next_prompt(db):
 
     contents = [m["content"] for m in _chat_messages(db.session(sid), "next")]
     assert "QQQQ" in contents[0] and "keep-assistant" in contents[1] and contents[-1] == "next"
+
+
+def test_standing_block_hides_another_persons_note(db):
+    from backend.memory import standing_block
+
+    db.upsert_user("u-a", "dist-1", "Ada")
+    db.upsert_user("u-b", "dist-1", "Bea")
+    remember(db, "ps-1", "Ada ships by air", user_id="u-a")
+    remember(db, "ps-1", "Bea wants pallets", user_id="u-b")
+    remember(db, "ps-1", "Warehouse closes in July")
+    block = standing_block(db, "ps-1", "u-a")
+    assert "Ada ships by air" in block and "Warehouse closes in July" in block
+    assert "Bea wants pallets" not in block
+    page = [m.content for m in db.memories("ps-1", user_id="u-a")]
+    assert page == ["Ada ships by air"]
+
+
+def test_plan_history_skips_the_folded_prefix_and_keeps_the_rest():
+    from backend.orchestrator.plan import _history_block
+
+    folded = [{"role": "user", "content": f"old-{i}"} for i in range(10)]
+    fresh = [
+        {"role": "user", "content": "那改成查上海的天气吧"},
+        {"role": "assistant", "content": "需要我用 web_search 吗"},
+    ]
+    block = _history_block([*folded, *fresh], 10)
+    assert "old-0" not in block and "old-9" not in block
+    assert "那改成查上海的天气吧" in block
+    longer = [{"role": "user", "content": f"turn-{i}"} for i in range(12)]
+    shown = _history_block(longer, 0)
+    assert "turn-0" in shown and "turn-11" in shown

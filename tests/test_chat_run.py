@@ -36,7 +36,8 @@ def test_a_turn_enqueues_and_the_worker_records_the_loop(db):
 
     trace = db.run_trace("dist-1", run_id)
     assert {step["name"] for step in trace["steps"]} == {"model"}
-    assert [step["step_type"] for step in trace["steps"]] == ["model"]
+    assert {step["step_type"] for step in trace["steps"]} == {"model"}
+    assert len(trace["steps"]) >= 2
     saved = db.session(sid)["history"][-1]
     assert saved["content"] == "Got it."
     assert "activity" not in saved and "model_json" not in saved
@@ -66,15 +67,13 @@ def test_a_model_error_fails_the_run_on_the_worker(db):
     assert run["error_json"]["kind"] == "transient"
 
 def test_po_extract_is_recorded_on_the_chat_run(db):
-    from backend.llm.types import AssistantTurn, ToolCall
-
     llm = FakeLLM(
-        json_replies=[{
-            "line_items": [{"reference": "fish oil", "cases": 10, "sku": "FO-100"}],
-            "discount_kind": "none", "user_confirmed": False, "reply_language": "English",
-        }],
-        tool_replies=[
-            AssistantTurn(tool_calls=[ToolCall(id="call_po", name="po.draft", arguments={})]),
+        json_replies=[
+            {"tasks": [{"id": "p", "kind": "agent", "name": "po", "input": {}, "depends_on": []}]},
+            {
+                "line_items": [{"reference": "fish oil", "cases": 10, "sku": "FO-100"}],
+                "discount_kind": "none", "user_confirmed": False, "reply_language": "English",
+            },
         ],
         text_reply="All set — press Confirm.",
     )
@@ -85,10 +84,13 @@ def test_po_extract_is_recorded_on_the_chat_run(db):
 
     run = db.find_agent_run("dist-1", run_id)
     assert run["status"] == "succeeded"
-    trace = db.run_trace("dist-1", run_id)
-    models = [row["model"] for row in trace["model_calls"]]
-    assert "deepseek-flash" in models
-    extract = next(row for row in trace["model_calls"] if row["model"] == "deepseek-flash")
+    po = next(child for child in db.find_runs_by_owner(run_id) if child["run_type"] == "po")
+    trace = db.run_trace("dist-1", po["id"])
+    extract = next(
+        row for row in trace["model_calls"]
+        if row["model"] == "deepseek-flash"
+        and (row.get("request_json") or {}).get("schema", {}).get("name") == "po_turn_extraction"
+    )
     assert extract["status"] == "succeeded"
     assert extract["step_id"] == next(
         step["id"] for step in trace["steps"] if step["name"] == "po.draft"
@@ -97,7 +99,6 @@ def test_po_extract_is_recorded_on_the_chat_run(db):
     assert extract["response_json"]["json"]["line_items"][0]["sku"] == "FO-100"
 
 def test_po_claim_is_recorded_on_the_chat_run(db):
-    from backend.llm.types import AssistantTurn, ToolCall
     from backend.po.check import CheckResult, ResolvedLine
     from backend.po.slots import Discount, LineItemSlot, PoSlots
     from backend.po.submit import create_and_submit_po
@@ -117,9 +118,9 @@ def test_po_claim_is_recorded_on_the_chat_run(db):
     db.update_po(submitted.po_id, status="shipped", prepaid_amount=500.0)
 
     llm = FakeLLM(
-        json_replies=[{"verdict": "received_ok", "confidence": 0.95}],
-        tool_replies=[
-            AssistantTurn(tool_calls=[ToolCall(id="call_po", name="po.draft", arguments={})]),
+        json_replies=[
+            {"tasks": [{"id": "p", "kind": "agent", "name": "po", "input": {}, "depends_on": []}]},
+            {"verdict": "received_ok", "confidence": 0.95},
         ],
         text_reply="Marked received.",
     )
@@ -131,7 +132,8 @@ def test_po_claim_is_recorded_on_the_chat_run(db):
 
     run = db.find_agent_run("dist-1", run_id)
     assert run["status"] == "succeeded"
-    trace = db.run_trace("dist-1", run_id)
+    po = next(child for child in db.find_runs_by_owner(run_id) if child["run_type"] == "po")
+    trace = db.run_trace("dist-1", po["id"])
     claim = next(row for row in trace["model_calls"] if row["model"] == "deepseek-chat")
     assert claim["status"] == "succeeded"
     assert claim["step_id"] == next(step["id"] for step in trace["steps"] if step["name"] == "po.draft")
@@ -140,10 +142,10 @@ def test_po_claim_is_recorded_on_the_chat_run(db):
     assert db.po(submitted.po_id).status == "awaiting_payment"
 
 def test_report_plan_is_recorded_on_the_chat_run(db):
-    from backend.llm.types import AssistantTurn, ToolCall
-
     llm = FakeLLM(
         json_replies=[{
+            "tasks": [{"id": "r", "kind": "agent", "name": "report", "input": {}, "depends_on": []}],
+        }, {
             "title": "月报",
             "sections": [
                 {"id": "metrics", "questions": [], "searches": []},
@@ -154,9 +156,6 @@ def test_report_plan_is_recorded_on_the_chat_run(db):
                 {"id": "risks", "questions": [], "searches": []},
             ],
         }],
-        tool_replies=[
-            AssistantTurn(tool_calls=[ToolCall(id="call_report", name="report.draft", arguments={})]),
-        ],
         text_reply="Report draft ready.",
     )
     sid = _chat(db)
@@ -166,7 +165,8 @@ def test_report_plan_is_recorded_on_the_chat_run(db):
 
     run = db.find_agent_run("dist-1", run_id)
     assert run["status"] == "succeeded"
-    trace = db.run_trace("dist-1", run_id)
+    report = next(child for child in db.find_runs_by_owner(run_id) if child["run_type"] == "report")
+    trace = db.run_trace("dist-1", report["id"])
     planned = next(
         row for row in trace["model_calls"]
         if row["model"] == "deepseek-reasoner"

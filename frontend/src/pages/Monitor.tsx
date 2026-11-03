@@ -315,10 +315,10 @@ export function MonitorPage() {
   );
 }
 
-const MOSS = "#2c6b4a";
-const BAD = "#9d2c2c";
-const INK = "#6f675e";
-const LINE = "#e4dccf";
+const MOSS = "#047857";
+const BAD = "#ba1a1a";
+const INK = "#3e4943";
+const LINE = "#dae2fd";
 
 function headlines(board: Board): { label: string; value: string }[] {
   const created = board.charts.hours.reduce((sum, point) => sum + point.created, 0);
@@ -412,7 +412,7 @@ function levelOption(levels: Board["charts"]["levels"]): echarts.EChartsOption {
       barMaxWidth: 18,
       markLine: marks.length === 0 ? undefined : {
         symbol: "none",
-        lineStyle: { type: "dashed", color: "#8a5a12" },
+        lineStyle: { type: "dashed", color: "#6e7a73" },
         data: marks,
       },
     }],

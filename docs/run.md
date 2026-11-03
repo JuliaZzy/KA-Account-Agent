@@ -2,6 +2,8 @@
 
 一次用户动作对应一条 run。HTTP 只负责把这条 run 写进数据库并交给队列，模型和工具在 worker 里跑。页面看到的进度来自已经提交的事件。关掉页面只停本地的事件流，worker 继续跑。
 
+聊天回合如何拆成 PLAN、子 run、按波入队、再交给 ANSWER，见 [orchestrator.md](orchestrator.md)。`parent_run_id` 只表示重跑，不是调度边。
+
 目标是：可监控、可重试、中断之后能接着做，副作用不丢、也不发第二次。
 
 采购单的价格、SKU、MOQ 和商业规则由 `backend/po/` 计算。模型只把对话填进固定槽位。建单前先烧掉 confirm token。业务数据按表、列和外键存放。
@@ -16,11 +18,13 @@ POST /message
 
 Celery execute_run（测试里直接调 work_chat）
   → 领 agent_runs 的租约，状态改为 running
-  → run_loop
-       要确认     → waiting_for_user
-       用户点停止 → cancelled
-       执行耗尽   → failed，并写入 dead_letter_jobs
-       正常结束   → save_reply，succeeded
+  → 父 chat run：PLAN → 按波入队子 run → waiting_for_tasks
+       一波到齐后重新 queued，再领一次做下一波或 ANSWER
+  → 子 run：执行计划里的那一个工具，结果写入 Redis 回合箱
+  → 要确认     → waiting_for_user
+  → 用户点停止 → cancelled
+  → 执行耗尽   → failed，并写入 dead_letter_jobs
+  → 正常结束   → save_reply，succeeded
 
 页面
   → GET /runs/{id}
@@ -39,11 +43,14 @@ Celery execute_run（测试里直接调 work_chat）
 六个状态，只在 `backend/db/database/run.py` 的 `_transition` 里切换：
 
 ```
-queued → running → waiting_for_user
+queued → running → waiting_for_tasks → queued（一波子 run 到齐）
+                 → waiting_for_user
                  → succeeded
                  → failed
                  → cancelled
 ```
+
+`waiting_for_tasks` 是父 run（或还会再派活的子 agent）在等 worker 跑完这一波任务。租约已释放。不是等人。调度边是 `owner_run_id`，重跑仍只用 `parent_run_id`。见 [orchestrator.md](orchestrator.md)。
 
 `queued` 也可以直接到 `cancelled`。`waiting_for_user` 可以回到 `queued`（用户确认或跳过之后重新投递），也可以取消。`failed` 不能改回 `running`。名字在 `backend/services/run_names.py`，转移表在 `backend/db/database/support.py`。
 
@@ -57,7 +64,7 @@ queued → running → waiting_for_user
 
 | 表 | 记什么 |
 |---|---|
-| `agent_runs` | 状态、输入输出、租约、`trace_id`、次数和时长上限、`parent_run_id` |
+| `agent_runs` | 状态、输入输出、租约、`trace_id`、次数和时长上限、`parent_run_id`（重跑）、`owner_run_id`（调度） |
 | `agent_steps` | 一轮模型或一次工具 |
 | `run_events` | 按 `sequence` 递增的事实，`UNIQUE (run_id, sequence)` |
 | `checkpoints` | 循环中断后从哪继续 |
@@ -170,9 +177,9 @@ Run 接口只认 `X-User-Id`。用它查出 `users` 行，`org_id` 取 `distribu
 
 org 日预算看当天 `usage_records` 的 token 和费用。`KA_ACCOUNT_ORG_DAILY_TOKENS` 和 `KA_ACCOUNT_ORG_DAILY_COST_CENTS` 默认 0，表示不封顶。接近 80% 时一天记一条内部事件 `run.budget_warning`。超过则不再打模型。
 
-聊天循环里的 decide / answer 由 `run_loop` 记 `model.started`，由 `insert_model_call` 记 `model.completed`。工具内部的抽取、售后、报表、查数、代码修、折叠和会话标题把 `run_id` / `step_id` 传进 `call_model`。查数返回的行只做 JSON 转换，不截断行数。
+聊天父 run 的 PLAN / ANSWER 由 `backend/orchestrator/parent.py` 记步骤，由 `insert_model_call` 记 `model.completed`。子 run 的工具内部抽取、售后、报表、查数、代码修、折叠和会话标题把 `run_id` / `step_id` 传进 `call_model`。查数返回的行只做 JSON 转换，不截断行数。
 
-每一轮直接进工具循环，系统提示是 `REACT`，工具名单走 `tools=`。
+父 run 不再用 `REACT` 选工具。任务来自 PLAN 的 `tasks[]`，并行是同一波多条子 run。
 
 ## 限流、并发、开关
 
@@ -220,6 +227,7 @@ org 日预算看当天 `usage_records` 的 token 和费用。`KA_ACCOUNT_ORG_DAI
 | `running`，租约过期，次数还没到 | 改回 `queued`，新写一行 outbox，公开事件 `run.requeued_by_sweeper` |
 | `queued` 超过 10 分钟，outbox 已送出 | 只记内部事件 `run.queue_stale` |
 | `waiting_for_user` 超过 1 天 | 只记内部事件 `run.waiting_reminder`，不自动确认 |
+| `waiting_for_tasks` 超过 15 分钟，子女都已终态或没有子女 | 改回 `queued`，新写一行 outbox。子女还在跑则不动 |
 | `running` 且超过 `max_duration_seconds` | `failed`；若已请求取消则 `cancelled` |
 | 副作用 `tool_calls` 停在 `running` 超过 90 秒 | `response_lost`，并写 `tool.manual_review` |
 | outbox 仍是 `pending` | `dispatch_pending` |

@@ -15,10 +15,10 @@ import json
 import re
 from typing import Any
 
-from ..config import LLMSettings
 from ..db import Database
 from ..documents import SUPPORTED_EXTS, load_pages, render_pdf_images
-from ..llm import DeepSeekClient, SJTUClient, parse_json_loose
+from ..llm import DeepSeekClient, SJTUClient, campus_client, deepseek_client
+from ..llm import calls as model_calls
 from ..schemas import ContractChunk
 from .chunks import flatten_chunk_tree, split_chunks
 from .ingest import ingest_extraction, record_from_extraction
@@ -259,19 +259,10 @@ def _chosen_chunks(raw: dict[str, Any], allowed: dict[str, dict]) -> list[dict]:
 
 def _school_json(llm: SJTUClient, *, system: str, user: str) -> dict[str, Any]:
     """Campus chat returns the whole completion. The selection is the message text."""
-    resp = llm.chat_completion(
-        "deepseek-chat",
-        [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        temperature=0.0,
+    return model_calls.school_json(
+        model_calls.SCHOOL_CHAT, client=llm, system=system,
+        messages=[{"role": "user", "content": user}], temperature=0,
     )
-    try:
-        text = resp["choices"][0]["message"]["content"] or ""
-    except (KeyError, IndexError, TypeError) as err:
-        raise ValueError("Campus model did not return a message.") from err
-    raw = parse_json_loose(text)
-    if not isinstance(raw, dict):
-        raise ValueError("Campus model did not return a JSON object.")
-    return raw
 
 
 def _select_chunks(llm: SJTUClient, index: dict[str, dict]) -> list[dict]:
@@ -363,21 +354,15 @@ def read_agreement(
     def take(chunks: list[dict]) -> None:
         for chunk in chunks:
             unread.pop(chunk["id"], None)
-            resp = llm.response(
-                model="deepseek-flash",
-                instructions=EXTRACT_SYSTEM,
-                input=_chunk_extract_content(file_name, chunk, images=images),
-                text={
-                    "format": {
-                        "type": "json_schema",
-                        "name": EXTRACT_SCHEMA["name"],
-                        "schema": EXTRACT_SCHEMA["schema"],
-                    }
-                },
-                reasoning_effort="none",
-                temperature=0.0,
+            content = _chunk_extract_content(file_name, chunk, images=images)
+            if isinstance(content, list) and content and isinstance(content[0], dict) and content[0].get("role"):
+                messages = content
+            else:
+                messages = [{"role": "user", "content": content}]
+            raw = model_calls.flash_json(
+                client=llm, system=EXTRACT_SYSTEM, messages=messages,
+                schema=EXTRACT_SCHEMA, temperature=0,
             )
-            raw = parse_json_loose(resp.output_text)
             if not isinstance(raw, dict):
                 raise ValueError(f"Extraction for {chunk['id']} was not a JSON object.")
             parts.append(sanitize_extraction(raw, pages, image_pages))
@@ -458,9 +443,8 @@ def main(argv: list[str] | None = None) -> int:
     from pathlib import Path
 
     data = Path(args.file).read_bytes()
-    settings = LLMSettings(base_url=None, api_key="")
-    llm = DeepSeekClient(settings)
-    school = SJTUClient(settings)
+    llm = deepseek_client()
+    school = campus_client()
     if args.apply:
         rec = read_and_ingest(
             Database(), llm, school, brand_id=args.brand, partnership_id=args.partnership,

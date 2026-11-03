@@ -140,7 +140,7 @@ function Timeline({ order }: { order: Order }) {
   ];
   if (!events.length) return <p className="muted">Nothing yet.</p>;
   return (
-    <ul>
+    <ul className="timeline">
       {events.map((event, index) => {
         const detail = Object.entries(event.data || {})
           .filter(([, value]) => value != null && value !== "" && !(Array.isArray(value) && value.length === 0))

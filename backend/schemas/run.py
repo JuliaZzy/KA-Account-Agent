@@ -37,6 +37,7 @@ class RunResponse(BaseModel):
     lease_expires_at: datetime | None = None
     attempts: int
     parent_run_id: str | None = None
+    owner_run_id: str | None = None
     trace_id: str | None = None
     max_model_calls: int | None = None
     max_tokens: int | None = None
@@ -97,6 +98,7 @@ class AgentRun(BaseModel):
     lease_expires_at: datetime | None = None
     attempts: int
     parent_run_id: str | None = None
+    owner_run_id: str | None = None
     trace_id: str | None = None
     max_model_calls: int | None = None
     max_tokens: int | None = None

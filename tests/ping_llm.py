@@ -9,8 +9,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from backend.config import LLMSettings
-from backend.llm.client import SJTUClient
+from backend.llm.client import campus_client
 from backend.llm_config import LLM_CONFIGS
 
 
@@ -18,7 +17,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", help="one campus model id, or omit to ping every catalog row")
     args = ap.parse_args()
-    client = SJTUClient(LLMSettings(base_url=None, api_key=""))
+    client = campus_client()
     ids = [args.model] if args.model else [row.model for row in LLM_CONFIGS]
     failed = 0
     for model_id in ids:

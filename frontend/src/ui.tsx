@@ -30,8 +30,8 @@ export function Metrics({ items }: { items: { label: string; value: string; hint
     <div className="metrics">
       {items.map((item) => (
         <div className="metric" key={item.label} title={item.hint}>
-          <div className="metric-value">{item.value}</div>
           <div className="metric-label">{item.label}</div>
+          <div className="metric-value">{item.value}</div>
         </div>
       ))}
     </div>

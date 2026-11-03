@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from "react";
 
+import type { Activity } from "./format";
+
 /** One chat's composer and the reply that is still coming in. Other chats keep their own. */
 export type Flight = {
   busy: boolean;
@@ -15,6 +17,8 @@ export type Flight = {
   tasks: ("po" | "report" | "contract")[];
   /** Tool name while the run is parked for confirm or skip. */
   approvalTool: string | null;
+  /** This reply's activity rows. A second chat's poll must not replace them. */
+  steps: Activity[];
 };
 
 const EMPTY: Flight = {
@@ -28,6 +32,7 @@ const EMPTY: Flight = {
   task: null,
   tasks: [],
   approvalTool: null,
+  steps: [],
 };
 
 const flights = new Map<string, Flight>();

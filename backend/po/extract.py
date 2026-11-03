@@ -12,10 +12,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from ..config import LLMSettings
 from ..db import Database
 from ..llm import calls as model_calls
-from ..llm.client import DeepSeekClient
 from ..llm.types import Message
 from ..memory import prompt_turns
 from ..schemas import INCOTERMS_VALUES, PAYMENT_TERMS_VALUES, SHIPPING_METHOD_VALUES
@@ -142,12 +140,6 @@ class Extraction:
     user_confirmed: bool
     reply_language: str
 
-def _extract_client(llm: Any, *, images: bool) -> Any:
-    """Campus client for a photo. Official flash otherwise, unless `llm` already is that client."""
-    if images or callable(getattr(llm, "response", None)) or callable(getattr(llm, "complete_json", None)):
-        return llm
-    return DeepSeekClient(LLMSettings(base_url=None, api_key="")) 
-
 def extract_turn(
     llm: Any,
     *,
@@ -177,17 +169,15 @@ def extract_turn(
         {"role": m["role"], "content": str(m["content"])[:MAX_HISTORY_CONTENT_CHARS]}
         for m in prompt_turns(history, folded_through)
     ] + [{"role": "user", "content": user_content}]
-    
-    client = _extract_client(llm, images=bool(images))
     ledger = dict(db=db, run_id=run_id, step_id=step_id, purpose="po.extract")
     if images:
         raw = model_calls.school_json(
             model_calls.SCHOOL_VISION, system=system, messages=msgs, schema=EXTRACT_SCHEMA,
-            temperature=0, client=client, **ledger,
+            temperature=0, client=llm, **ledger,
         )
     else:
         raw = model_calls.flash_json(
-            system=system, messages=msgs, schema=EXTRACT_SCHEMA, temperature=0, client=client, **ledger,
+            system=system, messages=msgs, schema=EXTRACT_SCHEMA, temperature=0, client=llm, **ledger,
         )
     lang = raw.get("reply_language")
     return Extraction(

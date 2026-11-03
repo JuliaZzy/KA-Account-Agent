@@ -12,7 +12,6 @@ import pytest
 from backend import service
 from backend.contract import read_agreement, read_and_ingest, sanitize_extraction
 from backend.llm import FakeLLM
-from backend.llm.types import AssistantTurn, ToolCall
 from backend.services.chat_run import work_chat
 
 
@@ -202,10 +201,10 @@ def test_chat_holds_the_agreement_until_confirm(db, monkeypatch):
     assert not any((c.get("schema") or {}).get("name") == "contract_extraction" for c in named.calls)
 
     readers = _Readers([dict(EXTRACTION)])
-    monkeypatch.setattr("backend.contract.turn.DeepSeekClient", lambda settings: readers)
-    monkeypatch.setattr("backend.contract.turn.SJTUClient", lambda settings: readers)
+    monkeypatch.setattr("backend.contract.turn.deepseek_client", lambda: readers)
+    monkeypatch.setattr("backend.contract.turn.campus_client", lambda: readers)
     llm = FakeLLM(
-        tool_replies=[AssistantTurn(tool_calls=[ToolCall(id="c1", name="contract.read", arguments={})])],
+        json_replies=[{"tasks": [{"id": "c", "kind": "agent", "name": "contract", "input": {}, "depends_on": []}]}],
         text_reply="Filed the agreement.",
     )
     ev = list(service.handle_message(db, llm, sid, "please file this", documents=[("agreement.txt", AGREEMENT.encode())]))
@@ -249,8 +248,8 @@ def test_contract_read_hands_the_run_to_ocr(db, monkeypatch):
         raise ValueError("stop after the handoff")
 
     monkeypatch.setattr("backend.contract.read.load_pages", fake_pages)
-    monkeypatch.setattr("backend.contract.turn.DeepSeekClient", lambda settings: object())
-    monkeypatch.setattr("backend.contract.turn.SJTUClient", lambda settings: object())
+    monkeypatch.setattr("backend.contract.turn.deepseek_client", lambda: object())
+    monkeypatch.setattr("backend.contract.turn.campus_client", lambda: object())
     from backend.services.session_tools import _contract_read
 
     run, _created = db.create_agent_run("dist-1", "u-a", "chat", "ocr-handoff", {"message": "file"})

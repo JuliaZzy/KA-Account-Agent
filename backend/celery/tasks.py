@@ -41,12 +41,9 @@ def execute_run(self, run_id: str, trace_id: str | None = None) -> str:
     if not queue_enabled():
         raise self.retry(countdown=30)
     db = Database()
-    row = db.find_agent_run_by_id(run_id)
-    payload = row.get("input_json") if isinstance(row, dict) and isinstance(row.get("input_json"), dict) else {}
-    model = payload.get("model") if isinstance(payload.get("model"), str) else None
     worker_id = f"celery:{os.getpid()}"
     try:
-        work_once(db, worker_id, execute_chat(db, client_for_chat(model)), run_id=run_id)
+        work_once(db, worker_id, execute_chat(db, client_for_chat()), run_id=run_id)
     except SessionBusy as e:
         raise self.retry(countdown=2) from e
     return run_id

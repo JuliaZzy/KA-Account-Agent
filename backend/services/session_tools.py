@@ -204,7 +204,8 @@ def _data_query(db, session, text, bundle):
         step_id = ctx.get("step_id") if isinstance(ctx.get("step_id"), str) else None
         partnership = bundle.partnership
         result = answer_question(
-            db, question=_asked(args, text), run_id=run_id, step_id=step_id, 
+            db, question=str(args.get("question") or "").strip() or _asked(args, text),
+            run_id=run_id, step_id=step_id, 
             partnership_id=partnership.id, brand_id=partnership.brand_id,
             distributor_id=partnership.distributor_id, session_id=session["id"],
             history=list(session.get("history") or []),
@@ -216,8 +217,12 @@ def _data_query(db, session, text, bundle):
             "row_count": result.row_count,
             "rows": result.rows,
             "error": result.error,
+            "error_type": result.error_type,
+            "sql": result.sql,
+            "tables": result.tables,
             "log_id": result.log_id,
             "handoff": result.handoff,
+            "score": result.score,
         }
     return run
 

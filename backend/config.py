@@ -1,7 +1,6 @@
 """Environment → settings. Loads `<repo>/.env` once, never overriding real env vars.
 
-Provider keys follow the model brand; feature knobs follow the capability. The chat
-dropdown's url and call name live in `llm_config`, not in `.env`.
+Provider keys follow the model brand; feature knobs follow the capability.
 """
 
 from __future__ import annotations
@@ -23,10 +22,36 @@ def env(name: str, default: str = "") -> str:
 
 @dataclass(frozen=True)
 class LLMSettings:
-    base_url: str | None
-    api_key: str
     timeout: int = 7200
     max_retries: int = 3
+
+
+@dataclass(frozen=True)
+class VendorEndpoint:
+    """URL and key for one vendor. Both come from `{BRAND}_BASE_URL` / `{BRAND}_API_KEY`."""
+
+    base_url: str
+    api_key: str
+
+
+_VENDOR_ENV = {
+    "sjtu": ("SJTU_BASE_URL", "SJTU_API_KEY"),
+    "deepseek": ("DEEPSEEK_BASE_URL", "DEEPSEEK_API_KEY"),
+    "glm": ("GLM_BASE_URL", "GLM_API_KEY"),
+    "qwen": ("QWEN_BASE_URL", "QWEN_API_KEY"),
+}
+
+
+def vendor_endpoint(brand: str) -> VendorEndpoint:
+    """The only place chat clients read a URL and key."""
+    names = _VENDOR_ENV.get(brand)
+    if names is None:
+        raise ValueError(f"unknown model brand {brand}")
+    url_name, key_name = names
+    base_url, api_key = env(url_name), env(key_name)
+    if not base_url or not api_key:
+        raise RuntimeError(f"{url_name} and {key_name} must be set.")
+    return VendorEndpoint(base_url=base_url, api_key=api_key)
 
 
 @dataclass(frozen=True)

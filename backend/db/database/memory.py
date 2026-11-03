@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 
 from ...schemas import Memory
 from .. import orm
@@ -18,12 +18,21 @@ class MemoryMixin:
             s.flush()
             return row.id
 
-    def memories(self, partnership_id: str, *, active_only: bool = True, user_id: str | None = None) -> list[Memory]:
-        """Standing notes for a partnership. `user_id` keeps them to one person."""
+    def memories(
+        self, partnership_id: str, *, active_only: bool = True, user_id: str | None = None,
+        visible_to: str | None = None,
+    ) -> list[Memory]:
+        """Standing notes for a partnership.
+
+        `user_id` is that person only (the memory page). `visible_to` is that person
+        plus notes nobody owns. Another person's notes stay out.
+        """
         with self.tx() as s:
             q = select(orm.Memory).where(orm.Memory.partnership_id == partnership_id)
             if user_id is not None:
                 q = q.where(orm.Memory.user_id == user_id)
+            elif visible_to is not None:
+                q = q.where(or_(orm.Memory.user_id == visible_to, orm.Memory.user_id.is_(None)))
             if active_only:
                 q = q.where(orm.Memory.is_active.is_(True))
             return [Memory(**_row_dict(r)) for r in s.scalars(q.order_by(orm.Memory.id.desc())).all()]

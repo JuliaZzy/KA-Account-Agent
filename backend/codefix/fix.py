@@ -8,9 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from ..config import LLMSettings
 from ..llm import calls as model_calls
-from ..llm.client import DeepSeekClient
 from .prompt import CODE_FIX_PROMPT
 
 MAX_ATTEMPTS = 3
@@ -90,15 +88,13 @@ def _revise(
         stdout=(output or "（无）")[:1500],
     )
     messages = [{"role": "user", "content": "按错误信息修复这一次失败的内容。"}]
-    can_call = callable(getattr(llm, "response", None)) or callable(getattr(llm, "complete_json", None))
-    client = llm if can_call else DeepSeekClient(LLMSettings(base_url=None, api_key=""))
     try:
         parsed = model_calls.flash_json(
             system=system,
             messages=messages,
             schema=fix_schema(),
             temperature=0,
-            client=client,
+            client=llm,
             **_ledger(trace),
         )
     except Exception:

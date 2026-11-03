@@ -21,7 +21,10 @@ import smtplib
 import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
 from ..db import Database, utcnow
@@ -103,6 +106,18 @@ class Tool:
                 "parameters": self.parameters,
             },
         }
+
+
+@dataclass(frozen=True)
+class _Prepared:
+    kind: str
+    context: list[dict[str, Any]]
+    completed: list[str]
+    tool: Tool | None = None
+    row_id: str | None = None
+    step_id: str | None = None
+    tool_use_id: str | None = None
+    args: dict[str, Any] = field(default_factory=dict)
 
 class ToolRegistry:
     def __init__(self, tools: list[Tool]) -> None:
@@ -198,8 +213,8 @@ def run_loop(
         if _stopped(db, run["id"], owner):
             return {}
         if last.startswith(_TOOL_USE):
-            moved = _finish_tool(
-                db, run, tools, context, completed, last[len(_TOOL_USE):], open_step_id, resume_note,
+            moved = _finish_pending_tools(
+                db, run, tools, context, completed, open_step_id, resume_note,
                 None, 0, decide_provider, decide_model_name,
             )
             if moved is None:
@@ -212,17 +227,12 @@ def run_loop(
         latency_ms = int((time.perf_counter() - started) * 1000)
         if turn.tool_calls:
             call = turn.tool_calls[0]
-            tool = tools.find(call.name)
             context = [*context, _assistant_message(turn)]
-            if tool is not None and tool.requires_approval:
-                if _pause(db, run, context, completed, call, turn, latency_ms, decide_provider, decide_model_name) is None:
-                    return {}
-                return {}
             if _save(db, run["id"], context, completed, checkpoint_last_before_tool(call.name)) is None:
                 return {}
-            moved = _finish_tool(
-                db, run, tools, context, completed, call.name, None, resume_note, turn, latency_ms,
-                decide_provider, decide_model_name
+            moved = _finish_pending_tools(
+                db, run, tools, context, completed, None, resume_note, turn, latency_ms,
+                decide_provider, decide_model_name,
             )
             if moved is None:
                 return {}
@@ -330,6 +340,227 @@ def _plain_text(content: Any) -> str:
     ]
     return "\n".join(parts)
 
+def _call_from_block(block: dict[str, Any]) -> Any:
+    args = block.get("input") if isinstance(block.get("input"), dict) else {}
+    return SimpleNamespace(id=block.get("id"), name=block.get("name"), arguments=args)
+
+
+def _needs_approval(tools: ToolRegistry, block: dict[str, Any]) -> bool:
+    tool = tools.find(str(block.get("name") or ""))
+    return tool is not None and tool.requires_approval
+
+
+def _assistant_tool_uses(context: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    content = _last_assistant(context).get("content")
+    if not isinstance(content, list):
+        return []
+    return [block for block in content if isinstance(block, dict) and block.get("type") == "tool_use"]
+
+
+def _pending_tool_uses(context: list[dict[str, Any]], completed: list[str]) -> list[dict[str, Any]]:
+    pending: list[dict[str, Any]] = []
+    for block in _assistant_tool_uses(context):
+        tool_use_id = block.get("id")
+        if isinstance(tool_use_id, str) and tool_use_id not in completed:
+            pending.append(block)
+    return pending
+
+
+def _finish_pending_tools(
+    db: Database,
+    run: dict[str, Any],
+    tools: ToolRegistry,
+    context: list[dict[str, Any]],
+    completed: list[str],
+    open_step_id: str | None,
+    resume_note: str | None,
+    turn: AssistantTurn | None,
+    latency_ms: int,
+    provider: str,
+    model_name: str,
+) -> Memory | None:
+    """Finish every uncompleted tool_use on the last assistant turn.
+
+    Independent calls in that turn run in parallel. Approval tools wait: a fresh
+    decide pauses them; a resume runs or skips them. The next model call only
+    happens after every tool_use has a result.
+    """
+    pending = _pending_tool_uses(context, completed)
+    if not pending:
+        raise PermanentRunError("checkpoint tool call does not match the context")
+    last = checkpoint_last_after_tool(str(pending[-1].get("name") or "tool"))
+    ready = [block for block in pending if not _needs_approval(tools, block)]
+    waiting = [block for block in pending if _needs_approval(tools, block)]
+    if waiting and _resume_skipped(db, run):
+        for block in waiting:
+            moved = _finish_tool(
+                db, run, tools, context, completed, str(block.get("name") or ""),
+                open_step_id, resume_note, turn, latency_ms, provider, model_name,
+            )
+            if moved is None:
+                return None
+            context, completed, last, open_step_id, resume_note = moved
+            turn, latency_ms, open_step_id = None, 0, None
+        waiting = []
+    if ready:
+        moved = _run_tool_batch(
+            db, run, tools, context, completed, ready, open_step_id, resume_note,
+            turn, latency_ms, provider, model_name, parallel=True,
+        )
+        if moved is None:
+            return None
+        context, completed, last, open_step_id, resume_note = moved
+        turn, latency_ms, open_step_id = None, 0, None
+    if waiting:
+        if turn is not None:
+            call = _call_from_block(waiting[0])
+            if _pause(db, run, context, completed, call, turn, latency_ms, provider, model_name) is None:
+                return None
+            return None
+        moved = _run_tool_batch(
+            db, run, tools, context, completed, waiting, open_step_id, resume_note,
+            None, 0, provider, model_name, parallel=False,
+        )
+        if moved is None:
+            return None
+        context, completed, last, open_step_id, resume_note = moved
+    return context, completed, last, open_step_id, resume_note
+
+
+def _run_tool_batch(
+    db: Database,
+    run: dict[str, Any],
+    tools: ToolRegistry,
+    context: list[dict[str, Any]],
+    completed: list[str],
+    blocks: list[dict[str, Any]],
+    open_step_id: str | None,
+    resume_note: str | None,
+    turn: AssistantTurn | None,
+    latency_ms: int,
+    provider: str,
+    model_name: str,
+    *,
+    parallel: bool,
+) -> Memory | None:
+    if len(blocks) == 1:
+        return _finish_tool(
+            db, run, tools, context, completed, str(blocks[0].get("name") or ""),
+            open_step_id, resume_note, turn, latency_ms, provider, model_name,
+        )
+    if not parallel:
+        moved: Memory | None = None
+        for index, block in enumerate(blocks):
+            moved = _finish_tool(
+                db, run, tools, context, completed, str(block.get("name") or ""),
+                open_step_id if index == 0 else None,
+                resume_note, turn if index == 0 else None,
+                latency_ms if index == 0 else 0, provider, model_name,
+            )
+            if moved is None:
+                return None
+            context, completed, last, open_step_id, resume_note = moved
+            turn = None
+        return moved
+    return _run_tools_parallel(
+        db, run, tools, context, completed, blocks, open_step_id, resume_note,
+        turn, latency_ms, provider, model_name,
+    )
+
+
+def _run_tools_parallel(
+    db: Database,
+    run: dict[str, Any],
+    tools: ToolRegistry,
+    context: list[dict[str, Any]],
+    completed: list[str],
+    blocks: list[dict[str, Any]],
+    open_step_id: str | None,
+    resume_note: str | None,
+    turn: AssistantTurn | None,
+    latency_ms: int,
+    provider: str,
+    model_name: str,
+) -> Memory | None:
+    jobs: list[tuple[dict[str, Any], str]] = []
+    for index, block in enumerate(blocks):
+        tool_name = str(block.get("name") or "")
+        args = block.get("input") if isinstance(block.get("input"), dict) else {}
+        try:
+            step_name(StepType.TOOL, tool_name)
+        except ValueError as exc:
+            raise PermanentRunError(str(exc)) from exc
+        if index == 0 and open_step_id:
+            step_id = open_step_id
+        elif index == 0:
+            step_id = _record_model_step(
+                db, run, context, turn, latency_ms, provider, model_name, None, tool_name, args,
+            )
+        else:
+            step = insert_step(db, run["id"], StepType.TOOL, tool_name, args)
+            step_id = None if step is None else step["id"]
+        if step_id is None:
+            return None
+        jobs.append((block, step_id))
+    prepared: list[_Prepared] = []
+    for block, step_id in jobs:
+        tool_name = str(block.get("name") or "")
+        args = block.get("input") if isinstance(block.get("input"), dict) else {}
+        tool_use_id = str(block.get("id") or "")
+        prep = _prepare_tool_call(
+            db, run, tools, step_id=step_id, tool_name=tool_name, args=args,
+            tool_use_id=tool_use_id, context=context, completed=completed,
+        )
+        if prep is None:
+            return None
+        if prep.kind != "claimed":
+            context, completed = prep.context, prep.completed
+            continue
+        prepared.append(prep)
+    if prepared:
+        org_id = str(run.get("org_id") or "")
+
+        def _run(prep: _Prepared) -> _Attempt:
+            assert prep.tool is not None and prep.step_id is not None
+            return _attempt_tool(
+                db, run["id"], prep.tool, prep.args, context, prep.step_id, org_id,
+            )
+
+        attempts: dict[str, tuple[_Prepared, _Attempt]] = {}
+        if len(prepared) == 1:
+            prep = prepared[0]
+            attempts[str(prep.tool_use_id)] = (prep, _run(prep))
+        else:
+            # One Context cannot be entered by two threads. Copy per task.
+            with ThreadPoolExecutor(max_workers=min(5, len(prepared))) as pool:
+                futs = {pool.submit(copy_context().run, _run, prep): prep for prep in prepared}
+                for fut in as_completed(futs):
+                    prep = futs[fut]
+                    try:
+                        attempt = fut.result()
+                    except Exception as exc:
+                        attempt = _Attempt(
+                            {}, ToolCallStatus.FAILED, _tool_failure(prep.tool, str(exc)),
+                            False, 0, False,
+                        )
+                    attempts[str(prep.tool_use_id)] = (prep, attempt)
+        for block in blocks:
+            item = attempts.get(str(block.get("id") or ""))
+            if item is None:
+                continue
+            prep, attempt = item
+            assert prep.tool is not None and prep.row_id is not None and prep.tool_use_id is not None
+            moved = _close_tool(
+                db, run, prep.tool, prep.row_id, prep.tool_use_id, context, completed,
+                result=attempt.result, status=attempt.status, latency_ms=attempt.latency_ms,
+                error=attempt.error, executed=attempt.executed, manual_review=attempt.manual_review,
+            )
+            if moved is None:
+                return None
+            context, completed = moved
+    return _after_tool_note(db, run, context, completed, str(blocks[-1].get("name") or ""), resume_note)
+
+
 def _finish_tool(
     db: Database,
     run: dict[str, Any],
@@ -345,7 +576,7 @@ def _finish_tool(
     model_name: str,
 ) -> Memory | None:
     """Loop side of one tool. Skip stays here. Everything else goes through `execute_tool`."""
-    block = _last_tool_use(context)
+    block = _last_tool_use(context, tool_name)
     if block is None or block.get("name") != tool_name:
         raise PermanentRunError("checkpoint tool call does not match the context")
     tool_use_id = block.get("id")
@@ -421,14 +652,48 @@ def execute_tool(
     A handler error is stored and returned to the loop. It does not fail the run.
     None means the lease is gone or the step could not be written.
     """
+    prepared = _prepare_tool_call(
+        db, run, tools, step_id=step_id, tool_name=tool_name, args=args,
+        tool_use_id=tool_use_id, context=context, completed=completed,
+    )
+    if prepared is None:
+        return None
+    if prepared.kind != "claimed":
+        return prepared.context, prepared.completed
+    assert prepared.tool is not None and prepared.row_id is not None and prepared.step_id is not None
+    attempt = _attempt_tool(
+        db, run["id"], prepared.tool, prepared.args, prepared.context, prepared.step_id,
+        str(run.get("org_id") or ""),
+    )
+    return _close_tool(
+        db, run, prepared.tool, prepared.row_id, tool_use_id, prepared.context, prepared.completed,
+        result=attempt.result, status=attempt.status, latency_ms=attempt.latency_ms,
+        error=attempt.error, executed=attempt.executed, manual_review=attempt.manual_review,
+    )
+
+
+def _prepare_tool_call(
+    db: Database,
+    run: dict[str, Any],
+    tools: ToolRegistry,
+    *,
+    step_id: str,
+    tool_name: str,
+    args: dict[str, Any],
+    tool_use_id: str,
+    context: list[dict[str, Any]],
+    completed: list[str],
+) -> _Prepared | None:
+    """Claim the seat or record a rejection. The handler is not called here."""
     if _stopped(db, run["id"], str(run.get("lease_owner") or "")):
         return None
     tool = tools.find(tool_name)
     if tool is None:
         error = tool_error(ToolErrorCode.NOT_FOUND, "tool is not registered")
-        return _reject_tool(
+        moved = _reject_tool(
             db, run, step_id, tool_name, tool_use_id, context, completed, error, executed=False,
         )
+        return None if moved is None else _Prepared("done", moved[0], moved[1])
     paused = tool_switch_off(
         tool.name, side_effect=tool.side_effect, idempotency_required=tool.idempotency_required,
     )
@@ -443,24 +708,25 @@ def execute_tool(
             ToolErrorCode.VALIDATION, problem,
             retryable=ToolErrorCode.VALIDATION in tool.retryable_errors,
         )
-        # The failed row uses this call's id. A side-effect business key stays free.
-        return _record_invalid_call(
+        moved = _record_invalid_call(
             db, run, step_id, tool_name, args, tool_use_id, context, completed, error,
         )
+        return None if moved is None else _Prepared("done", moved[0], moved[1])
     if tool.name == "send_email":
         refusal = mail_preflight(args)
         if refusal is not None:
             code, message = refusal
             error = tool_error(code, message, retryable=code in tool.retryable_errors)
-            return _record_invalid_call(
+            moved = _record_invalid_call(
                 db, run, step_id, tool_name, args, tool_use_id, context, completed, error,
             )
+            return None if moved is None else _Prepared("done", moved[0], moved[1])
     if tool.name == "send_email" or (tool.side_effect and tool.idempotency_required):
         person = db.user(str(run.get("user_id") or ""))
         if person is None or person.distributor_id != run.get("org_id"):
             error = tool_error(ToolErrorCode.PERMISSION_DENIED, "user is not in this distributor")
             _reject_tool(
-                db, run, step_id, tool_name, args, tool_use_id, context, completed, error, executed=False,
+                db, run, step_id, tool_name, tool_use_id, context, completed, error, executed=False,
             )
             raise PermanentRunError(ToolErrorCode.PERMISSION_DENIED)
     cap = run.get("max_tool_calls")
@@ -477,9 +743,10 @@ def execute_tool(
             ToolErrorCode.IDEMPOTENCY_REQUIRED, "idempotency key could not be computed",
             retryable=ToolErrorCode.IDEMPOTENCY_REQUIRED in tool.retryable_errors,
         )
-        return _record_invalid_call(
+        moved = _record_invalid_call(
             db, run, step_id, tool_name, args, tool_use_id, context, completed, error,
         )
+        return None if moved is None else _Prepared("done", moved[0], moved[1])
     claimed = claim_tool_call(
         db, run["id"], step_id, tool_name=tool_name, args=args, idempotency_key=key,
     )
@@ -487,18 +754,17 @@ def execute_tool(
         return None
     row, created = claimed
     if not created:
-        return _reuse_tool_call(
+        moved = _reuse_tool_call(
             db, run, tool, row, step_id, tool_use_id, context, completed,
         )
+        return None if moved is None else _Prepared("done", moved[0], moved[1])
 
     _event(db, run, StepEvent.TOOL_STARTED, {"tool_name": tool_name, "tool_use_id": tool_use_id})
     if _stopped(db, run["id"], str(run.get("lease_owner") or "")):
         return None
-    attempt = _attempt_tool(db, run["id"], tool, args, context, step_id, str(run.get("org_id") or ""))
-    return _close_tool(
-        db, run, tool, row["id"], tool_use_id, context, completed,
-        result=attempt.result, status=attempt.status, latency_ms=attempt.latency_ms,
-        error=attempt.error, executed=attempt.executed, manual_review=attempt.manual_review,
+    return _Prepared(
+        "claimed", context, completed, tool=tool, row_id=row["id"],
+        step_id=step_id, tool_use_id=tool_use_id, args=args,
     )
 
 
@@ -1142,13 +1408,13 @@ def _assistant_message(turn: AssistantTurn) -> dict[str, Any]:
 def _tool_result_message(tool_use_id: str, result: dict[str, Any]) -> dict[str, Any]:
     return {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_use_id, "content": result}]}
 
-def _last_tool_use(context: list[dict[str, Any]]) -> dict[str, Any] | None:
-    if not context:
+def _last_tool_use(context: list[dict[str, Any]], tool_name: str | None = None) -> dict[str, Any] | None:
+    found = _assistant_tool_uses(context)
+    if tool_name:
+        for block in reversed(found):
+            if block.get("name") == tool_name:
+                return block
         return None
-    content = context[-1].get("content")
-    if not isinstance(content, list):
-        return None
-    found = [block for block in content if isinstance(block, dict) and block.get("type") == "tool_use"]
     return found[-1] if found else None
 
 def _last_assistant(context: list[dict[str, Any]]) -> dict[str, Any]:

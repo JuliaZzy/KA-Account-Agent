@@ -32,7 +32,6 @@ type Turn = {
   text: string;
   images?: string[];
   files?: string[];
-  model?: string;
   warnings?: string[];
   sources?: { n: number; source: string }[];
   dataQuery?: DataQueryMark;
@@ -187,6 +186,13 @@ function StopIcon() {
   );
 }
 
+function personMark(name: string | undefined): string {
+  const trimmed = (name || "You").trim();
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return trimmed.slice(-2) || "?";
+}
+
 export function Chat() {
   return (
     <NeedPartnership>
@@ -203,8 +209,15 @@ function ChatDesk() {
   const [snap, setSnap] = useState<Snap | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
   const [attachNote, setAttachNote] = useState<string | null>(null);
-  const [model, setModel] = useState(() => localStorage.getItem("ka_account.model") || "");
   const threadRef = useRef<HTMLDivElement>(null);
+  // Follow new steps only while the reader is already at the bottom.
+  // Thinking updates arrive continuously; snapping scrollTop on each one
+  // yanks the thread back and makes history unreachable.
+  const stickToBottom = useRef(true);
+  const scrollingSelf = useRef(false);
+  const seenScrollTop = useRef(0);
+  const seenSid = useRef<string | null>(null);
+  const seenTurns = useRef(0);
   const bootKey = useRef("");
   const sidRef = useRef<string | null>(null);
   const openSeq = useRef(0);
@@ -213,11 +226,7 @@ function ChatDesk() {
   const composing = useRef(false);
   const stops = useRef(new Map<string, AbortController>());
   const flight = useFlight(sid);
-  const [traceSteps, setTraceSteps] = useState<Activity[]>([]);
-
-useEffect(() => {
-  setTraceSteps([]);
-}, [flight.runId]);
+  const traceSteps = flight.steps;
   sidRef.current = sid;
   const pendingKinds = flight.tasks;
   const liveKind = pendingKinds.length > 1
@@ -377,13 +386,37 @@ useEffect(() => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [partnership.id, userId, desk.jump]);
 
-  useEffect(() => {
-    threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight });
-  }, [snap?.turns, flight.live, traceSteps]);
+  function onThreadScroll() {
+    const el = threadRef.current;
+    if (!el) return;
+    if (scrollingSelf.current) {
+      seenScrollTop.current = el.scrollTop;
+      return;
+    }
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (el.scrollTop < seenScrollTop.current - 1) stickToBottom.current = false;
+    else if (distance < 48) stickToBottom.current = true;
+    seenScrollTop.current = el.scrollTop;
+  }
 
-  const models = desk.meta?.models ?? [];
-  const listed = models.some((item) => item.id === model);
-  const modelId = (listed ? model : "") || desk.meta?.default_model || models[0]?.id || "";
+  useEffect(() => {
+    const el = threadRef.current;
+    if (!el) return;
+    if (seenSid.current !== sid) {
+      seenSid.current = sid;
+      stickToBottom.current = true;
+      seenTurns.current = 0;
+    }
+    const turns = snap?.turns;
+    const count = turns?.length ?? 0;
+    if (count > seenTurns.current && turns?.[count - 1]?.role === "user") stickToBottom.current = true;
+    seenTurns.current = count;
+    if (!stickToBottom.current) return;
+    scrollingSelf.current = true;
+    el.scrollTo({ top: el.scrollHeight });
+    seenScrollTop.current = el.scrollTop;
+    scrollingSelf.current = false;
+  }, [sid, snap?.turns, flight.live, traceSteps]);
 
   async function send(message: string, attached?: File[]) {
     const chatId = sidRef.current;
@@ -397,7 +430,7 @@ useEffect(() => {
     setAttachNote(null);
     patchFlight(chatId, {
       busy: true, streaming: true, runId: null, error: null, approvalTool: null,
-      draft: "", files: [], live: "", task: null, tasks: [],
+      draft: "", files: [], live: "", task: null, tasks: [], steps: [],
     });
     const maxImages = desk.meta?.max_images;
     const images: string[] = [];
@@ -424,7 +457,6 @@ useEffect(() => {
         images,
         attachments: documents.map((d) => d.name),
         files: documents,
-        model: modelId || null,
       }, async (event) => {
         if (typeof event.run_id === "string" && event.run_id) patchFlight(chatId, { runId: event.run_id });
         if (event.type === "session") {
@@ -439,7 +471,7 @@ useEffect(() => {
       if (!runId || !userId) throw new Error("run was not created");
       const ended = await followRun(runId, partnership.id, userId, stop.signal, (events, run) => {
         steps = activitiesFromEvents(events, run.status);
-        setTraceSteps(steps);
+        patchFlight(chatId, { steps });
         const partial = run.output_json?.text;
         if (typeof partial === "string" && partial) patchFlight(chatId, { live: partial });
         parkedTool = waitingToolName(events) ?? parkedTool;
@@ -483,7 +515,7 @@ useEffect(() => {
     const stop = new AbortController();
     stops.current.set(chatId, stop);
     patchFlight(chatId, { busy: true, streaming: true, error: null });
-    let steps: Activity[] = traceSteps;
+    let steps: Activity[] = current.steps;
     let parkedTool = current.approvalTool;
     let committed = false;
     try {
@@ -493,7 +525,7 @@ useEffect(() => {
       });
       const ended = await followRun(runId, partnership.id, userId, stop.signal, (events, run) => {
         steps = activitiesFromEvents(events, run.status);
-        setTraceSteps(steps);
+        patchFlight(chatId, { steps });
         const partial = run.output_json?.text;
         if (typeof partial === "string" && partial) patchFlight(chatId, { live: partial });
         parkedTool = waitingToolName(events) ?? parkedTool;
@@ -700,19 +732,30 @@ useEffect(() => {
     window.addEventListener("pointerup", stop);
   }
 
+  const userName = desk.user?.name;
   return (
     <div className={`chat-layout${showPanel ? " with-result" : ""}`} style={layoutStyle}>
+      <header className="context-strip">
+        <div className="context-id">
+          <span className="dot" aria-hidden="true" />
+          <strong>{partnership.brand_name} · {partnership.distributor_name}</strong>
+          <span className="chip">Ships to {partnership.ship_to_country || "—"}</span>
+        </div>
+        <div className="context-meta">
+          {partnership.currency && (
+            <span className="context-currency">
+              <span className="material-symbols-outlined" aria-hidden="true">currency_exchange</span>
+              {partnership.currency}
+            </span>
+          )}
+          {userName && <span>{userName}</span>}
+          {snap?.route && <span className="route">{snap.route}</span>}
+        </div>
+      </header>
+      <div className="chat-stage">
       <section className="thread-col">
-        <header className="page-head">
-          <h1>{partnership.brand_name} · {partnership.distributor_name}</h1>
-          <p>
-            {desk.user ? `${desk.user.name} · ` : ""}
-            ships to {partnership.ship_to_country || "—"}
-            {snap?.route && <span className="route">{snap.route}</span>}
-          </p>
-        </header>
         {(bootError || flight.error) && <div className="error">{bootError || flight.error}</div>}
-        <div className="thread" ref={threadRef}>
+        <div className="thread" ref={threadRef} onScroll={onThreadScroll}>
           {snap?.turns.map((turn, index) => {
             const links = [
               turn.order ? panes.find((item) => item.kind === "order" && !item.pending) : undefined,
@@ -723,11 +766,18 @@ useEffect(() => {
             const artifact = links.length > 0 && !showAnswer;
             return (
             <div className={`turn ${turn.role}`} key={index}>
+              {turn.role === "assistant" && (
+                <div className="avatar bot" aria-hidden="true">
+                  <span className="material-symbols-outlined">smart_toy</span>
+                </div>
+              )}
               <div className="bubble">
+                <div className="bubble-meta">
+                  <span className="bubble-who">{turn.role === "assistant" ? "KA Account" : (userName || "You")}</span>
+                </div>
                 {turn.activity && turn.activity.length > 0 && (
                   <ActivityList steps={turn.activity} />
                 )}
-                {turn.model && <div className="who">{models.find((item) => item.id === turn.model)?.short || turn.model}</div>}
                 {showAnswer && (
                   turn.role === "assistant"
                     ? <Markdown text={turn.text} charts={turn.reportBody ? undefined : turn.charts} />
@@ -763,13 +813,22 @@ useEffect(() => {
                   />
                 )}
               </div>
+              {turn.role === "user" && (
+                <div className="avatar user" aria-hidden="true">{personMark(userName)}</div>
+              )}
             </div>
             );
           })}
           {((flight.streaming && (traceSteps.length > 0 || flight.live || liveKind))
             || (!flight.streaming && Boolean(flight.error) && traceSteps.length > 0)) && (
             <div className="turn assistant">
+              <div className="avatar bot" aria-hidden="true">
+                <span className="material-symbols-outlined">smart_toy</span>
+              </div>
               <div className="bubble">
+                <div className="bubble-meta">
+                  <span className="bubble-who">KA Account</span>
+                </div>
                 {traceSteps.length > 0 && <ActivityList steps={traceSteps} />}
                 {livePane
                   ? <button type="button" className="result-link" onClick={() => openResult(livePane.id)}>{resultLink(livePane.label)}</button>
@@ -793,9 +852,10 @@ useEffect(() => {
             void send(flight.draft);
           }}
         >
+          <div className="composer-box">
           <textarea
             value={flight.draft}
-            placeholder="An order, or attach an agreement (PDF / Word)…"
+            placeholder="下单、提问，或附上协议（PDF / Word）…"
             onCompositionStart={() => {
               composing.current = true;
             }}
@@ -815,19 +875,10 @@ useEffect(() => {
               void send(flight.draft);
             }}
           />
-          <div className="row">
-            <select
-              aria-label="Model"
-              value={modelId}
-              onChange={(event) => {
-                setModel(event.target.value);
-                localStorage.setItem("ka_account.model", event.target.value);
-              }}
-            >
-              {models.map((item) => <option key={item.id} value={item.id}>{item.short}</option>)}
-            </select>
-            <label className="btn">
-              Attach
+          <div className="composer-tools">
+            <div className="composer-tools-left">
+            <label className="icon-btn" aria-label="Attach" title="Attach">
+              <span className="material-symbols-outlined" aria-hidden="true">attach_file</span>
               <input
                 type="file"
                 multiple
@@ -848,14 +899,20 @@ useEffect(() => {
                 }}
               />
             </label>
-            {flight.files.length > 0 && <span className="muted">{flight.files.map((file) => file.name).join(", ")}</span>}
+            {flight.files.length > 0 && (
+              <span className="file-chips">{flight.files.map((file) => file.name).join(", ")}</span>
+            )}
+            </div>
             {flight.streaming ? (
               <button className="btn-stop" type="button" aria-label="取消" onClick={() => void cancelTurn()}>
                 <StopIcon />
               </button>
             ) : (
-              <button className="btn-primary" type="submit" disabled={flight.busy || !sid || Boolean(flight.approvalTool)}>Send</button>
+              <button className="btn-send" type="submit" aria-label="Send" disabled={flight.busy || !sid || Boolean(flight.approvalTool)}>
+                <span className="material-symbols-outlined" aria-hidden="true">arrow_upward</span>
+              </button>
             )}
+          </div>
           </div>
           {attachNote && <div className="warn">{attachNote}</div>}
         </form>
@@ -941,6 +998,7 @@ useEffect(() => {
           </div>
         </aside>
       )}
+      </div>
     </div>
   );
 }
@@ -967,17 +1025,26 @@ function StepMark({ state }: { state: Activity["state"] }) {
 
 function ActivityList({ steps }: { steps: Activity[] }) {
   return (
-    <ol className="activity">
-      {steps.map((step, index) => (
-        <li key={step.id} className={step.state}>
-          <div className="activity-line">
-            <span className="title">{index + 1}. {step.title}</span>
-            {step.detail ? <span className="detail">{step.detail}</span> : null}
-            <StepMark state={step.state} />
-          </div>
-        </li>
-      ))}
-    </ol>
+    <details className="activity-card" open>
+      <summary>
+        <span className="activity-sum">
+          <span className="material-symbols-outlined" aria-hidden="true">account_tree</span>
+          <span>步骤 · {steps.length}</span>
+        </span>
+        <span className="material-symbols-outlined activity-chevron" aria-hidden="true">expand_more</span>
+      </summary>
+      <ol className="activity">
+        {steps.map((step, index) => (
+          <li key={step.id} className={step.state}>
+            <div className="activity-line">
+              <StepMark state={step.state} />
+              <span className="title">{index + 1}. {step.title}</span>
+              {step.detail ? <span className="detail">{step.detail}</span> : null}
+            </div>
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }
 

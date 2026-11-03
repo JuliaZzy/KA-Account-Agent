@@ -8,8 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from ..config import LLMSettings
-from ..llm import SJTUClient
+from ..llm import calls as model_calls
 
 SYSTEM = """你是一名专业的翻译，请把用户给出的文字译成用户要求的语言。
 如果用户没有提供目标语言，请及时提问，直到用户提供为止。
@@ -81,20 +80,12 @@ def resolve_text(arguments: dict[str, Any], context: dict[str, Any] | None) -> s
 
 def translate(*, text: str, target_language: str) -> str:
     """One campus chat call. The reply text is the translation."""
-    client = SJTUClient(LLMSettings(base_url=None, api_key=""))
-    resp = client.chat_completion(
-        "deepseek-chat",
-        [
-            {"role": "system", "content": SYSTEM},
-            {"role": "user", "content": f"目标语言：{target_language}\n\n原文：\n{text}"},
-        ],
+    out = "".join(model_calls.school_text(
+        model_calls.SCHOOL_CHAT,
+        system=SYSTEM,
+        messages=[{"role": "user", "content": f"目标语言：{target_language}\n\n原文：\n{text}"}],
         temperature=0.3,
-    )
-    try:
-        raw = resp["choices"][0]["message"]["content"] or ""
-    except (KeyError, IndexError, TypeError) as err:
-        raise ValueError("Campus model did not return a translation.") from err
-    out = str(raw).strip()
+    )).strip()
     if not out:
         raise ValueError("empty translation")
     return out

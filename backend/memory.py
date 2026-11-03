@@ -130,9 +130,14 @@ def remember(
 def recall(db: Database, partnership_id: str, *, limit: int = MAX_RECALLED, user_id: str | None = None) -> list[Memory]:
     """Active memories, newest first, capped — and stamped as recalled.
 
-    `user_id` limits the list to that person. Omit it and every note on the partnership is recalled.
+    `user_id` keeps another person's notes out. Notes with no owner stay.
+    Omit it and every note on the partnership is recalled.
     """
-    memories = db.memories(partnership_id, active_only=True, user_id=user_id)[:limit]
+    if user_id:
+        rows = db.memories(partnership_id, active_only=True, visible_to=user_id)
+    else:
+        rows = db.memories(partnership_id, active_only=True)
+    memories = rows[:limit]
     db.mark_memories_recalled([m.id for m in memories if m.id is not None])
     return memories
 

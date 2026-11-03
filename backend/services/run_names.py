@@ -11,7 +11,7 @@ A tool iteration is named after the registered tool. A model iteration is
 always `model`. Which agent owns the run stays on `agent_runs.run_type`， 
 and that column only holds `RunType`: a purchase, a contract, a report, a data
 query, a brand answer, a code fix, a repair, a reflection, a report review,
-a report revision, or one desk chat turn.
+a report revision, a native or MCP tool, or one desk chat turn.
 """
 
 from __future__ import annotations
@@ -37,6 +37,8 @@ class RunType(StrEnum):
     REVIEW = "review"
     REVISE = "revise"
     CHAT = "chat"
+    TOOL = "tool"
+    OPEN = "open"
 
 class StepType(StrEnum):
     MODEL = "model"
@@ -59,6 +61,7 @@ class RunStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
     WAITING_FOR_USER = "waiting_for_user"
+    WAITING_FOR_TASKS = "waiting_for_tasks"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -93,6 +96,7 @@ class StepEvent(StrEnum):
     RUN_CREATED = "run.created"
     RUN_STARTED = "run.started"
     RUN_WAITING_FOR_USER = "run.waiting_for_user"
+    RUN_WAITING_FOR_TASKS = "run.waiting_for_tasks"
     RUN_REQUEUED_BY_SWEEPER = "run.requeued_by_sweeper"
     RUN_COMPLETED = "run.completed"
     RUN_FAILED = "run.failed"
@@ -118,6 +122,16 @@ class StepEvent(StrEnum):
 MODEL_STEP_NAME = StepType.MODEL.value
 
 # Pushed to the chat page. Trace still returns every stored event.
+# Copied onto each owner so the chat page sees nested model/step progress.
+PROJECTED_CHILD_EVENTS = frozenset({
+    StepEvent.STEP_STARTED,
+    StepEvent.STEP_COMPLETED,
+    StepEvent.STEP_FAILED,
+    StepEvent.MODEL_STARTED,
+    StepEvent.MODEL_COMPLETED,
+    StepEvent.MODEL_FAILED,
+})
+
 PUBLIC_RUN_EVENTS = frozenset({
     StepEvent.RUN_CREATED,
     StepEvent.RUN_STARTED,
@@ -130,6 +144,7 @@ PUBLIC_RUN_EVENTS = frozenset({
     StepEvent.TOOL_FAILED,
     StepEvent.TOOL_MANUAL_REVIEW,
     StepEvent.RUN_WAITING_FOR_USER,
+    StepEvent.RUN_WAITING_FOR_TASKS,
     StepEvent.RUN_REQUEUED_BY_SWEEPER,
     StepEvent.RUN_COMPLETED,
     StepEvent.RUN_FAILED,
@@ -141,6 +156,7 @@ EVENT_DISPLAY: dict[str, str] = {
     StepEvent.RUN_CREATED: "已开始",
     StepEvent.MODEL_STARTED: "正在思考",
     StepEvent.RUN_WAITING_FOR_USER: "等待确认",
+    StepEvent.RUN_WAITING_FOR_TASKS: "正在执行任务",
     StepEvent.TOOL_MANUAL_REVIEW: "结果不确定，需要人确认",
     StepEvent.RUN_REQUEUED_BY_SWEEPER: "继续处理",
     StepEvent.RUN_COMPLETED: "回复结束",

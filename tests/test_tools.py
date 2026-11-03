@@ -31,7 +31,7 @@ class _School:
 
 def _school(monkeypatch, text: str) -> _School:
     client = _School(text)
-    monkeypatch.setattr("backend.tools.lang_translate.SJTUClient", lambda settings: client)
+    monkeypatch.setattr("backend.llm.client.campus_client", lambda: client)
     return client
 
 
@@ -124,6 +124,35 @@ def test_orchestrator_runs_translate_then_answers(monkeypatch):
 
 def test_orchestrator_skips_tools_when_the_model_calls_none():
     assert run_tool_calls(FakeLLM(), text="10 cases of fish oil", history=[], include_mcp=False) is None
+
+
+def test_web_search_query_borrows_the_previous_topic():
+    from backend.services.task_run import _arguments_for
+
+    history = [
+        {"role": "user", "content": "那改成查上海的天气吧"},
+        {"role": "assistant", "content": "需要我用 web_search 吗"},
+    ]
+    echoed = _arguments_for(
+        {"name": "web_search", "message": "可以，用web_search吧", "input": {"query": "可以，用web_search吧"}},
+        history,
+    )
+    assert echoed["query"] == "那改成查上海的天气吧"
+    empty = _arguments_for(
+        {"name": "web_search", "message": "可以，用web_search吧", "input": {}},
+        history,
+    )
+    assert empty["query"] == "那改成查上海的天气吧"
+    planned = _arguments_for(
+        {"name": "web_search", "message": "可以，用web_search吧", "input": {"query": "上海近期天气"}},
+        history,
+    )
+    assert planned["query"] == "上海近期天气"
+    named = _arguments_for(
+        {"name": "web_search", "message": "查上海天气", "input": {"query": "查上海天气"}},
+        [],
+    )
+    assert named["query"] == "查上海天气"
 
 
 def test_tools_registry_names():

@@ -39,8 +39,8 @@ def _models(monkeypatch, replies: list[dict]):
             raw = pending.pop(0)
             return type("Reply", (), {"output_text": json.dumps(raw)})()
 
-    monkeypatch.setattr("backend.text2sql.text2sql.SJTUClient", lambda settings: _School())
-    monkeypatch.setattr("backend.text2sql.text2sql.DeepSeekClient", lambda settings: _DeepSeek())
+    monkeypatch.setattr("backend.text2sql.text2sql.campus_client", lambda: _School())
+    monkeypatch.setattr("backend.text2sql.text2sql.deepseek_client", lambda: _DeepSeek())
     return pending, school
 
 
@@ -277,7 +277,7 @@ def test_chat_quotes_the_rows_and_a_report_uses_them(db, monkeypatch):
         {"sql": "SELECT total_amount FROM purchase_orders"},
     ])
     llm = FakeLLM(
-        tool_replies=[AssistantTurn(tool_calls=[ToolCall(id="d1", name="data.query", arguments={})])],
+        json_replies=[{"tasks": [{"id": "d", "kind": "agent", "name": "data", "input": {"question": "order total"}, "depends_on": []}]}],
         text_reply="The order total is 1000.",
     )
     events = list(service.handle_message(db, llm, sid, "how much have I ordered?"))
@@ -289,7 +289,6 @@ def test_chat_quotes_the_rows_and_a_report_uses_them(db, monkeypatch):
     sid = db.create_session("sess-report", "ps-1", "u-a")["id"]
     db.update_session(sid, title="report", tags=["report"])
     report_llm = FakeLLM(json_replies=[
-        {"tags": ["report", "data"], "title": "report"},
         {"tasks": [
             {"id": "d", "kind": "agent", "name": "data", "input": {"question": "order total"}, "depends_on": []},
             {"id": "r", "kind": "agent", "name": "report", "input": {}, "depends_on": ["d"]},
@@ -340,9 +339,14 @@ def test_chat_quotes_the_rows_and_a_report_uses_them(db, monkeypatch):
         {"score": 90, "retry_question": ""},
     ])
     events = list(service.handle_message(db, report_llm, sid, "write a short sales note"))
-    assert work_chat(db, report_llm, events[0]["run_id"]) is True
+    parent_id = events[0]["run_id"]
+    assert work_chat(db, report_llm, parent_id) is True
     saved = db.session(sid)["history"][-1]
     assert saved["content"] == "Report: 1000."
+    report = next(row for row in db.find_runs_by_owner(parent_id) if row["run_type"] == "report")
+    nested = [row for row in db.find_runs_by_owner(report["id"]) if row["run_type"] == "data"]
+    assert nested and all(row["status"] == "succeeded" for row in nested)
+    assert report["status"] == "succeeded"
 
 
 def test_badcase_groups_failures_and_keeps_corrections_for_review():
@@ -493,14 +497,15 @@ def test_data_query_records_model_calls_on_the_chat_run(db, monkeypatch):
         {"score": 90, "retry_question": ""},
     ])
     llm = FakeLLM(
-        tool_replies=[AssistantTurn(tool_calls=[ToolCall(id="d1", name="data.query", arguments={})])],
+        json_replies=[{"tasks": [{"id": "d", "kind": "agent", "name": "data", "input": {"question": "order total"}, "depends_on": []}]}],
         text_reply="The order total is 1000.",
     )
     events = list(service.handle_message(db, llm, sid, "how much have I ordered?"))
     run_id = events[0]["run_id"]
     assert work_chat(db, llm, run_id) is True
 
-    trace = db.run_trace("dist-1", run_id)
+    child = next(row for row in db.find_runs_by_owner(run_id) if row["run_type"] == "data")
+    trace = db.run_trace("dist-1", child["id"])
     step_id = next(step["id"] for step in trace["steps"] if step["name"] == "data.query")
     models = [
         (row["provider"], row["model"])
@@ -508,11 +513,16 @@ def test_data_query_records_model_calls_on_the_chat_run(db, monkeypatch):
         if row["step_id"] == step_id
     ]
     assert models == [
-        ("fake", "fake"),
         ("sjtu", "deepseek-chat"),
         ("ds", "deepseek-flash"),
         ("sjtu", "deepseek-chat"),
     ]
+    parent_events = db.list_run_events("dist-1", run_id) or []
+    assert any(
+        event["event_type"] == "model.started"
+        and (event.get("payload_json") or {}).get("projected_from") == child["id"]
+        for event in parent_events
+    )
 
 
 def test_data_query_records_a_low_score_retry(db, monkeypatch):
@@ -529,14 +539,15 @@ def test_data_query_records_a_low_score_retry(db, monkeypatch):
         {"score": 91, "retry_question": ""},
     ])
     llm = FakeLLM(
-        tool_replies=[AssistantTurn(tool_calls=[ToolCall(id="d1", name="data.query", arguments={})])],
+        json_replies=[{"tasks": [{"id": "d", "kind": "agent", "name": "data", "input": {"question": "order total"}, "depends_on": []}]}],
         text_reply="The order total is 1000.",
     )
     events = list(service.handle_message(db, llm, sid, "how much have I ordered?"))
     run_id = events[0]["run_id"]
     assert work_chat(db, llm, run_id) is True
 
-    trace = db.run_trace("dist-1", run_id)
+    child = next(row for row in db.find_runs_by_owner(run_id) if row["run_type"] == "data")
+    trace = db.run_trace("dist-1", child["id"])
     step_id = next(step["id"] for step in trace["steps"] if step["name"] == "data.query")
     models = [
         (row["provider"], row["model"])
@@ -544,7 +555,6 @@ def test_data_query_records_a_low_score_retry(db, monkeypatch):
         if row["step_id"] == step_id
     ]
     assert models == [
-        ("fake", "fake"),
         ("sjtu", "deepseek-chat"),
         ("ds", "deepseek-flash"),
         ("sjtu", "deepseek-chat"),

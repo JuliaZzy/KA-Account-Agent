@@ -20,10 +20,9 @@ from decimal import Decimal
 from typing import Any
 
 from ..codefix import format_failures
-from ..config import LLMSettings
 from ..db import Database, utcnow
-from ..llm import DeepSeekClient, SJTUClient
 from ..llm import calls as model_calls
+from ..llm import campus_client, deepseek_client
 from ..memory import actor_id, attach, prompt_context, prompt_turns, standing_block, summary_block
 from .prompt import PICK, REFLECT, SQL
 from .sql_validator import validate
@@ -65,12 +64,12 @@ def _ledger(trace: _RunTrace | None, purpose: str) -> dict[str, Any]:
     return {"db": trace.db, "run_id": trace.run_id, "step_id": trace.step_id, "purpose": purpose}
 
 
-def _ds_client() -> DeepSeekClient:
-    return DeepSeekClient(LLMSettings(base_url=None, api_key=""))
+def _ds_client():
+    return deepseek_client()
 
 
-def _school_client() -> SJTUClient:
-    return SJTUClient(LLMSettings(base_url=None, api_key=""))
+def _school_client():
+    return campus_client()
 
 
 def _ask_school(

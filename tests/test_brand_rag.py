@@ -23,7 +23,6 @@ from backend.brand_knowledge.rag import (
 )
 from backend.config import rerank_settings
 from backend.llm import FakeLLM
-from backend.llm.types import AssistantTurn, ToolCall
 from backend.orchestrator.prompt import FOLLOWUP
 from backend.schemas import BrandDocument
 from backend.services.chat_run import work_chat
@@ -248,8 +247,10 @@ def test_brand_question_is_retrieved_then_answered_by_the_text_model(db, monkeyp
     db.upsert_user("u-a", "dist-1", "Ada")
     sid = service.new_session(db, "ps-1", "u-a")["id"]
     llm = FakeLLM(
-        json_replies=[{"tags": ["brand"], "title": "runtime"}],
-        tool_replies=[AssistantTurn(tool_calls=[ToolCall(id="c1", name="brand.search", arguments={})])],
+        json_replies=[
+            {"tags": ["brand"], "title": "runtime"},
+            {"tasks": [{"id": "b", "kind": "agent", "name": "brand", "input": {}, "depends_on": []}]},
+        ],
         text_reply="It runs 8 hours [doc#p1-0].",
     )
     events = list(service.handle_message(db, llm, sid, "How long does it run at 42 C?"))
@@ -276,16 +277,10 @@ def test_a_follow_up_is_rewritten_for_retrieval_and_stored_as_typed(db, monkeypa
     llm = FakeLLM(
         json_replies=[
             {"tags": ["brand"], "title": "冷萃"},
+            {"tasks": [{"id": "b1", "kind": "agent", "name": "brand", "input": {}, "depends_on": []}]},
             {"query": "冷萃 500ml 的保质期"},
-            {"query": ""},
-        ],
-        tool_replies=[
-            AssistantTurn(tool_calls=[ToolCall(id="c1", name="brand.search", arguments={})]),
-            AssistantTurn(content="十二个月 [1]。"),
-            AssistantTurn(tool_calls=[ToolCall(id="c2", name="brand.search", arguments={})]),
-            AssistantTurn(content="十二个月 [1]。"),
-            AssistantTurn(tool_calls=[ToolCall(id="c3", name="brand.search", arguments={})]),
-            AssistantTurn(content="十二个月 [1]。"),
+            {"tasks": [{"id": "b2", "kind": "agent", "name": "brand", "input": {}, "depends_on": []}]},
+            {"query": "冷萃 500ml 的保质期"},
         ],
         text_reply="十二个月 [1]。",
     )
@@ -295,7 +290,6 @@ def test_a_follow_up_is_rewritten_for_retrieval_and_stored_as_typed(db, monkeypa
     assert seen == [
         ("冷萃 500ml 保质期多久", "brand-1"),
         ("冷萃 500ml 的保质期", "brand-1"),
-        ("你好", "brand-1"),
     ]
     user_lines = [m["content"] for m in db.session(sid)["history"] if m["role"] == "user"]
     assert user_lines[-2:] == ["那瓶装的呢", "你好"]
@@ -304,7 +298,7 @@ def test_a_follow_up_is_rewritten_for_retrieval_and_stored_as_typed(db, monkeypa
     rewrites = [c for c in llm.calls if c["kind"] == "json" and (
         c["system"] is FOLLOWUP or (isinstance(c["system"], str) and c["system"].startswith(FOLLOWUP[:8]))
     )]
-    assert len(rewrites) == 2
+    assert len(rewrites) == 1
     assert "冷萃 500ml 保质期多久" in rewrites[0]["messages"][-1]["content"]
     assert "那瓶装的呢" in rewrites[0]["messages"][-1]["content"]
 
@@ -317,12 +311,15 @@ def test_unconfigured_retrieval_is_told_to_the_user(db, monkeypatch):
     db.upsert_user("u-a", "dist-1", "Ada")
     sid = service.new_session(db, "ps-1", "u-a")["id"]
     llm = FakeLLM(
-        json_replies=[{"tags": ["brand"], "title": "specs"}],
-        tool_replies=[AssistantTurn(tool_calls=[ToolCall(id="c1", name="brand.search", arguments={})])],
+        json_replies=[
+            {"tags": ["brand"], "title": "specs"},
+            {"tasks": [{"id": "b", "kind": "agent", "name": "brand", "input": {}, "depends_on": []}]},
+        ],
         text_reply="should not be used",
     )
     events = list(service.handle_message(db, llm, sid, "What is the shelf life?"))
     assert work_chat(db, llm, events[0]["run_id"]) is True
-    trace = db.run_trace("dist-1", events[0]["run_id"])
-    call = next(item for item in trace["tool_calls"] if item["tool_name"] == "brand.search")
-    assert "EMBEDDING_BASE_URL" in str(call.get("result_json") or call.get("error_json"))
+    child = next(row for row in db.find_runs_by_owner(events[0]["run_id"]) if row["run_type"] == "brand")
+    trace = db.run_trace("dist-1", child["id"])
+    step = next(item for item in trace["steps"] if item["name"] == "brand.search")
+    assert "EMBEDDING_BASE_URL" in str(step.get("error_json") or step.get("output_json"))

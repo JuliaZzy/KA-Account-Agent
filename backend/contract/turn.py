@@ -11,10 +11,9 @@ import hashlib
 import uuid
 from typing import Any
 
-from ..config import LLMSettings
 from ..db import Database
 from ..documents import SUPPORTED_EXTS
-from ..llm import DeepSeekClient, SJTUClient
+from ..llm import campus_client, deepseek_client
 from ..schemas import ContractChunk
 from .chunks import flatten_chunk_tree
 from .ingest import record_from_extraction
@@ -36,9 +35,8 @@ def file_contract(
         return {"status": "need_file", "contract_id": None, "table": None, "pending": None, "error": None}
     name, data = readable[0]
     try:
-        settings = LLMSettings(base_url=None, api_key="")
         extraction, tree = read_agreement(
-            DeepSeekClient(settings), SJTUClient(settings), name, data,
+            deepseek_client(), campus_client(), name, data,
             db=db, run_id=run_id,
         )
         model = "deepseek-flash"

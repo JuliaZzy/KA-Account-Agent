@@ -13,13 +13,14 @@ import time
 from ..config import env
 from ..db import Database
 from .dispatcher import dispatch_pending, republish_unclaimed
-from .run_worker import sweep_expired_leases
+from .run_worker import sweep_expired_leases, sweep_waiting_for_tasks
 
 log = logging.getLogger(__name__)
 
 
 def sweep(db: Database) -> None:
     sweep_expired_leases(db)
+    sweep_waiting_for_tasks(db)
     db.sweep_attention()
     republish_unclaimed(db)
     dispatch_pending(db)

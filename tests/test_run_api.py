@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import timedelta
 
 import pytest
@@ -302,6 +303,55 @@ def test_loop_runs_a_tool_then_stores_the_answer(make_db):
     ]
     assert usage[0]["org_id"] == "org-1"
     assert usage[0]["user_id"] == "user-1"
+
+
+def test_loop_runs_same_turn_tools_in_parallel(make_db):
+    from backend.llm.types import AssistantTurn, ToolCall
+    from backend.services.dispatcher import dispatch_pending
+    from backend.services.run_loop import Tool, ToolRegistry, execute_run
+    from backend.services.run_worker import work_once
+
+    seen: list[str] = []
+
+    def echo(args):
+        time.sleep(0.05)
+        seen.append(args["text"])
+        return {"echo": args["text"]}
+
+    tools = ToolRegistry([Tool(
+        name="echo", description="Echo the text.", fn=echo,
+        parameters={"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]},
+    )])
+    script = [
+        AssistantTurn(tool_calls=[
+            ToolCall(id="call_1", name="echo", arguments={"text": "a"}),
+            ToolCall(id="call_2", name="echo", arguments={"text": "b"}),
+        ]),
+        AssistantTurn(content="两个都查完了"),
+    ]
+
+    def decide(context, schemas):
+        return script.pop(0)
+
+    def answer(context):
+        raise AssertionError("answer must not run")
+
+    decide.provider, decide.model = "fake", "deepseek-flash"
+    answer.provider, answer.model = "fake", "deepseek-chat"
+    db = _db(make_db, "loop-parallel")
+    client = TestClient(create_app(db))
+    run_id = client.post("/runs", json={**BODY, "idempotency_key": "po:partnership_01:draft:parallel"}, headers=HEADERS).json()["id"]
+    dispatch_pending(db)
+    assert work_once(
+        db, "worker-a", execute_run(db, tools, decide=decide, answer=answer), run_id=run_id,
+    ) is True
+    body = client.get(f"/runs/{run_id}", headers=HEADERS).json()
+    assert body["status"] == "succeeded"
+    assert body["output_json"]["text"] == "两个都查完了"
+    assert set(seen) == {"a", "b"}
+    trace = client.get(f"/runs/{run_id}/trace", headers=HEADERS).json()
+    assert [call["tool_name"] for call in trace["tool_calls"]] == ["echo", "echo"]
+    assert [call["args_json"]["text"] for call in trace["tool_calls"]] == ["a", "b"]
 
 
 def test_loop_waits_for_approval_and_resumes_the_same_tool(make_db):
@@ -673,8 +723,9 @@ def test_bind_uses_the_injected_client(monkeypatch):
         "name": "echo",
         "arguments": json.dumps({"text": "hi"}, ensure_ascii=False),
     }
-    assert decide.provider == "openai"
-    assert decide.model == "gpt-4.1"
+    assert decide.provider == "ds"
+    assert decide.model == "deepseek-flash"
+    assert seen["decide"]["model"] == "deepseek-flash"
 
     assert answer(context) == "好的"
     assert answer.prompt_tokens == 1
@@ -685,20 +736,21 @@ def test_bind_uses_the_injected_client(monkeypatch):
         {"role": "assistant", "content": "先查"},
         {"role": "user", "content": json.dumps({"echo": "hi"}, ensure_ascii=False)},
     ]
-    assert answer.provider == "openai"
-    assert answer.model == "gpt-4.1"
+    assert answer.provider == "sjtu"
+    assert answer.model == "deepseek-chat"
+    assert seen["answer"]["model"] == "deepseek-chat"
 
     qwen = Client()
     qwen.provider, qwen.model = "sjtu", "qwen"
     _, qwen_answer = bind(qwen, answer_system="用中文回答")
-    assert qwen_answer.model == "qwen"
+    assert qwen_answer.model == "deepseek-chat"
     assert qwen_answer([]) == "好的"
     assert seen["answer"]["system"] == "用中文回答"
 
 def test_create_run_accepts_only_the_five_types(make_db):
     db = _db(make_db, "run-types")
     client = TestClient(create_app(db))
-    for run_type in ("po", "contract", "report", "data", "code", "brand", "fix", "reflect", "review", "revise"):
+    for run_type in ("po", "contract", "report", "data", "code", "brand", "fix", "reflect", "review", "revise", "tool", "chat"):
         created = client.post(
             "/runs",
             json={**BODY, "run_type": run_type, "idempotency_key": f"{run_type}:once"},

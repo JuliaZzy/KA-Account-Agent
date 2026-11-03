@@ -28,7 +28,6 @@ def meta() -> dict[str, Any]:
             "id": row.id,
             "label": row.id,
             "short": row.id,
-            "description": row.description,
             "vision": row.id == "qwen",
             "thinking": row.thinking,
         }

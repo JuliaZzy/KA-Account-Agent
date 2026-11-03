@@ -34,6 +34,9 @@ from ..repositories.run_repository import (
 from ..repositories.run_repository import (
     sweep_expired_leases as _sweep_expired_leases,
 )
+from ..repositories.run_repository import (
+    sweep_waiting_for_tasks as _sweep_waiting_for_tasks,
+)
 from .entry_guard import acquire_run, queue_enabled, release_run
 
 LEASE_FOR = timedelta(minutes=5)
@@ -88,7 +91,9 @@ def _finish_claimed(
     except Exception as exc:
         return _settle(db, run_id, exc, permanent=False, retry_after=retry_after)
     row = find_agent_run_by_id(db, run_id)
-    if row is None or row["status"] in RUN_TERMINAL_STATUSES or row["status"] == RunStatus.WAITING_FOR_USER:
+    if row is None or row["status"] in RUN_TERMINAL_STATUSES or row["status"] in (
+        RunStatus.WAITING_FOR_USER, RunStatus.WAITING_FOR_TASKS,
+    ):
         return True
     finished = complete_run(db, run_id, output)
     if finished is None:
@@ -179,3 +184,10 @@ def _over_duration(run: dict[str, Any]) -> bool:
 def sweep_expired_leases(db: Database, limit: int = 100) -> int:
     """Release runs whose lease has expired. Do not call this from `create_app`."""
     return _sweep_expired_leases(db, limit)
+
+
+def sweep_waiting_for_tasks(
+    db: Database, limit: int = 100, stale_after: timedelta | None = None,
+) -> int:
+    """Requeue owners left in `waiting_for_tasks` after every child finished."""
+    return _sweep_waiting_for_tasks(db, limit, stale_after)
