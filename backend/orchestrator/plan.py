@@ -9,8 +9,7 @@ from ..db import Database
 from ..llm import calls as model_calls
 from ..memory import attach, prompt_turns
 from ..services.run_names import StepStatus, StepType, step_name
-from ..tools import all_schemas
-from .prompt import PLAN
+from .prompt import plan_system
 
 AGENT_NAMES = frozenset({"po", "contract", "report", "brand", "data"})
 AGENT_TOOLS = {
@@ -112,7 +111,8 @@ def _one_po(tasks: list[PlanTask]) -> list[PlanTask]:
         kept.append(task)
     return kept
 
-
+## report, contract, po 直接排在第一位，前面没有任何的 agents 或 tools 依赖。
+### 从这里开始修改
 def scheduled(tasks: list[PlanTask]) -> list[PlanTask]:
     """Drop a data task a report lists as its own input. The draft queries itself."""
     hinted = {dep for task in tasks if task.kind == "agent" and task.name == "report" for dep in task.depends_on}
@@ -132,7 +132,7 @@ def ready_wave(tasks: list[PlanTask], finished: set[str]) -> list[PlanTask]:
         if all(dep not in known or dep in finished for dep in task.depends_on)
     ]
     return ready
-
+### 到这里修改停止
 
 def make_plan(
     llm: Any,
@@ -147,13 +147,11 @@ def make_plan(
     memory: str | None = None,
 ) -> list[PlanTask]:
     """Ask official qwen3.7-flash for this turn's tasks. An empty list means ANSWER only."""
-    tools = _tool_lines()
     user = (
         f"=== 未完成采购单 ===\n{'有' if open_po else '无'}\n\n"
         f"=== 附件 ===\n{', '.join(attachments) or '（无）'}\n\n"
         f"=== 最近对话 ===\n{_history_block(history, folded_through)}\n\n"
-        f"=== 消息 ===\n{message[:4000] or '（无文字）'}\n\n"
-        f"=== 可用函数 ===\n{tools}"
+        f"=== 消息 ===\n{message[:2000] or '（无文字）'}"
     )
     step_id = None
     if db is not None and run_id:
@@ -163,7 +161,7 @@ def make_plan(
     caught: Exception | None = None
     try:
         parsed = model_calls.qwen_json(
-            system=attach(PLAN, memory or ""),
+            system=attach(plan_system(), memory or ""),
             messages=[{"role": "user", "content": user}],
             schema=plan_schema(), temperature=0, client=llm,
             db=db, run_id=run_id, step_id=step_id, purpose="orchestrator.plan",
@@ -197,17 +195,5 @@ def _history_block(history: list[dict[str, Any]], folded_through: int = 0) -> st
             continue
         content = str(message.get("content") or "").strip()
         if content:
-            lines.append(f"{role}: {content[:500]}")
+            lines.append(f"{role}: {content[:1500]}")
     return "\n".join(lines) or "（无）"
-
-
-def _tool_lines() -> str:
-    names: list[str] = []
-    for schema in all_schemas():
-        func = schema.get("function") if isinstance(schema, dict) else None
-        if not isinstance(func, dict):
-            continue
-        name = func.get("name")
-        if isinstance(name, str) and name:
-            names.append(name)
-    return ", ".join(names) or "web_search, translate, exchange_rate, send_email"

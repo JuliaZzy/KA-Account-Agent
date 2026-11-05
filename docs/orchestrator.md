@@ -112,7 +112,7 @@ Redis 只做这一波的计数和暂存，**账本在 Postgres**：子 run 的 `
 - 寒暄、澄清、或这一轮什么都不用跑：`tasks` 为空数组。空计划**不**进工具循环，直接 ANSWER。
 - 不要编造 SKU、价格、日期、国家。`input` 只放用户说过的。
 
-提示词放回 `backend/orchestrator/prompt.py` 的 `PLAN`，schema 放回 `plan_schema()`。聊天路径走官方 `qwen_json`，不走校园 `minimax`，也不走官方 DeepSeek。
+编排 system 提示在 `backend/orchestrator/prompt.py` 的 `plan_system()`（内含 `all_schemas()` 的 tool JSON）；schema 在 `plan_schema()`。聊天路径走官方 `qwen_json`，不走校园 `minimax`，也不走官方 DeepSeek。
 
 聊天父 run **不再**用 `REACT` 选工具。`REACT` 从父 run 的 decide 上拿掉。子 agent 若还要再拆任务，走自己的 PLAN（或固定步骤），不要在父 run 里开 ReAct 循环。
 
@@ -177,7 +177,7 @@ Redis 只做这一波的计数和暂存，**账本在 Postgres**：子 run 的 `
 
 | 文件 | 职责 |
 |---|---|
-| `backend/orchestrator/prompt.py` | `PLAN` / `ANSWER`。父 run 不用 `REACT` |
+| `backend/orchestrator/prompt.py` | `plan_system()` / `ANSWER`。父 run 不用 `REACT` |
 | `backend/orchestrator/plan.py` | schema、解析、`scheduled`、`ready_wave`、`make_plan` |
 | `backend/orchestrator/gather.py` | 按波入队、`begin_turn`、建子 run、投影 `tool.started` / `tool.completed`、唤醒 owner |
 | `backend/orchestrator/parent.py` | 父 run：PLAN → 按波入队 → ANSWER |
