@@ -117,7 +117,11 @@ tests/                   Python 与前端测试
 docs/                    设计、运行状态和迁移说明
 ```
 
-执行路径详图见 [`docs/agent-call-paths.html`](docs/agent-call-paths.html)。
+执行路径：
+
+![Agent 调用路径](docs/agent-call-paths.png)
+
+可缩放原图见 [`docs/agent-call-paths.html`](docs/agent-call-paths.html)。
 
 ### HTTP API
 

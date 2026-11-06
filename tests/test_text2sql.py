@@ -514,7 +514,7 @@ def test_data_query_records_model_calls_on_the_chat_run(db, monkeypatch):
     ]
     assert models == [
         ("sjtu", "deepseek-chat"),
-        ("ds", "deepseek-flash"),
+        ("deepseek", "deepseek-flash"),
         ("sjtu", "deepseek-chat"),
     ]
     parent_events = db.list_run_events("dist-1", run_id) or []
@@ -556,9 +556,9 @@ def test_data_query_records_a_low_score_retry(db, monkeypatch):
     ]
     assert models == [
         ("sjtu", "deepseek-chat"),
-        ("ds", "deepseek-flash"),
+        ("deepseek", "deepseek-flash"),
         ("sjtu", "deepseek-chat"),
         ("sjtu", "deepseek-chat"),
-        ("ds", "deepseek-flash"),
+        ("deepseek", "deepseek-flash"),
         ("sjtu", "deepseek-chat"),
     ]

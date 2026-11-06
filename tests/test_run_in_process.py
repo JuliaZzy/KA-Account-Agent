@@ -19,8 +19,8 @@ def _echo_tools():
 
 
 def _callers(decide, answer):
-    decide.provider, decide.model = "fake", "deepseek-flash"
-    answer.provider, answer.model = "fake", "deepseek-chat"
+    decide.brand, decide.model = "fake", "deepseek-flash"
+    answer.brand, answer.model = "fake", "deepseek-chat"
     return decide, answer
 
 

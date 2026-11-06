@@ -21,6 +21,7 @@ from sqlalchemy.exc import OperationalError
 
 from ..db import Database, utcnow
 from ..db.database import ChatTurnBusy
+from ..llm.errors import ModelCapacityExceeded
 from ..repositories.run_repository import (
     RUN_TERMINAL_STATUSES,
     RunStatus,
@@ -37,9 +38,9 @@ from ..repositories.run_repository import (
 from ..repositories.run_repository import (
     sweep_waiting_for_tasks as _sweep_waiting_for_tasks,
 )
-from .entry_guard import acquire_run, queue_enabled, release_run
+from .entry_guard import acquire_run, queue_enabled
 
-LEASE_FOR = timedelta(minutes=5)
+LEASE_FOR = timedelta(minutes=10)
 RETRY_AFTER = timedelta(minutes=1), timedelta(minutes=5), timedelta(minutes=15)
 INFRASTRUCTURE_AFTER = (timedelta(seconds=5),)
 
@@ -67,6 +68,7 @@ def _finish_claimed(
     run: dict[str, Any],
     execute: Callable[[dict[str, Any]], dict[str, Any]],
     retry_after: tuple[timedelta, ...],
+    run_lease: Any | None = None,
 ) -> bool:
     run_id = str(run["id"])
     if _over_duration(run):
@@ -78,6 +80,20 @@ def _finish_claimed(
         return True
     try:
         output = execute(run)
+        if run_lease is not None and run_lease.lost:
+            raise LeaseLost("running gate lease was lost")
+    except ModelCapacityExceeded as exc:
+        schedule_retry(
+            db, run_id, {
+                "kind": "infrastructure",
+                "code": exc.code,
+                "brand": exc.brand,
+                "model": exc.model,
+                "message": str(exc),
+            },
+            INFRASTRUCTURE_AFTER, spend_attempt=False,
+        )
+        return True
     except (InfrastructureError, OperationalError) as exc:
         schedule_retry(
             db, run_id, {"kind": "infrastructure", "message": str(exc)},
@@ -124,7 +140,8 @@ def work_once(
         return False
     org_id = str(existing.get("org_id") or "")
     user_id = str(existing.get("user_id") or "")
-    if not acquire_run(org_id, user_id):
+    lease = acquire_run(org_id, user_id)
+    if lease is None:
         return False
     try:
         try:
@@ -133,9 +150,9 @@ def work_once(
             raise SessionBusy(exc.run_id) from exc
         if run is None:
             return find_agent_run_by_id(db, run_id) is not None
-        return _finish_claimed(db, run, execute, retry_after)
+        return _finish_claimed(db, run, execute, retry_after, run_lease=lease)
     finally:
-        release_run(org_id, user_id)
+        lease.release()
 
 
 def serve_worker(

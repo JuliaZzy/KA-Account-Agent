@@ -48,7 +48,7 @@ from ..repositories.run_repository import (
 )
 from ..tools.send_email import MailError
 from ..tools.send_email import preflight as mail_preflight
-from .entry_guard import acquire_tool, release_tool, tool_group, tool_switch_off
+from .entry_guard import acquire_tool, tool_group, tool_switch_off
 from .run_names import (
     COMPLETED_TOOL_CALLS_KEY,
     CONTEXT_KEY,
@@ -150,7 +150,7 @@ def _tool_failure(tool: Tool, message: str) -> dict[str, str | bool]:
 
 
 def _caller(fn: Any) -> tuple[str, str]:
-    return str(getattr(fn, "provider", "fake")), str(getattr(fn, "model", "fake"))
+    return str(getattr(fn, "brand", "fake")), str(getattr(fn, "model", "fake"))
 
 def execute_run(
     db: Database,
@@ -844,7 +844,8 @@ def _one_call(
 ) -> _Attempt:
     started = time.perf_counter()
     group = tool_group(tool.name)
-    if group is not None and not acquire_tool(org_id, group):
+    lease = acquire_tool(org_id, group) if group is not None else None
+    if group is not None and lease is None:
         error = tool_error(
             ToolErrorCode.RATE_LIMITED, "tool concurrency is full",
             retryable=ToolErrorCode.RATE_LIMITED in tool.retryable_errors,
@@ -872,8 +873,8 @@ def _one_call(
             {}, ToolCallStatus.FAILED, _tool_failure(tool, str(exc)), not left, _elapsed_ms(started), False,
         )
     finally:
-        if group is not None:
-            release_tool(org_id, group)
+        if lease is not None:
+            lease.release()
     if not isinstance(result, dict):
         return _Attempt(
             {}, ToolCallStatus.FAILED, _tool_failure(tool, "tool returned a non-object"),

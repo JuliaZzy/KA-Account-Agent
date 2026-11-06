@@ -22,6 +22,7 @@ from typing import Any
 from ..codefix import format_failures, with_reflection
 from ..db import Database, utcnow
 from ..llm import calls as model_calls
+from ..llm.errors import ModelCapacityExceeded
 from ..memory import actor_id, attach, prompt_context, prompt_turns, standing_block, summary_block
 from ..text2sql import QueryResult, answer_question
 from ..text2sql.table_metadata import catalog_text
@@ -745,6 +746,8 @@ def _plan(
             temperature=0,
             trace=trace,
         )
+    except ModelCapacityExceeded:
+        raise
     except Exception:
         raw = {}
     return parse_plan(raw, today=utcnow().date()), parse_report_title(raw)
@@ -790,6 +793,8 @@ def _plan_risks(
             messages=messages,
             schema=risk_plan_schema(), temperature=0, trace=trace,
         )
+    except ModelCapacityExceeded:
+        raise
     except Exception:
         return RiskPlan(False, [], [])
     return parse_risk_plan(raw)
@@ -981,6 +986,8 @@ def _charts(llm: Any, message: str, asked: list[_Ask], trace: _RunTrace | None =
             messages=[{"role": "user", "content": "按查询结果选择图表。"}],
             schema=chart_schema(), temperature=0, trace=trace,
         )
+    except ModelCapacityExceeded:
+        raise
     except Exception as err:
         raw = {"error": str(err).split("\n", 1)[0][:300]}
 
@@ -1075,6 +1082,8 @@ def _code_wizard(
             messages=[{"role": "user", "content": "只为当前章节写 analyze(datasets)。"}],
             schema=code_wizard_schema(), temperature=0, trace=trace,
         )
+    except ModelCapacityExceeded:
+        raise
     except Exception as err:
         return [], str(err).split("\n", 1)[0][:200], []
     code = raw.get("code") if isinstance(raw, dict) else ""
@@ -1163,6 +1172,8 @@ def _write_section(
             messages=messages,
             schema=section_schema(), temperature=0, trace=trace,
         )
+    except ModelCapacityExceeded:
+        raise
     except Exception:
         return "", []
     return _read_section(raw)
@@ -1184,6 +1195,8 @@ def _write_summary(
             messages=messages,
             schema=section_schema(), temperature=0, trace=trace,
         )
+    except ModelCapacityExceeded:
+        raise
     except Exception:
         return "", []
     return _read_section(raw)
@@ -1586,6 +1599,8 @@ def _review_report(
             messages=[{"role": "user", "content": "找出问题并给这整份报告打分。"}],
             schema=review_schema(), temperature=0, trace=trace,
         )
+    except ModelCapacityExceeded:
+        raise
     except Exception as err:
         return None, [], [], str(err).split("\n", 1)[0][:200]
     score, chapters = _review_score(raw)
@@ -1653,6 +1668,8 @@ def _revise_report(
             messages=[{"role": "user", "content": "按审核意见修改整份报告。"}],
             schema=revise_schema(), temperature=0, trace=trace,
         )
+    except ModelCapacityExceeded:
+        raise
     except Exception:
         return ""
     if not isinstance(raw, dict):

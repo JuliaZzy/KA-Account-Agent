@@ -26,9 +26,10 @@ from dataclasses import asdict, dataclass, field
 from types import SimpleNamespace
 from typing import Any, Literal
 
-from ..services.entry_guard import acquire_model, org_budget, release_model
+from ..services.entry_guard import acquire_model, org_budget
 from ..services.run_names import EntryErrorCode, StepEvent, StepStatus
 from .client import VENDORS, client_for
+from .errors import ModelCapacityExceeded
 from .parse import parse_json_loose
 from .types import AssistantTurn, ToolCall
 
@@ -43,9 +44,7 @@ QWEN_PLAN = "qwen3.7-flash"
 
 Kind = Literal["chat_completion", "response"]
 Expect = Literal["json", "text", "tools"]
-Brand = Literal["sjtu", "deepseek", "glm", "qwen"]
-
-_PROVIDER = {"sjtu": "sjtu", "deepseek": "ds", "glm": "glm", "qwen": "qwen"}
+Brand = Literal["sjtu", "deepseek", "glm", "qwen", "fake"]
 # Official OpenAI-compatible APIs reject dots. Internal names keep them (`po.draft`).
 _VENDOR_TOOL_NAME = re.compile(r"^[a-zA-Z0-9_-]+$")
 
@@ -60,7 +59,7 @@ class ModelBudgetExceeded(Exception):
 
 @dataclass
 class ModelResult:
-    provider: str
+    brand: str
     model: str
     body: Any
     prompt_tokens: int
@@ -110,19 +109,17 @@ def _prompt_text(system: str, messages: list[dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
-def _provider(model_name: str, client: Any, brand: str | None = None) -> str:
-    named = getattr(client, "provider", None)
-    if isinstance(named, str) and named.strip():
-        return named
-    if brand in _PROVIDER:
-        return _PROVIDER[brand]
-    if model_name == DEEPSEEK_FLASH:
-        return "ds"
-    return "sjtu"
+def _ledger_brand(brand: Brand, client: Any) -> Brand:
+    """FakeLLM is always recorded as brand fake, regardless of the wrapper's vendor."""
+    from .fake import FakeLLM
+
+    if isinstance(client, FakeLLM):
+        return "fake"
+    return brand
 
 
 def _vendor_usage(client: Any) -> tuple[int, int] | None:
-    """Counts the vendor actually sent. Both zeros means the usage object was empty."""
+    """返回模型实际使用的 token 数量，没有就返回 None"""
     usage = getattr(client, "last_usage", None)
     if not isinstance(usage, dict):
         return None
@@ -302,6 +299,7 @@ def _call_double(
     tool_choice: str | None, reasoning_effort: str | None,
 ) -> Any:
     """FakeLLM and the other test doubles. They are not one of the four clients."""
+    # 区分 chat completion & response 的传参
     if kind == "response":
         response = getattr(client, "response", None)
         if response is None:
@@ -314,6 +312,8 @@ def _call_double(
     chat = getattr(client, "chat_completion", None)
     if chat is None:
         raise TypeError(f"{type(client).__name__} cannot answer a run")
+
+    # 其他形式传参
     kwargs: dict[str, Any] = {
         "model": model, "messages": [{"role": "system", "content": system}, *messages],
     }
@@ -532,6 +532,8 @@ def _invoke(
 
 def _interpret(expect: Expect, raw: Any, alias: dict[str, str] | None = None) -> tuple[Any, str]:
     alias = alias or {}
+    """解释三种不同格式的返回值，最终返回（结构化结果，原始文本）"""
+    # 工具调用改写（po.draft -> po_draft)
     if expect == "tools":
         if isinstance(raw, AssistantTurn):
             if not alias:
@@ -557,6 +559,8 @@ def _interpret(expect: Expect, raw: Any, alias: dict[str, str] | None = None) ->
         ]
         turn = AssistantTurn(content=message.content, tool_calls=calls)
         return turn, message.content or ""
+
+    # 文本类型：非 string 返回 string
     if expect == "text":
         if isinstance(raw, str):
             return raw.strip(), raw.strip()
@@ -565,7 +569,9 @@ def _interpret(expect: Expect, raw: Any, alias: dict[str, str] | None = None) ->
             return text, text
         text = _school_text(raw).strip()
         return text, text
-    if isinstance(raw, dict) and "choices" not in raw and not hasattr(raw, "output_text"):
+
+    # 结构化 JSON：直接返回
+    if isinstance(raw, dict) and "choices" not in raw and not hasattr(raw, "output_text"): # 没有 `choices` 键、也没有 `output_text` 属性：说明调用方直接拿到了已解析的对象，不用再解析
         return raw, json.dumps(raw, ensure_ascii=False)
     text = str(raw.output_text or "") if hasattr(raw, "output_text") else _school_text(raw)
     parsed = parse_json_loose(text)
@@ -595,7 +601,7 @@ def _budget(db: Any, run_id: str | None, step_id: str | None, purpose: str | Non
             spend["trace_id"], run_id,
         )
         return ModelResult(
-            provider="", model="", body=None, prompt_tokens=0, completion_tokens=0,
+            brand="", model="", body=None, prompt_tokens=0, completion_tokens=0,
             usage_source="estimated", error=EntryErrorCode.COST_BUDGET_EXCEEDED,
         )
     return _Ledger(
@@ -639,6 +645,14 @@ def _save(
 ) -> str | None:
     if ledger is None or not ledger.step_id:
         return None
+    error_json = None
+    if error is not None:
+        error_json = {"message": str(error)}
+        code = getattr(error, "code", None)
+        if code is not None:
+            error_json["code"] = str(code)
+        if isinstance(error, ModelCapacityExceeded):
+            error_json["retryable"] = True
     row = ledger.db.insert_model_call(
         ledger.run_id, ledger.step_id,
         provider=provider,
@@ -650,7 +664,7 @@ def _save(
         usage_source=usage_source,
         latency_ms=latency_ms,
         status=status,
-        error={"message": str(error)} if error is not None else None,
+        error=error_json,
         emit_event=False,
     )
     if row is None:
@@ -661,7 +675,7 @@ def _save(
 def _fail(
     ledger: _Ledger | None,
     *,
-    provider: str,
+    brand: str,
     model_name: str,
     system: str,
     messages: list[dict[str, Any]],
@@ -676,7 +690,7 @@ def _fail(
         return
     prompt, completion, source = _tokens(client, system, messages, "")
     call_id = _save(
-        ledger, provider=provider, model_name=model_name, system=system, messages=messages,
+        ledger, provider=brand, model_name=model_name, system=system, messages=messages,
         schema=schema, tools=tools, response={}, prompt_tokens=prompt, completion_tokens=completion,
         usage_source=source, latency_ms=int((time.perf_counter() - started) * 1000),
         status=StepStatus.FAILED, error=error,
@@ -685,13 +699,18 @@ def _fail(
         "purpose": purpose,
         "trace_id": ledger.trace_id,
         "model": model_name,
-        "provider": provider,
+        "brand": brand,
         "prompt_tokens": prompt,
         "completion_tokens": completion,
         "usage_source": source,
         "status": StepStatus.FAILED,
         "step_id": ledger.step_id,
     }
+    error_code = getattr(error, "code", None)
+    if error_code is not None:
+        payload["error"] = str(error_code)
+    if isinstance(error, ModelCapacityExceeded):
+        payload["retryable"] = True
     if call_id:
         payload["model_call_id"] = call_id
     _note(ledger, StepEvent.MODEL_FAILED, payload)
@@ -699,6 +718,24 @@ def _fail(
         "model.failed trace_id=%s run_id=%s model=%s",
         ledger.trace_id, ledger.run_id, model_name,
     )
+
+
+def _capacity_failed(
+    ledger: _Ledger | None, *, brand: str, model_name: str, purpose: str | None,
+) -> None:
+    """Record a refused provider entry without charging the model budget."""
+    if ledger is None:
+        return
+    _note(ledger, StepEvent.MODEL_FAILED, {
+        "purpose": purpose,
+        "trace_id": ledger.trace_id,
+        "model": model_name,
+        "brand": brand,
+        "error": EntryErrorCode.RATE_LIMITED,
+        "retryable": True,
+        "status": StepStatus.FAILED,
+        "step_id": ledger.step_id,
+    })
 
 
 def call_model(
@@ -727,36 +764,44 @@ def call_model(
     `brand` selects the vendor client. A test double is used as given. Over
     `max_model_calls` or `max_tokens` the vendor is not called. The result's
     `error` is `COST_BUDGET_EXCEEDED`. A null cap does not block the call.
+    A full provider gate raises `ModelCapacityExceeded` so the worker can
+    requeue the run instead of turning an empty model result into an answer.
     """
     if not str(model_name or "").strip():
         raise ValueError("model is required")
+
+    # 传入 message，model，是否 over budget or rare limit
     messages = list(messages or [])
     used = client_for(brand, client)
+    brand = _ledger_brand(brand, used)
     gate = _budget(db, run_id, step_id, purpose)
     if isinstance(gate, ModelResult):
         return gate
     ledger = gate
-    provider = _provider(model_name, used, brand)
+
+    # 写入 model.started 事件
     if ledger is not None:
         _note(ledger, StepEvent.MODEL_STARTED, {
-            "display": "正在思考",
+            "display": "正在思考...",
             "purpose": purpose,
             "trace_id": ledger.trace_id,
             "model": model_name,
-            "provider": provider,
+            "brand": brand,
             "step_id": step_id,
         })
         log.info(
             "model.started trace_id=%s run_id=%s model=%s purpose=%s",
             ledger.trace_id, run_id, model_name, purpose,
         )
+
     started = time.perf_counter()
-    held = acquire_model(provider)
-    if not held:
-        return ModelResult(
-            provider=provider, model=model_name, body=None, prompt_tokens=0, completion_tokens=0,
-            usage_source="estimated", error=EntryErrorCode.RATE_LIMITED,
-        )
+    held = acquire_model(brand)
+    if held is None:
+        busy = ModelCapacityExceeded(brand, model_name)
+        _capacity_failed(ledger, brand=brand, model_name=model_name, purpose=purpose)
+        raise busy
+
+    # 调用模型
     try:
         carried = _invoke(
             brand=brand, model_name=model_name, kind=kind, expect=expect,
@@ -766,26 +811,40 @@ def call_model(
         )
     except Exception as exc:
         _fail(
-            ledger, provider=provider, model_name=model_name, system=system, messages=messages,
+            ledger, brand=brand, model_name=model_name, system=system, messages=messages,
             schema=schema, tools=tools, client=used, started=started, error=exc, purpose=purpose,
         )
         raise
     finally:
-        release_model(provider)
+        held.release()
+
+    if held.lost:
+        lost = ModelCapacityExceeded(brand, model_name, "model lease was lost while calling the provider")
+        _fail(
+            ledger, brand=brand, model_name=model_name, system=system, messages=messages,
+            schema=schema, tools=tools, client=used, started=started, error=lost, purpose=purpose,
+        )
+        raise lost
+
+    # 解释返回值
     try:
         body, text = _interpret(expect, carried.response, getattr(carried, "tool_alias", None))
     except Exception as exc:
         _fail(
-            ledger, provider=_provider(model_name, carried.client, brand), model_name=model_name,
+            ledger, brand=_ledger_brand(brand, carried.client), model_name=model_name,
             system=system, messages=messages, schema=schema, tools=tools, client=carried.client,
             started=started, error=exc, purpose=purpose,
         )
         raise
     streamed = kind == "chat_completion" and on_text is not None
+
+    # 非流式回调：发送文本
     if on_text is not None and not streamed:
         _publish(on_text, text)
     prompt, completion, source = _tokens(carried.client, system, messages, text)
-    provider = _provider(model_name, carried.client, brand)
+
+    # 记录模型数据
+    brand = _ledger_brand(brand, carried.client) # 看是不是 FakeLLM
     response: dict[str, Any]
     if expect == "json" and isinstance(body, dict):
         response = {"json": body}
@@ -794,7 +853,7 @@ def call_model(
     else:
         response = {"text": text}
     call_id = _save(
-        ledger, provider=provider, model_name=model_name, system=system, messages=messages,
+        ledger, provider=brand, model_name=model_name, system=system, messages=messages,
         schema=schema, tools=tools, response=response, prompt_tokens=prompt, completion_tokens=completion,
         usage_source=source, latency_ms=int((time.perf_counter() - started) * 1000),
         status=StepStatus.SUCCEEDED, error=None,
@@ -804,7 +863,7 @@ def call_model(
             "purpose": purpose,
             "trace_id": ledger.trace_id,
             "model": model_name,
-            "provider": provider,
+            "brand": brand,
             "prompt_tokens": prompt,
             "completion_tokens": completion,
             "usage_source": source,
@@ -819,7 +878,7 @@ def call_model(
             ledger.trace_id, run_id, model_name, source,
         )
     return ModelResult(
-        provider=provider, model=model_name, body=body,
+        brand=brand, model=model_name, body=body,
         prompt_tokens=prompt, completion_tokens=completion, usage_source=source,
     )
 
@@ -827,6 +886,8 @@ def call_model(
 def _unwrap(result: ModelResult) -> Any:
     if result.error == EntryErrorCode.COST_BUDGET_EXCEEDED:
         raise ModelBudgetExceeded()
+    if result.error == EntryErrorCode.RATE_LIMITED:
+        raise ModelCapacityExceeded(result.brand, result.model)
     return result.body
 
 

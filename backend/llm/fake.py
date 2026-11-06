@@ -41,7 +41,7 @@ class FakeLLM:
     calls: list[dict[str, Any]] = field(default_factory=list)
     fail_json: bool = False
     model: str = "fake"
-    provider: str = "fake"
+    brand: str = "fake"
     last_usage: dict[str, int] | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
 

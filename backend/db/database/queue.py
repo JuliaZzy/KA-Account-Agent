@@ -11,6 +11,7 @@ the execution counter.
 
 from __future__ import annotations
 
+import random
 import uuid
 from datetime import datetime, timedelta
 from typing import Any
@@ -167,7 +168,19 @@ class QueueMixin:
                 return None
             box = self._execution_outbox(s, run_id)
             if not spend_attempt:
-                when = now + delays[0]
+                previous = box.last_error_json if box is not None else None
+                previous_count = (
+                    previous.get("infrastructure_attempts", 0) if isinstance(previous, dict) else 0
+                )
+                try:
+                    infrastructure_attempts = int(previous_count) + 1
+                except (TypeError, ValueError):
+                    infrastructure_attempts = 1
+                error = {**error, "infrastructure_attempts": infrastructure_attempts}
+                base_seconds = max(1.0, delays[0].total_seconds())
+                backoff = min(60.0, base_seconds * (2 ** min(infrastructure_attempts - 1, 6)))
+                jittered = backoff * random.uniform(0.5, 1.5)
+                when = now + timedelta(seconds=jittered)
                 self._arm_execution_outbox(
                     s, run, box, attempts=int(box.attempts) if box else 0, when=when, error=error, now=now,
                 )

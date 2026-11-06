@@ -22,6 +22,18 @@
 
 报表里的图是模型写出的 ECharts `echarts_option`，前端渲染。子进程执行的是 `analyze(datasets)`，用来算洞察，不画图。见 `backend/report/wizard.py`。
 
+## 排队、并发与模型重试机制（面试表述）
+
+一次用户动作先写入 PostgreSQL 的 `agent_runs` 和 `outbox_jobs`，状态从 `queued` 开始。Celery 只负责唤醒任务；数据库里的 Run 状态和 outbox 是事实来源。worker 在 claim 前通过 Redis 的 `acquire_run` 取得全局、经销商和用户的运行 lease。名额已满时不 claim，Run 继续保持 `queued`，由 sweeper 重新投递，不占用业务执行次数。
+
+模型调用有独立的 provider 并发 lease。`acquire_model` 使用带 holder 的 Redis ZSET，Lua 脚本一次性检查并占用全部维度；lease 用心跳续期，过期 holder 会被回收，释放只删除自己的 holder。模型调用期间如果 provider 槽位已满，调用抛出可识别的 `ModelCapacityExceeded`，不会返回空文本，也不会生成兜底成功结果。
+
+worker 把模型容量不足视为 infrastructure retry：释放当前 Run lease，把 Run 放回 `queued`，重新 arm outbox，并使用 `spend_attempt=False`，因此不会消耗业务执行次数。重试等待采用指数退避和 full jitter，等待时间逐步增加并设置上限，避免大量 Run 同时重新抢占同一个 provider。Run 的最大时长仍然是整体重试的边界。
+
+本地并发不足和厂商故障分开处理。面试表述中，厂商返回 429、5xx 或超时时，重试策略读取可用的 `Retry-After`，按 provider 维护退避状态；连续失败时打开 provider 级熔断器，冷却后用一次 half-open 探测恢复。熔断器用于保护不健康的下游，不替代本地并发 lease。
+
+工具并发是另一层。工具的失败结果留在当前 Run 的工具记录里；只有注册为可重试的读工具才在同一工具调用内重试，副作用工具不自动重复。模型容量重试和工具结果重试不混用，避免把已经完成的副作用重新执行。
+
 ## 来源可信度
 
 给材料的来源分档，决定冲突时信谁、回答时怎么引用。不替代相关度。

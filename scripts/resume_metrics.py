@@ -25,6 +25,14 @@ def _number(value: Any) -> float | None:
     return result if math.isfinite(result) else None
 
 
+def _percentile(values: list[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = max(0, min(len(ordered) - 1, math.ceil(percentile * len(ordered)) - 1))
+    return ordered[index]
+
+
 def junit_metrics(path: Path) -> dict[str, Any]:
     """Read pass/fail/error/skip counts from pytest's JUnit XML output."""
     root = ET.parse(path).getroot()
@@ -75,6 +83,55 @@ def ledger_metrics(db: Database, org_id: str) -> dict[str, Any]:
     }
 
 
+def load_test_metrics(path: Path) -> dict[str, Any]:
+    """Read the completion summary emitted by ``load_test_chat.py``."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    summary = payload.get("summary") if isinstance(payload, dict) else None
+    if not isinstance(summary, dict):
+        raise ValueError(f"{path} has no load-test summary")
+    rows = payload.get("results") if isinstance(payload, dict) else None
+    durations = [
+        float(row["total_ms"]) / 1000
+        for row in (rows or [])
+        if isinstance(row, dict) and _number(row.get("total_ms")) is not None
+    ]
+    completed_durations = [
+        float(row["total_ms"]) / 1000
+        for row in (rows or [])
+        if isinstance(row, dict) and row.get("completed") and _number(row.get("total_ms")) is not None
+    ]
+    observed_p50 = _number(summary.get("observed_p50_seconds"))
+    observed_p95 = _number(summary.get("observed_p95_seconds"))
+    observed_max = _number(summary.get("observed_max_seconds"))
+    if observed_p50 is None:
+        observed_p50 = _percentile(durations, 0.50)
+    if observed_p95 is None:
+        observed_p95 = _percentile(durations, 0.95)
+    if observed_max is None:
+        observed_max = max(durations, default=None)
+    timeouts = int(summary.get("timeouts") or sum(
+        1 for row in (rows or []) if isinstance(row, dict) and not row.get("completed")
+    ))
+    return {
+        "submitted": int(summary.get("submitted") or 0),
+        "completed": int(summary.get("completed") or 0),
+        "timeouts": timeouts,
+        "completion_rate": _number(summary.get("completion_rate")),
+        "observed_p50_seconds": observed_p50,
+        "observed_p95_seconds": observed_p95,
+        "observed_max_seconds": observed_max,
+        "completed_p50_seconds": _number(
+            summary.get("completed_p50_seconds", summary.get("completion_p50_seconds"))
+        ) or _percentile(completed_durations, 0.50),
+        "completed_p95_seconds": _number(
+            summary.get("completed_p95_seconds", summary.get("completion_p95_seconds"))
+        ) or _percentile(completed_durations, 0.95),
+        "completed_max_seconds": _number(
+            summary.get("completed_max_seconds", summary.get("completion_max_seconds"))
+        ) or max(completed_durations, default=None),
+    }
+
+
 def _format_percent(value: float | None) -> str:
     return "insufficient data" if value is None else f"{value:.1f}%"
 
@@ -82,6 +139,7 @@ def _format_percent(value: float | None) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--junitxml", type=Path, help="pytest --junitxml output")
+    parser.add_argument("--load-json", type=Path, help="load_test_chat.py output")
     parser.add_argument("--org-id", help="distributor id for Postgres run metrics")
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON only")
     args = parser.parse_args()
@@ -89,6 +147,8 @@ def main() -> int:
     report: dict[str, Any] = {}
     if args.junitxml:
         report["regression"] = junit_metrics(args.junitxml)
+    if args.load_json:
+        report["load_test"] = load_test_metrics(args.load_json)
     if args.org_id:
         report["ledger"] = ledger_metrics(Database(), args.org_id)
     if not report:
@@ -113,6 +173,15 @@ def main() -> int:
             f"({_format_percent(metric['run_success_rate'])})；"
             f"完成时间 P95 {metric['run_duration_p95_seconds']!s} 秒；"
             f"工具成功率 {_format_percent(metric['tool_success_rate'])}。"
+        )
+    if "load_test" in report:
+        metric = report["load_test"]
+        print(
+            f"合成压测：{metric['completed']}/{metric['submitted']} 完成 "
+            f"({_format_percent(metric['completion_rate'])})；"
+            f"超时 {metric['timeouts']} 条；"
+            f"观测 P95 {metric['observed_p95_seconds']} 秒；"
+            f"成功请求 P95 {metric['completed_p95_seconds']} 秒。"
         )
     return 0
 

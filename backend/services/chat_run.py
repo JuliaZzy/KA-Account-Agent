@@ -39,12 +39,15 @@ def enqueue_chat_run(
     attachments: list[str] | None = None,
 ) -> dict[str, Any]:
     """Create through the outbox and dispatch. Do not claim the run."""
+    # 鉴权
     user_id = str(session.get("user_id") or "")
     if not user_id:
         raise ValueError("session has no user_id")
     partnership = db.partnership(str(session["partnership_id"]))
     if partnership is None:
         raise ValueError("session has no partnership")
+
+    # session id
     key = f"chat:{session['id']}:{uuid.uuid4().hex}"
     filed = [
         {"name": name, "data": base64.b64encode(data).decode()}
@@ -52,6 +55,8 @@ def enqueue_chat_run(
         if name and data
     ]
     attachments = [name for name in (attachments or []) if isinstance(name, str)]
+
+    # 创建 run
     run, _created = create_agent_run(
         db, partnership.distributor_id, user_id, RunType.CHAT, key, {
             "session_id": session["id"],
@@ -155,13 +160,18 @@ def execute_chat(db: Database, llm: Any) -> Callable[[dict[str, Any]], dict[str,
     from .task_run import execute_task
 
     def execute(run: dict[str, Any]) -> dict[str, Any]:
+        # open 类型：写会画标题，打 tag
         if run.get("run_type") == RunType.OPEN:
             from ..orchestrator.turn import execute_open
 
             return execute_open(db, llm, run)
+
+        # 有子任务，执行 execute_task
         if run.get("run_type") != RunType.CHAT or run.get("owner_run_id"):
             return execute_task(db, llm, run)
         payload = run.get("input_json") if isinstance(run.get("input_json"), dict) else {}
+
+        # 顶层 chat，走主管线
         session_id = str(payload.get("session_id") or "")
         session = db.session(session_id)
         if not session:

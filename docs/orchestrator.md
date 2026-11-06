@@ -2,12 +2,7 @@
 
 改编排器、`run_loop`、Celery 投递或会话锁之前先读这份。`docs/run.md` 讲租约、事件、重跑和清扫。本文件只讲**这一轮对话**怎么拆成任务、怎么进 worker、怎么回到用户看得到的那一句。
 
-`docs/agent-call-paths.html` 里这两句作废，以这里为准：
-
-- 「计划为空才进工具循环」
-- 「只有一个代理时，由它自己回复」
-
-旧代码没有 Celery，计划在进程里用线程池跑完。新代码已经有 Redis + outbox + Celery，并行交给**不同 worker 领不同子 run**，不要再在一个 worker 里开线程池。
+旧代码没有 Celery，计划在进程里用线程池跑完。新代码已经有 Redis + outbox + Celery，并行交给**不同 worker 领不同子 run**，不要再在一个 worker 里开线程池。路径图见 `docs/agent-call-paths.html`。
 
 聊天路径已经按这个骨架接上。`parent_run_id` **只表示 rerun**（`POST /runs/{id}/rerun`，新行指向旧行），不要拿它当「谁派了这个工具」。调度边是 `owner_run_id`。
 

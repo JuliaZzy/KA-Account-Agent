@@ -2,19 +2,117 @@
 
 The numbers are the starting points from the run roadmap. Each one is an
 environment value, read on use, so a process can change them without a new
-default buried in a call site. Redis holds the counters. The database stays
-the ledger.
+default buried in a call site. Redis holds the windows and the gates. The
+database stays the ledger.
+
+A gate is a sorted set of holders, not one shared counter. Each holder renews
+its own score. A crashed process loses the seat on the same 300s window the
+old counter key used, including while other calls keep the key alive.
 """
 
 from __future__ import annotations
 
+import threading
+import time
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+
+from redis.exceptions import RedisError
 
 from ..config import env
 from ..redis_store import client
 from .run_names import EntryErrorCode, StepEvent
 from .run_service import AppError
+
+# The old counter key expired after 300s. A dead holder is reclaimed on that
+# same window. Renewing three times inside it means two missed beats are not
+# treated as a crash. The key TTL only collects an idle key.
+_SEAT_S = 300
+_STALE_MS = _SEAT_S * 1000
+_BEAT_S = _SEAT_S / 3
+
+_LUA_HELP = """
+local function key_kind(key)
+  local t = redis.call('TYPE', key)
+  if type(t) == 'table' then
+    return t.ok
+  end
+  return t
+end
+
+local function ensure_zset(key)
+  local kind = key_kind(key)
+  if kind ~= 'none' and kind ~= 'zset' then
+    redis.call('DEL', key)
+  end
+end
+
+local function now_ms()
+  local clock = redis.call('TIME')
+  return tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
+end
+"""
+
+# Sweep dead holders, then add this one only when the set is still under the cap.
+# A full set is left untouched. A leftover string counter is deleted first.
+_ACQUIRE = _LUA_HELP + """
+local now = now_ms()
+local stale = tonumber(ARGV[2])
+for i, key in ipairs(KEYS) do
+  ensure_zset(key)
+  redis.call('ZREMRANGEBYSCORE', key, '-inf', now - stale)
+  local limit = tonumber(ARGV[i + 2])
+  if limit > 0 and redis.call('ZCARD', key) >= limit then
+    return 0
+  end
+end
+for i, key in ipairs(KEYS) do
+  local limit = tonumber(ARGV[i + 2])
+  if limit > 0 then
+    redis.call('ZADD', key, now, ARGV[1])
+    redis.call('PEXPIRE', key, stale)
+  end
+end
+return 1
+"""
+
+# ZADD XX counts inserts, so a score refresh would look like a lost seat.
+# Presence is read first; XX then refuses to recreate a member already removed.
+_RENEW = _LUA_HELP + """
+for _, key in ipairs(KEYS) do
+  if not redis.call('ZSCORE', key, ARGV[1]) then
+    return 0
+  end
+end
+local now = now_ms()
+for _, key in ipairs(KEYS) do
+  redis.call('ZADD', key, 'XX', now, ARGV[1])
+  redis.call('PEXPIRE', key, ARGV[2])
+end
+return 1
+"""
+
+_RELEASE = """
+local removed = 0
+for _, key in ipairs(KEYS) do
+  removed = removed + redis.call('ZREM', key, ARGV[1])
+  if redis.call('ZCARD', key) == 0 then
+    redis.call('DEL', key)
+  end
+end
+return removed
+"""
+
+_COUNT = _LUA_HELP + """
+ensure_zset(KEYS[1])
+local now = now_ms()
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now - tonumber(ARGV[1]))
+return redis.call('ZCARD', KEYS[1])
+"""
+
+_scripts: dict[str, object] | None = None
+_scripts_lock = threading.Lock()
 
 _READ_TOOLS = frozenset({"web_search", "data.query", "translate", "exchange_rate"})
 _SIDE_TOOLS = frozenset({"send_email"})
@@ -91,29 +189,20 @@ def admit_read(org_id: str, user_id: str) -> None:
     _hit(f"rate_limit:{org_id}:{user_id}:runs.read:{minute}", cap.read_user)
 
 
-def acquire_run(org_id: str, user_id: str) -> bool:
-    """Take one running slot for this claim. False when a gate is full."""
+def acquire_run(org_id: str, user_id: str) -> Lease | None:
+    """Take the global, org, and user seats for this claim.
+
+    None when any limited seat is full. A limit of 0 is not a cap. Release
+    drops only the holders this call added.
+    """
     cap = limits()
     if not _room(org_id, user_id, cap):
-        return False
-    held: list[str] = []
-    for key, limit in (
+        return None
+    return _acquire([
         ("gate:running:global", cap.global_running),
         (f"gate:running:org:{org_id}", cap.org_running),
         (f"gate:running:user:{org_id}:{user_id}", cap.user_running),
-    ):
-        if not _take(key, limit):
-            for taken in held:
-                _give(taken)
-            return False
-        held.append(key)
-    return True
-
-
-def release_run(org_id: str, user_id: str) -> None:
-    _give("gate:running:global")
-    _give(f"gate:running:org:{org_id}")
-    _give(f"gate:running:user:{org_id}:{user_id}")
+    ])
 
 
 def tool_group(name: str) -> str | None:
@@ -124,22 +213,14 @@ def tool_group(name: str) -> str | None:
     return None
 
 
-def acquire_tool(org_id: str, group: str) -> bool:
+def acquire_tool(org_id: str, group: str) -> Lease | None:
     cap = limits()
     limit = cap.side_effect if group == "side_effect" else cap.read_tool
-    return _take(f"gate:tool:{org_id}:{group}", limit)
+    return _acquire([(f"gate:tool:{org_id}:{group}", limit)])
 
 
-def release_tool(org_id: str, group: str) -> None:
-    _give(f"gate:tool:{org_id}:{group}")
-
-
-def acquire_model(provider: str) -> bool:
-    return _take(f"gate:model:{provider or 'unknown'}", limits().model)
-
-
-def release_model(provider: str) -> None:
-    _give(f"gate:model:{provider or 'unknown'}")
+def acquire_model(brand: str) -> Lease | None:
+    return _acquire([(f"gate:model:{brand or 'unknown'}", limits().model)])
 
 
 def org_budget(db, org_id: str, run_id: str) -> str | None:
@@ -178,10 +259,16 @@ def _warn_once(db, org_id: str, run_id: str) -> None:
 
 def _room(org_id: str, user_id: str, cap: Limits) -> bool:
     return (
-        _count("gate:running:global") < cap.global_running
-        and _count(f"gate:running:org:{org_id}") < cap.org_running
-        and _count(f"gate:running:user:{org_id}:{user_id}") < cap.user_running
+        _open("gate:running:global", cap.global_running)
+        and _open(f"gate:running:org:{org_id}", cap.org_running)
+        and _open(f"gate:running:user:{org_id}:{user_id}", cap.user_running)
     )
+
+
+def _open(key: str, limit: int) -> bool:
+    if limit <= 0:
+        return True
+    return _count(key) < limit
 
 
 def _hit(key: str, limit: int) -> None:
@@ -193,26 +280,111 @@ def _hit(key: str, limit: int) -> None:
         raise AppError(429, EntryErrorCode.RATE_LIMITED, "Too many requests")
 
 
-def _take(key: str, limit: int) -> bool:
-    if limit <= 0:
-        return True
-    count = int(client().incr(key))
-    client().expire(key, 300)
-    if count > limit:
-        _give(key)
-        return False
-    return True
+class Lease:
+    """One acquire. `release` drops only this holder and can be called twice."""
+
+    def __init__(self, keys: tuple[str, ...], holder: str) -> None:
+        self._keys = keys
+        self._holder = holder
+        self._stopped = threading.Event()
+        self._lost = threading.Event()
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        if keys:
+            self._thread = threading.Thread(
+                target=self._pump, name=f"gate-{holder[:8]}", daemon=True,
+            )
+            self._thread.start()
+
+    def _pump(self) -> None:
+        failed_since: float | None = None
+        while self._keys and not self._stopped.wait(_BEAT_S):
+            try:
+                alive = _renew(self._keys, self._holder)
+            except RedisError:
+                failed_since = failed_since or time.monotonic()
+                if time.monotonic() - failed_since >= _SEAT_S:
+                    self._lost.set()
+                    return
+                continue
+            failed_since = None
+            if not alive:
+                self._lost.set()
+                return
+
+    @property
+    def lost(self) -> bool:
+        """Whether Redis no longer confirmed every key in this lease."""
+        return self._lost.is_set()
+
+    def release(self) -> None:
+        with self._lock:
+            if self._stopped.is_set():
+                return
+            self._stopped.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1)
+        _drop(self._keys, self._holder)
+
+    def __enter__(self) -> Lease:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.release()
 
 
-def _give(key: str) -> None:
-    count = int(client().decr(key))
-    if count < 0:
-        client().delete(key)
+def _acquire(slots: list[tuple[str, int]]) -> Lease | None:
+    """Take every limited key atomically, or none of them."""
+    holder = uuid.uuid4().hex
+    limited = [(key, limit) for key, limit in slots if limit > 0]
+    if not limited:
+        return Lease((), "")
+    keys = tuple(key for key, _limit in limited)
+    limits = [limit for _key, limit in limited]
+    granted = _script("acquire")(keys=list(keys), args=[holder, _STALE_MS, *limits])
+    if not int(granted):
+        return None
+    return Lease(keys, holder)
+
+
+def _script(name: str):
+    global _scripts
+    if _scripts is None:
+        with _scripts_lock:
+            if _scripts is None:
+                conn = client()
+                _scripts = {
+                    "acquire": conn.register_script(_ACQUIRE),
+                    "renew": conn.register_script(_RENEW),
+                    "release": conn.register_script(_RELEASE),
+                    "count": conn.register_script(_COUNT),
+                }
+    assert _scripts is not None
+    return _scripts[name]
+
+
+def _claim(key: str, holder: str, limit: int) -> bool:
+    granted = _script("acquire")(keys=[key], args=[holder, _STALE_MS, limit])
+    return bool(int(granted))
+
+
+def _renew(keys: tuple[str, ...] | str, holder: str) -> bool:
+    key_list = [keys] if isinstance(keys, str) else list(keys)
+    alive = _script("renew")(keys=key_list, args=[holder, _STALE_MS])
+    return bool(int(alive))
+
+
+def _drop(keys: tuple[str, ...] | list[str], holder: str) -> None:
+    if not holder:
+        return
+    try:
+        _script("release")(keys=list(keys), args=[holder])
+    except RedisError:
+        return
 
 
 def _count(key: str) -> int:
-    raw = client().get(key)
-    return int(raw or 0)
+    return int(_script("count")(keys=[key], args=[_STALE_MS]))
 
 
 def _minute() -> str:

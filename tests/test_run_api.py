@@ -185,6 +185,30 @@ def test_transient_error_retries_then_dead_letters(make_db):
     ]
     assert events[-1]["payload_json"]["reason"] == "dead_letter"
 
+
+def test_model_capacity_requeues_without_spending_execution_attempt(make_db):
+    from backend.llm.errors import ModelCapacityExceeded
+    from backend.services.dispatcher import dispatch_pending
+    from backend.services.run_worker import work_once
+
+    db = _db(make_db, "model-capacity-requeue")
+    client = TestClient(create_app(db))
+    run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
+    dispatch_pending(db)
+
+    def execute(_run):
+        raise ModelCapacityExceeded("qwen", "qwen3.7-flash")
+
+    assert work_once(db, "worker-a", execute, run_id=run_id) is True
+    row = client.get(f"/runs/{run_id}", headers=HEADERS).json()
+    assert row["status"] == "queued"
+    pending = [item for item in db.run_trace("org-1", run_id)["outbox"] if item["job_type"] == "execute_run"]
+    assert len(pending) == 1
+    assert pending[0]["attempts"] == 0
+    assert pending[0]["last_error_json"]["kind"] == "infrastructure"
+    assert pending[0]["last_error_json"]["code"] == "RATE_LIMITED"
+    assert pending[0]["last_error_json"]["infrastructure_attempts"] == 1
+
 def test_forbidden_run_transitions_do_not_commit(make_db):
     db = _db(make_db, "transition")
     client = TestClient(create_app(db))
@@ -274,8 +298,8 @@ def test_loop_runs_a_tool_then_stores_the_answer(make_db):
     def answer(context):
         raise AssertionError("answer must not run")
 
-    decide.provider, decide.model = "fake", "deepseek-flash"
-    answer.provider, answer.model = "fake", "deepseek-chat"
+    decide.brand, decide.model = "fake", "deepseek-flash"
+    answer.brand, answer.model = "fake", "deepseek-chat"
     db = _db(make_db, "loop")
     client = TestClient(create_app(db))
     run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
@@ -336,8 +360,8 @@ def test_loop_runs_same_turn_tools_in_parallel(make_db):
     def answer(context):
         raise AssertionError("answer must not run")
 
-    decide.provider, decide.model = "fake", "deepseek-flash"
-    answer.provider, answer.model = "fake", "deepseek-chat"
+    decide.brand, decide.model = "fake", "deepseek-flash"
+    answer.brand, answer.model = "fake", "deepseek-chat"
     db = _db(make_db, "loop-parallel")
     client = TestClient(create_app(db))
     run_id = client.post("/runs", json={**BODY, "idempotency_key": "po:partnership_01:draft:parallel"}, headers=HEADERS).json()["id"]
@@ -383,8 +407,8 @@ def test_loop_waits_for_approval_and_resumes_the_same_tool(make_db):
     def answer(context):
         raise AssertionError("answer must not run")
 
-    decide.provider, decide.model = "fake", "deepseek-flash"
-    answer.provider, answer.model = "fake", "deepseek-chat"
+    decide.brand, decide.model = "fake", "deepseek-flash"
+    answer.brand, answer.model = "fake", "deepseek-chat"
     db = _db(make_db, "loop-wait")
     client = TestClient(create_app(db))
     run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
@@ -440,8 +464,8 @@ def test_skip_resumes_without_running_the_tool(make_db):
         del context
         raise AssertionError("answer must not run")
 
-    decide.provider, decide.model = "fake", "deepseek-flash"
-    answer.provider, answer.model = "fake", "deepseek-chat"
+    decide.brand, decide.model = "fake", "deepseek-flash"
+    answer.brand, answer.model = "fake", "deepseek-chat"
     db = _db(make_db, "loop-skip")
     client = TestClient(create_app(db))
     run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
@@ -491,8 +515,8 @@ def test_an_approved_tool_replays_a_stored_result(make_db):
     def answer(context):
         raise AssertionError("answer must not run")
 
-    decide.provider, decide.model = "fake", "deepseek-flash"
-    answer.provider, answer.model = "fake", "deepseek-chat"
+    decide.brand, decide.model = "fake", "deepseek-flash"
+    answer.brand, answer.model = "fake", "deepseek-chat"
     db = _db(make_db, "loop-replay")
     client = TestClient(create_app(db))
     run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
@@ -548,8 +572,8 @@ def test_an_approved_tool_does_not_run_again_after_a_claim(make_db):
     def answer(context):
         raise AssertionError("answer must not run")
 
-    decide.provider, decide.model = "fake", "deepseek-flash"
-    answer.provider, answer.model = "fake", "deepseek-chat"
+    decide.brand, decide.model = "fake", "deepseek-flash"
+    answer.brand, answer.model = "fake", "deepseek-chat"
     db = _db(make_db, "loop-claimed")
     client = TestClient(create_app(db))
     run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
@@ -602,8 +626,8 @@ def test_a_tool_sees_the_assistant_text_from_this_run(make_db):
     def answer(context):
         raise AssertionError("answer must not run")
 
-    decide.provider, decide.model = "fake", "deepseek-flash"
-    answer.provider, answer.model = "fake", "deepseek-chat"
+    decide.brand, decide.model = "fake", "deepseek-flash"
+    answer.brand, answer.model = "fake", "deepseek-chat"
     db = _db(make_db, "loop-context")
     client = TestClient(create_app(db))
     run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
@@ -641,8 +665,8 @@ def test_translate_reads_the_report_stored_on_the_checkpoint(make_db):
     def answer(context):
         raise AssertionError("answer must not run")
 
-    decide.provider, decide.model = "fake", "deepseek-flash"
-    answer.provider, answer.model = "fake", "deepseek-chat"
+    decide.brand, decide.model = "fake", "deepseek-flash"
+    answer.brand, answer.model = "fake", "deepseek-chat"
     db = _db(make_db, "loop-report")
     client = TestClient(create_app(db))
     created = client.post(
@@ -723,7 +747,7 @@ def test_bind_uses_the_injected_client(monkeypatch):
         "name": "echo",
         "arguments": json.dumps({"text": "hi"}, ensure_ascii=False),
     }
-    assert decide.provider == "ds"
+    assert decide.brand == "deepseek"
     assert decide.model == "deepseek-flash"
     assert seen["decide"]["model"] == "deepseek-flash"
 
@@ -736,12 +760,12 @@ def test_bind_uses_the_injected_client(monkeypatch):
         {"role": "assistant", "content": "先查"},
         {"role": "user", "content": json.dumps({"echo": "hi"}, ensure_ascii=False)},
     ]
-    assert answer.provider == "sjtu"
+    assert answer.brand == "sjtu"
     assert answer.model == "deepseek-chat"
     assert seen["answer"]["model"] == "deepseek-chat"
 
     qwen = Client()
-    qwen.provider, qwen.model = "sjtu", "qwen"
+    qwen.brand, qwen.model = "sjtu", "qwen"
     _, qwen_answer = bind(qwen, answer_system="用中文回答")
     assert qwen_answer.model == "deepseek-chat"
     assert qwen_answer([]) == "好的"
@@ -1134,8 +1158,8 @@ def test_execute_tool_claims_before_the_handler_runs(make_db):
     def answer(context):
         raise AssertionError("answer must not run")
 
-    decide.provider, decide.model = "fake", "deepseek-flash"
-    answer.provider, answer.model = "fake", "deepseek-chat"
+    decide.brand, decide.model = "fake", "deepseek-flash"
+    answer.brand, answer.model = "fake", "deepseek-chat"
     dispatch_pending(db)
     assert work_once(
         db, "worker-a", execute_run(db, tools, decide=decide, answer=answer), run_id=run_id,
@@ -1178,8 +1202,8 @@ def test_a_tool_error_stays_in_the_loop(make_db, caplog):
     def answer(context):
         raise AssertionError("answer must not run")
 
-    decide.provider, decide.model = "fake", "deepseek-flash"
-    answer.provider, answer.model = "fake", "deepseek-chat"
+    decide.brand, decide.model = "fake", "deepseek-flash"
+    answer.brand, answer.model = "fake", "deepseek-chat"
     db = _db(make_db, "tool-error")
     client = TestClient(create_app(db))
     run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
@@ -1223,8 +1247,8 @@ def test_a_side_effect_audits_the_tool_call(make_db):
     def answer(context):
         raise AssertionError("answer must not run")
 
-    decide.provider, decide.model = "fake", "deepseek-flash"
-    answer.provider, answer.model = "fake", "deepseek-chat"
+    decide.brand, decide.model = "fake", "deepseek-flash"
+    answer.brand, answer.model = "fake", "deepseek-chat"
     db = _db(make_db, "tool-audit")
     client = TestClient(create_app(db))
     run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
@@ -1304,8 +1328,8 @@ def test_invalid_arguments_do_not_call_or_claim(make_db):
     def answer(context):
         raise AssertionError("answer must not run")
 
-    decide.provider, decide.model = "fake", "deepseek-flash"
-    answer.provider, answer.model = "fake", "deepseek-chat"
+    decide.brand, decide.model = "fake", "deepseek-flash"
+    answer.brand, answer.model = "fake", "deepseek-chat"
     db = _db(make_db, "tool-args")
     client = TestClient(create_app(db))
     run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
@@ -1749,8 +1773,8 @@ def test_a_worker_continues_from_a_tool_result_without_calling_it(make_db):
     def answer(context):
         raise AssertionError("answer must not run")
 
-    decide.provider, decide.model = "fake", "deepseek-flash"
-    answer.provider, answer.model = "fake", "deepseek-chat"
+    decide.brand, decide.model = "fake", "deepseek-flash"
+    answer.brand, answer.model = "fake", "deepseek-chat"
     db = _db(make_db, "recover-result")
     client = TestClient(create_app(db))
     run_id = client.post(
@@ -1799,8 +1823,8 @@ def test_a_left_running_side_effect_is_not_called_again(make_db):
     def answer(context):
         raise AssertionError("answer must not run")
 
-    decide.provider, decide.model = "fake", "deepseek-flash"
-    answer.provider, answer.model = "fake", "deepseek-chat"
+    decide.brand, decide.model = "fake", "deepseek-flash"
+    answer.brand, answer.model = "fake", "deepseek-chat"
     db = _db(make_db, "recover-running")
     client = TestClient(create_app(db))
     run_id = client.post(

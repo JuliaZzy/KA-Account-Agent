@@ -589,6 +589,8 @@ VENDORS = (SJTUClient, DeepSeekClient, GLMClient, QwenClient)
 
 def open_client(brand: str) -> Any:
     """The vendor client for this brand. Keys come from the environment."""
+    if brand == "fake":
+        raise ValueError("fake brand requires an injected test double")
     if brand == "sjtu":
         return campus_client()
     if brand == "deepseek":
@@ -606,6 +608,10 @@ def client_for(brand: str, injected: Any | None) -> Any:
     A campus client passed for official DeepSeek is replaced. FakeLLM and the other
     doubles are not one of the four vendors and are used as given.
     """
+    if brand == "fake":
+        if injected is None:
+            raise ValueError("fake brand requires an injected test double")
+        return injected
     wanted = {
         "sjtu": SJTUClient,
         "deepseek": DeepSeekClient,

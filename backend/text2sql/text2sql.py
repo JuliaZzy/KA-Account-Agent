@@ -23,6 +23,7 @@ from ..codefix import format_failures
 from ..db import Database, utcnow
 from ..llm import calls as model_calls
 from ..llm import campus_client, deepseek_client
+from ..llm.errors import ModelCapacityExceeded
 from ..memory import actor_id, attach, prompt_context, prompt_turns, standing_block, summary_block
 from .prompt import PICK, REFLECT, SQL
 from .sql_validator import validate
@@ -197,6 +198,8 @@ def _revise_sql(*, schema_text: str, statement: str, error: str, trace: _RunTrac
     user = json.dumps({"failed_sql": statement, "error": error or "（无）"}, ensure_ascii=False)
     try:
         raw = _ask_ds(system=system, user=user, schema=sql_schema(), trace=trace, purpose="data.sql.revise")
+    except ModelCapacityExceeded:
+        raise
     except Exception:
         return ""
     return _strip_fence(str(raw.get("sql") or ""))
@@ -269,6 +272,8 @@ def answer_question(
     for turn in range(MAX_REFLECTIONS):
         try:
             score, retry = _reflect(asked, result, trace=trace)
+        except ModelCapacityExceeded:
+            raise
         except Exception:
             return result
         result.score = score
@@ -332,6 +337,8 @@ def _attempt(
                     error_type = "validation"
                 else:
                     error_type = "execution"
+    except ModelCapacityExceeded:
+        raise
     except Exception as err:
         ok, error, error_type = False, str(err).split("\n", 1)[0][:500], "generation"
 

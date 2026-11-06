@@ -13,6 +13,7 @@ from backend.llm.calls import (
     SCHOOL_REASONER,
     SCHOOL_VISION,
     ModelBudgetExceeded,
+    ModelCapacityExceeded,
     call_model,
     qwen_json,
     school_json,
@@ -150,6 +151,20 @@ def test_qwen_json_sends_schema_and_turns_thinking_off(monkeypatch):
     assert posted["extra_body"] == {"enable_thinking": False}
     assert posted["response_format"]["type"] == "json_schema"
     assert posted["response_format"]["json_schema"]["name"] == "orchestrator_plan"
+
+
+def test_model_capacity_is_an_explicit_retryable_error(monkeypatch):
+    from backend.llm import calls as model_calls
+
+    monkeypatch.setattr(model_calls, "acquire_model", lambda _brand: None)
+    with pytest.raises(ModelCapacityExceeded) as raised:
+        qwen_json(
+            system="plan", messages=[{"role": "user", "content": "hi"}],
+            schema={"name": "plan", "strict": True, "schema": {"type": "object"}},
+            client=_Campus(),
+        )
+    assert raised.value.brand == "qwen"
+    assert raised.value.model == QWEN_PLAN
 
 
 def test_client_for_replaces_the_wrong_vendor(monkeypatch):

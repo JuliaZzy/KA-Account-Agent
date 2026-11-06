@@ -77,7 +77,7 @@
   .swatch.code { background: var(--code); border-color: var(--code-edge); }
 
   .orch {
-    width: 640px;
+    width: 920px;
     margin: 0 auto;
     background: var(--card);
     border: 1.5px solid var(--ink);
@@ -88,6 +88,23 @@
   }
   .orch h2 { margin: 0; font-size: 20px; font-weight: 600; }
   .orch p { margin: 6px 0 0; color: var(--muted); font-family: "Avenir Next", "PingFang SC", sans-serif; font-size: 12.5px; }
+  .orch-row {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 12px;
+    align-items: stretch;
+    width: 1160px;
+    margin: 0 auto;
+  }
+  .open-run {
+    background: var(--card);
+    border: 1.5px dashed var(--line);
+    border-radius: 16px;
+    padding: 14px 14px 12px;
+    text-align: center;
+  }
+  .open-run h2 { margin: 0; font-size: 16px; font-weight: 600; }
+  .open-run p { margin: 6px 0 0; color: var(--muted); font-family: "Avenir Next", "PingFang SC", sans-serif; font-size: 12px; }
   .rule {
     margin-top: 10px;
     font-family: "Avenir Next", "PingFang SC", sans-serif;
@@ -575,7 +592,7 @@
   <header class="top">
     <div>
       <h1>KA Account Agent · Agent 调用路径</h1>
-      <p class="sub">仅包含代码里的 agent, tools, 以及MCP 的调用路径。</p>
+      <p class="sub">聊天父 run：PLAN 拆成 tasks，同一波子 run 并行，全部结束交给 ANSWER。子 run 内部的 agent、原生工具和 MCP 路径如下。</p>
     </div>
     <div class="legend">
       <span><i class="swatch"></i>Agent / 模型步骤</span>
@@ -587,10 +604,16 @@
     </div>
   </header>
 
-  <div class="orch">
-    <h2>Orchestrator</h2>
-      <p>PLAN 把这一轮的代理和工具一起写进 tasks。没有依赖的同一波执行。只有下一步要用上一步的结果，才填 depends_on。</p>
-      <div class="rule">无论排了几项，跑完都交给 ANSWER 写一句回复。计划为空也走 ANSWER，不再进工具循环。</div>
+  <div class="orch-row">
+    <div class="open-run">
+      <h2>OPEN</h2>
+      <p>仅无标题的新会话。独立 run，和 PLAN 并行，只写 tags / title。不进 tasks，不向聊天 SSE 推事件。</p>
+    </div>
+    <div class="orch">
+      <h2>Orchestrator · 父 chat run</h2>
+      <p>PLAN 把代理和工具写进同一份 tasks。空 depends_on 的同一波各建一条子 run，经 outbox / Celery 投递；父 run 进入 waiting_for_tasks，放掉租约。子 run 还要再调（报表查数）就再入队，owner 指向当前这条。波次到齐后继续。</p>
+      <div class="rule">用户看得到的回复只出自 <b>ANSWER</b>。空计划也走 ANSWER，不进 ReAct。子 run 不写会话 history。</div>
+    </div>
   </div>
   <div class="stem"></div>
   <div class="cols">
@@ -600,14 +623,12 @@
         <span class="drop"></span>
         <div class="agent">
           <h3>PO Agent</h3>
-          <div class="mod">po/agent.py</div>
+          <div class="mod">po.draft · po/agent.py</div>
         </div>
         <div class="down"><i></i></div>
         <div class="node">
-          <h4>首先判断该PO单的 status 情况</h4>
-          <p>- 若为新订单，直接走下单流程，若用户提出查看旧订单情况，先检查该订单的 status<br>
-            - 单独这一项时自己回复。和其他任务一起跑时，草稿留在这边，回复由编排器写。未完成的单会留在这一轮<br>
-            - PO 单最终需要客户点击 confirm 确认，agent 没有提交 PO 单的权限</p>
+          <h4>先看这张单的 stage</h4>
+          <p>新单或改单走起草；已提交则看是收货、付款还是破损。未完成的单留在这一轮，计划里最多一个 po。确认在右侧按钮，子 run 不能提交。</p>
         </div>
         <div class="down"><i></i></div>
         <div class="call contract">
@@ -638,8 +659,8 @@
         </div>
         <div class="down"><i></i></div>
         <div class="node">
-          <h4><span class="k">LLM</span>回复</h4>
-          <p>只转述核对结果。确认是按钮，token 在建单前烧掉。</p>
+          <h4>草稿回父 run</h4>
+          <p>ANSWER 只转述核对结果，不算价、不宣布已下单。确认是按钮，token 在建单前烧掉。</p>
         </div>
       </section>
 
@@ -648,7 +669,7 @@
         <span class="drop"></span>
         <div class="agent">
           <h3>AI Report</h3>
-          <div class="mod">report/agent.py → turn.py</div>
+          <div class="mod">report.draft · orchestrator/report.py</div>
         </div>
         <div class="down"><i></i></div>
         <div class="node plan-node">
@@ -664,10 +685,10 @@
           <div class="call data at-data">
             <header>
               <h4>Data Query</h4>
-              <div class="mod">text2sql.answer_question · reflect=True</div>
+              <div class="mod">入队 data 子 run · text2sql.answer_question</div>
             </header>
             <div class="body">
-              <p class="leaf"><b>每条不重复的问题查一次</b><span>关键指标、业绩、库存必查。问题与风险不在这一步查。</span></p>
+              <p class="leaf"><b>每条不重复的问题一条子 run</b><span>owner 指向报表；报表进入 waiting_for_tasks。关键指标、业绩、库存必查。问题与风险不在这一步查。</span></p>
               <p class="leaf"><b>选表 → 写一条 SELECT → 校验并执行</b><span>产品名称和 SKU 一起选出。跑在本合作关系的视图上，身份是 text2sql_reader。</span></p>
               <p class="leaf"><b>REFLECT</b><span>和直接查数同一步。行回来后打分，80 分及以上停。低于 80 分换问题再查，最多 3 次。</span></p>
             </div>
@@ -725,7 +746,7 @@
             <i class="h-back to-left" aria-hidden="true"></i>
             <i class="h-back to-right" aria-hidden="true"></i>
             <h4><span class="k">LLM</span>问题与风险</h4>
-            <p>读完上面四节再判断写不写。要确认才补查数据库、再算或检索，沿虚线回到上面。写在摘要前面。看不出问题就整节不写。</p>
+            <p>读完上面四节再判断写不写。要补数就再入队 data 子 run，沿虚线回到查数。写在摘要前面。看不出问题就整节不写。</p>
           </div>
         </div>
         <div class="down"><i></i></div>
@@ -758,12 +779,12 @@
         <span class="drop"></span>
         <div class="agent">
           <h3>Contract Analysis</h3>
-          <div class="mod">contract/agent.py</div>
+          <div class="mod">contract.read · contract/turn.py</div>
         </div>
         <div class="down"><i></i></div>
         <div class="node">
           <h4><span class="k">代码</span>切块</h4>
-          <p>读 PDF / Word / 文本，按标题切成条款树。空白 PDF 页才渲染给视觉模型。</p>
+          <p>读 PDF / Word / 文本，按标题切成条款树。空白 PDF 页才渲染给视觉模型。没有文件字节则要求附件。</p>
         </div>
         <div class="down"><i></i></div>
         <div class="reentry to-right">
@@ -781,22 +802,22 @@
         <div class="down"><i></i></div>
         <div class="call code">
           <header>
-            <h4>入库</h4>
-            <div class="mod">contract/ingest.py</div>
+            <h4>待确认草稿</h4>
+            <div class="mod">contract/turn.py · confirm 才 ingest</div>
           </header>
           <div class="body">
-            <p class="leaf"><b>条款落表</b><span>折扣阶梯、MOQ、价格、区域、证据各一张表。抽取 JSON 另存一份备查。</span></p>
-            <p class="leaf"><b>派生 PO 规则</b><span>derive_rules 写成 commercial_rules，带 contract_id。模型不直接写规则。</span></p>
+            <p class="leaf"><b>聊天路径不写库</b><span>排出折扣、MOQ、价格、区域、证据行，浮窗确认后才落表。抽取 JSON 另存一份备查。</span></p>
+            <p class="leaf"><b>派生 PO 规则</b><span>确认入库时 derive_rules 写成 commercial_rules。模型不直接写规则。</span></p>
           </div>
         </div>
         <div class="down"><i></i></div>
         <div class="call contract">
           <header>
             <h4>Contract Analysis Result</h4>
-            <div class="mod">已入库的表</div>
+            <div class="mod">草稿表 → 确认后入库</div>
           </header>
           <div class="body">
-            <p class="leaf"><b>回复只引用这张表</b><span>PO 以后读的折扣、报表用 SQL 问到的销售目标，都来自这里，不再重抽。</span></p>
+            <p class="leaf"><b>ANSWER 引用这份草稿</b><span>点确认之后，PO 读的折扣、报表用 SQL 问到的销售目标，都来自入库的表，不再重抽。</span></p>
           </div>
         </div>
       </section>
@@ -806,12 +827,12 @@
         <span class="drop"></span>
         <div class="agent">
           <h3>Data Query</h3>
-          <div class="mod">text2sql/agent.py</div>
+          <div class="mod">data.query · text2sql/text2sql.py</div>
         </div>
         <div class="down"><i></i></div>
         <div class="node">
-          <h4>直接被编排器点名</h4>
-          <p>和报表里的那次不是同一次调用。报表 depends_on 里点名的 data 会被拿掉，那个问题只当 hint。不在 depends_on 里的 data 会和报表一起跑。</p>
+          <h4>父 PLAN 点名的独立查数</h4>
+          <p>和报表内部入队的 data 不是同一次调用。不要为同一份报表草稿再排 data；若 PLAN 把 data 写进 report 的 depends_on，运行时丢掉那个 data。</p>
         </div>
         <div class="down"><i></i></div>
         <div class="call data">
@@ -846,8 +867,8 @@
         </div>
         <div class="down"><i></i></div>
         <div class="node">
-          <h4><span class="k">LLM</span>回答</h4>
-          <p>引用返回的行。不重算，不编造。</p>
+          <h4>行回父 run</h4>
+          <p>SQL、行、分数交给 ANSWER。不重算，不编造，子 run 自己不开口。</p>
         </div>
       </section>
 
@@ -856,7 +877,7 @@
         <span class="drop"></span>
         <div class="agent">
           <h3>Brand</h3>
-          <div class="mod">brand_knowledge/answer.py</div>
+          <div class="mod">brand.search · brand_knowledge/answer.py</div>
         </div>
         <div class="down"><i></i></div>
         <div class="node">
@@ -876,8 +897,8 @@
         </div>
         <div class="down"><i></i></div>
         <div class="node">
-          <h4><span class="k">LLM</span>作答</h4>
-          <p>只根据命中的段落写。引用落到文件名和页码。合同数字不走这里。</p>
+          <h4>命中段落回父 run</h4>
+          <p>ANSWER 只根据这些段落写，引用落到文件名和页码。合同数字不走这里。</p>
         </div>
       </section>
 
@@ -891,7 +912,7 @@
         <div class="down"><i></i></div>
         <div class="node">
           <h4>写进同一份计划</h4>
-          <p>kind 用 tool，name 用函数名，参数放在 input。和代理没有依赖就同一波并行。</p>
+          <p>kind 用 tool，name 用函数名，参数放在 input。一条任务一条子 run。和代理没有依赖就同一波并行。</p>
         </div>
         <div class="down"><i></i></div>
         <div class="call news">
@@ -913,15 +934,15 @@
         <div class="down"><i></i></div>
         <div class="node">
           <h4>计划为空</h4>
-          <p>直接交给 ANSWER。用户原话就是材料。不再进工具循环。</p>
+          <p>寒暄、澄清、这一轮不用跑：tasks 为空。直接 ANSWER，用户原话就是材料。不进 ReAct 工具循环。</p>
         </div>
       </section>
 
     </div>
 
   <footer class="note">
-    工具和 MCP 与代理写在同一份计划里。会话标题 <code>session_open</code> 和计划并行，不调度代理。
-    采购单确认提交、表格收成销售事实，都在这条聊天路径之外。
+    工具和 MCP 与代理写在同一份计划里。会话标题 <code>session_open</code> 和 PLAN 并行，不调度代理。
+    采购单确认提交、合同确认入库、表格收成销售事实，都在这条聊天路径之外。
   </footer>
 </div>
 </div>

@@ -13,6 +13,7 @@ from typing import Any
 
 from ..db import Database
 from ..llm import calls as model_calls
+from ..llm.errors import ModelCapacityExceeded
 from ..llm.types import AssistantTurn
 from ..memory import attach, prompt_turns
 from ..services.chat_run import enqueue_chat_run
@@ -110,6 +111,8 @@ def execute_open(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
         opened = open_session(
             llm, message=message, attachments=attachments, db=db, run_id=str(run["id"]),
         )
+    except ModelCapacityExceeded:
+        raise
     except Exception as exc:
         log.exception("Failed to name new chat")
         return {"ok": False, "error": str(exc)}
@@ -129,6 +132,8 @@ def _run_one_tool(
     else:
         try:
             result = fn(call.arguments, llm=llm, context=context)
+        except ModelCapacityExceeded:
+            raise
         except Exception as err:
             result = {"ok": False, "data": None, "error": str(err)}
     return {

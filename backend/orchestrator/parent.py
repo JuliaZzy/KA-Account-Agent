@@ -19,7 +19,11 @@ def execute_parent(db: Database, llm: Any, run: dict[str, Any], session: dict[st
     """Advance one parent claim. None means parked for a wave (do not complete)."""
     payload = run.get("input_json") if isinstance(run.get("input_json"), dict) else {}
     text = str(payload.get("message") or "")
+
+    # 检查 checkpoint
     state = load_state(latest_checkpoint(db, run["id"]))
+
+    # 没有 checkpoint：创建计划
     if state is None:
         tasks = make_plan(
             llm, message=text,
@@ -33,12 +37,15 @@ def execute_parent(db: Database, llm: Any, run: dict[str, Any], session: dict[st
         if not tasks:
             reply = compose_answer(db, llm, session, text, [], run_id=run["id"])
             return {"text": reply}
+
+        # 拆出任务，派发第一波子任务
         parked = dispatch_wave(db, run, session, tasks, [], {}, payload)
         return None if parked is not None else {"text": compose_answer(db, llm, session, text, [], run_id=run["id"])}
 
-    tasks = parse_tasks({"tasks": state.get("tasks") or []})
-    finished = [str(item) for item in (state.get("finished") or []) if item]
-    results = dict(state.get("results") or {})
+    # 有 checkpoint
+    tasks = parse_tasks({"tasks": state.get("tasks") or []})                       # 全量任务清单
+    finished = [str(item) for item in (state.get("finished") or []) if item]       # 已完成任务清单
+    results = dict(state.get("results") or {})                           # 任务结果字典
     wave_id = state.get("wave_id")
     session_id = str(session["id"])
     if isinstance(wave_id, str) and wave_id:
@@ -46,9 +53,13 @@ def execute_parent(db: Database, llm: Any, run: dict[str, Any], session: dict[st
             results[task_id] = item
             if task_id not in finished:
                 finished.append(task_id)
+
+    # 还有任务要跑
     parked = dispatch_wave(db, run, session, tasks, finished, results, payload)
     if parked is not None:
         return None
+
+    # 先更新 checkpoint，再 reply
     append_checkpoint(db, run["id"], checkpoint_state(tasks, finished, results))
     reply = compose_answer(db, llm, session, text, list(results.values()), run_id=run["id"])
     return {"text": reply}

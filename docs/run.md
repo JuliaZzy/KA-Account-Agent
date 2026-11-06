@@ -159,7 +159,7 @@ Run 接口只认 `X-User-Id`。用它查出 `users` 行，`org_id` 取 `distribu
 
 读工具的可重试错误在同一行上再调，最多 2 次（一共 3 次），不重新请模型，也不占用 worker 的执行次数。副作用的 `retryable_errors` 为空，一次都不自动重试。
 
-工具错误交回循环之后，run 继续。worker 的重试只留给数据库、租约这类还没形成工具结果的失败。把工具错误当成整段重试，会把模型再跑一遍，副作用可能再执行一次。
+工具错误交回循环之后，run 继续。worker 的整段重试留给数据库、租约和模型容量这类尚未形成可用业务结果的失败。把已经形成工具结果的错误当成整段重试，会把模型再跑一遍，副作用可能再执行一次。
 
 连接在发出之前被拒绝（`ConnectionRefusedError`、`ConnectionAbortedError`、`SMTPConnectError`，以及对应的 errno）时，`executed` 为 false，错误码仍是 `TOOL_UPSTREAM_ERROR`。读工具可以在同一行上再试。已经交给 SMTP 之后断线，记在业务键那一行上，下一次相同的信不再发。`SMTPServerDisconnected` 按已经发出处理。
 
@@ -173,7 +173,7 @@ Run 接口只认 `X-User-Id`。用它查出 `users` 行，`org_id` 取 `distribu
 
 对话调用从 `backend/llm/calls.py` 的 `call_model` 进去。`client` 由调用方传入。一次调用一行 `model_calls`、一行 `usage_records`，挂上这次的 `run_id` 和 `step_id`。厂商给了 usage 时 `usage_source` 为 `actual`。两边都是 0，或根本没有 usage，按本地估算（一个汉字大约一个 token，其余大约四个字符一个），`usage_source` 为 `estimated`。估算不记成厂商数字。
 
-`max_model_calls` 或 `max_tokens` 有值且已经用满时，不打模型，写 `model.failed`，错误码 `COST_BUDGET_EXCEEDED`。这一步不把整条 run 改成失败。模型 429 或单次调用失败同样留下这一次的失败记录，run 继续。
+`max_model_calls` 或 `max_tokens` 有值且已经用满时，不打模型，写 `model.failed`，错误码 `COST_BUDGET_EXCEEDED`。这一步不把整条 run 改成失败。模型容量不足是另一种基础设施重试：不返回空回答，抛出可识别的容量错误，由 worker 释放 lease、把 run 放回 `queued`，并以 `spend_attempt=False` 重新 arm outbox。
 
 org 日预算看当天 `usage_records` 的 token 和费用。`KA_ACCOUNT_ORG_DAILY_TOKENS` 和 `KA_ACCOUNT_ORG_DAILY_COST_CENTS` 默认 0，表示不封顶。接近 80% 时一天记一条内部事件 `run.budget_warning`。超过则不再打模型。
 
@@ -196,7 +196,7 @@ org 日预算看当天 `usage_records` 的 token 和费用。`KA_ACCOUNT_ORG_DAI
 | 每家搜索、查数、翻译、汇率 | 20 |
 | 每个模型 provider | 32 |
 
-闸门在建 run、领 run、真正调用工具之前、`call_model` 打模型之前。模型闸门满时返回 `RATE_LIMITED`，不打厂商。
+闸门在建 run、领 run、真正调用工具之前、`call_model` 打模型之前。模型闸门满时不打厂商，抛出可识别的容量错误并走 infrastructure requeue；模型调用不会用空文本或固定兜底回答掩盖这次重试。infrastructure requeue 使用指数退避和 jitter，等待时间封顶，且不增加业务执行次数。
 
 `SEND_EMAIL_ENABLED`、`MCP_TOOLS_ENABLED`、`QUEUE_ENABLED` 默认开。关上队列时 worker 不再领新的 `execute_run`，Celery 任务 30 秒后再试，已经领走的跑完。
 
