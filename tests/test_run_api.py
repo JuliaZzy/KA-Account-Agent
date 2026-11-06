@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from datetime import timedelta
+from typing import ClassVar
 
 import pytest
 from fastapi.testclient import TestClient
@@ -202,12 +203,67 @@ def test_model_capacity_requeues_without_spending_execution_attempt(make_db):
     assert work_once(db, "worker-a", execute, run_id=run_id) is True
     row = client.get(f"/runs/{run_id}", headers=HEADERS).json()
     assert row["status"] == "queued"
-    pending = [item for item in db.run_trace("org-1", run_id)["outbox"] if item["job_type"] == "execute_run"]
+    pending = [
+        item for item in db.run_trace("org-1", run_id)["outbox"]
+        if item["job_type"] == "execute_run" and item["status"] == "pending"
+    ]
     assert len(pending) == 1
     assert pending[0]["attempts"] == 0
     assert pending[0]["last_error_json"]["kind"] == "infrastructure"
-    assert pending[0]["last_error_json"]["code"] == "RATE_LIMITED"
+    assert pending[0]["last_error_json"]["code"] == "MODEL_CAPACITY_EXCEEDED"
     assert pending[0]["last_error_json"]["infrastructure_attempts"] == 1
+
+
+def test_provider_rate_limit_requeues_with_retry_after(make_db, monkeypatch):
+    from backend.llm.errors import ProviderError
+    from backend.services.dispatcher import dispatch_pending
+    from backend.services.run_worker import work_once
+
+    monkeypatch.setattr("backend.services.run_worker.random.uniform", lambda _a, _b: 1.0)
+    db = _db(make_db, "provider-rate-limit-requeue")
+    client = TestClient(create_app(db))
+    run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
+    dispatch_pending(db)
+
+    def execute(_run):
+        raise ProviderError(
+            "sjtu", "deepseek-chat", "rate_limited",
+            status_code=429, retry_after_seconds=12, retryable=True,
+        )
+
+    before = utcnow()
+    assert work_once(db, "worker-a", execute, run_id=run_id) is True
+    row = client.get(f"/runs/{run_id}", headers=HEADERS).json()
+    assert row["status"] == "queued"
+    pending = [
+        item for item in db.run_trace("org-1", run_id)["outbox"]
+        if item["job_type"] == "execute_run" and item["status"] == "pending"
+    ]
+    assert len(pending) == 1
+    assert pending[0]["attempts"] == 0
+    assert pending[0]["last_error_json"]["code"] == "PROVIDER_RATE_LIMITED"
+    assert pending[0]["last_error_json"]["infrastructure_attempts"] == 1
+    wait = (pending[0]["next_attempt_at"] - before).total_seconds()
+    assert 11 <= wait <= 13
+
+
+def test_provider_authentication_fails_the_run(make_db):
+    from backend.llm.errors import ProviderError
+    from backend.services.dispatcher import dispatch_pending
+    from backend.services.run_worker import work_once
+
+    db = _db(make_db, "provider-auth-fail")
+    client = TestClient(create_app(db))
+    run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
+    dispatch_pending(db)
+
+    def execute(_run):
+        raise ProviderError("sjtu", "deepseek-chat", "authentication", status_code=401, retryable=False)
+
+    assert work_once(db, "worker-a", execute, run_id=run_id) is True
+    failed = client.get(f"/runs/{run_id}", headers=HEADERS).json()
+    assert failed["status"] == "failed"
+    assert failed["error_json"]["code"] == "PROVIDER_AUTHENTICATION"
 
 def test_forbidden_run_transitions_do_not_commit(make_db):
     db = _db(make_db, "transition")
@@ -935,7 +991,7 @@ def test_an_outbox_past_max_attempts_is_dead_lettered(make_db):
         assert updated is not None
         assert updated["status"] == "pending"
 
-    dead = db.mark_outbox_retry(outbox_id, "publish failed")
+    db.mark_outbox_retry(outbox_id, "publish failed")
     assert client.get(f"/runs/{run_id}", headers=HEADERS).json()["status"] == "failed"
     assert client.get(f"/runs/{run_id}", headers=HEADERS).json()["attempts"] == 1
     events = client.get(f"/runs/{run_id}/events", headers=HEADERS).json()
@@ -1090,7 +1146,7 @@ def test_mcp_tools_join_when_enabled_and_wait_for_approval(db, monkeypatch):
     from backend.tools import web_search
 
     class Hub:
-        schemas = [
+        schemas: ClassVar[list] = [
             {"type": "function", "function": {
                 "name": "socialcrawl_request",
                 "description": "Call SocialCrawl",
@@ -1419,7 +1475,8 @@ def _leased_run(db, client, key: str):
 
 def test_send_email_reuses_the_business_key_across_runs(make_db, monkeypatch):
     from backend.services.run_loop import Tool, ToolRegistry, execute_tool
-    from backend.tools.send_email import SCHEMA, run as email_run
+    from backend.tools.send_email import SCHEMA
+    from backend.tools.send_email import run as email_run
 
     monkeypatch.setenv("EMAIL_DRY_RUN", "1")
     sent: list[dict] = []
@@ -1485,7 +1542,8 @@ def test_smtp_failure_stays_on_the_business_key(make_db, monkeypatch):
     import smtplib
 
     from backend.services.run_loop import Tool, ToolRegistry, execute_tool
-    from backend.tools.send_email import SCHEMA, run as email_run
+    from backend.tools.send_email import SCHEMA
+    from backend.tools.send_email import run as email_run
 
     monkeypatch.delenv("EMAIL_DRY_RUN", raising=False)
     monkeypatch.setenv("SMTP_HOST", "smtp.example.com")

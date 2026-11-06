@@ -7,7 +7,7 @@ import logging
 from typing import Any
 
 from ..db import Database
-from ..llm.errors import ModelCapacityExceeded
+from ..llm.errors import ModelCapacityExceeded, ProviderError
 from ..orchestrator.gather import finish_child
 from ..orchestrator.plan import PlanTask, tool_name_for
 from ..services.run_names import StepStatus, StepType, ToolCallStatus, step_name
@@ -43,7 +43,7 @@ def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
 
         try:
             return execute_report(db, llm, run, session)
-        except ModelCapacityExceeded:
+        except (ModelCapacityExceeded, ProviderError):
             raise
         except Exception as exc:
             log.exception("report child failed")
@@ -77,7 +77,7 @@ def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
             "payload": raw,
         }
         _record_tool(db, run, step_id, name, args, result, raw if ok else None)
-    except ModelCapacityExceeded:
+    except (ModelCapacityExceeded, ProviderError):
         raise
     except Exception as exc:
         log.exception("child tool %s failed", name)

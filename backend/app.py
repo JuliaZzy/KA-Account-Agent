@@ -21,6 +21,7 @@ from .router import include_routers
 from .routes.runs import router as runs_router
 from .services.run_service import AppError
 
+
 def _request_id(request: Request) -> str:
     existing = getattr(request.state, "request_id", None)
     if isinstance(existing, str) and existing:

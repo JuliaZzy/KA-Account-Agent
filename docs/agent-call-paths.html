@@ -611,8 +611,8 @@
     </div>
     <div class="orch">
       <h2>Orchestrator · 父 chat run</h2>
-      <p>PLAN 把代理和工具写进同一份 tasks。空 depends_on 的同一波各建一条子 run，经 outbox / Celery 投递；父 run 进入 waiting_for_tasks，放掉租约。子 run 还要再调（报表查数）就再入队，owner 指向当前这条。波次到齐后继续。</p>
-      <div class="rule">用户看得到的回复只出自 <b>ANSWER</b>。空计划也走 ANSWER，不进 ReAct。子 run 不写会话 history。</div>
+      <p>PLAN 把代理和工具写进同一份 tasks，根据 depends_on 的建立并行或串行的子 run，并经 outbox / Celery 投递；父 run 进入 waiting_for_tasks，放掉租约。子 run 如还需要再调用一层子 run ，就再入队，owner 指向当前这条。</p>
+      <div class="rule">通过 redis 记录 wave 数量，所有子 run 都完成后，一并传递给 ANSWER 汇总结果并回复给用户。</div>
     </div>
   </div>
   <div class="stem"></div>

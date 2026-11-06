@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import base64
 import json
-import time
 import urllib.error
 import urllib.request
 from collections.abc import AsyncIterator, Iterator
@@ -19,6 +18,7 @@ import requests
 from openai import AsyncOpenAI, OpenAI
 
 from ..config import LLMSettings, vendor_endpoint
+from .errors import ProviderError, provider_error_from_http, translate_provider_error
 
 
 def _usage_count(usage: Any, *names: str) -> int:
@@ -85,7 +85,7 @@ class GLMClient:
             api_key=endpoint.api_key,
             base_url=endpoint.base_url,
             timeout=self.settings.timeout,
-            max_retries=self.settings.max_retries,
+            max_retries=0,
         )
 
     def response(
@@ -160,7 +160,7 @@ class QwenClient:
             api_key=endpoint.api_key,
             base_url=endpoint.base_url,
             timeout=self.settings.timeout,
-            max_retries=self.settings.max_retries,
+            max_retries=0,
         )
 
     async def chat_completion(
@@ -328,7 +328,7 @@ class DeepSeekClient:
             api_key=endpoint.api_key,
             base_url=endpoint.base_url,
             timeout=self.settings.timeout,
-            max_retries=self.settings.max_retries,
+            max_retries=0,
         )
 
     def chat_completion(
@@ -452,18 +452,24 @@ def _campus_endpoint() -> tuple[str, dict[str, str]]:
     return endpoint.base_url.rstrip("/") + "/chat/completions", headers
 
 
-def _campus_stream(client: Any, body: dict[str, Any]) -> Iterator[Any]:
+def _campus_stream(client: Any, body: dict[str, Any], *, model: str) -> Iterator[Any]:
     """Campus SSE. Each yielded object is one chat-completion chunk."""
     _remember_usage(client, None)
-    resp = requests.post(
-        client.url,
-        headers=client.headers,
-        json=body,
-        timeout=(30, 600),
-        stream=True,
-    )
+    try:
+        resp = requests.post(
+            client.url,
+            headers=client.headers,
+            json=body,
+            timeout=(30, 600),
+            stream=True,
+        )
+    except requests.RequestException as exc:
+        raise translate_provider_error(exc, provider="sjtu", model=model) from exc
     if resp.status_code != 200:
-        raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:500]}")
+        try:
+            raise provider_error_from_http(resp, provider="sjtu", model=model)
+        finally:
+            resp.close()
     try:
         for line in resp.iter_lines(decode_unicode=True):
             if not line or not str(line).startswith("data:"):
@@ -478,6 +484,8 @@ def _campus_stream(client: Any, body: dict[str, Any]) -> Iterator[Any]:
             if isinstance(chunk, dict) and chunk.get("usage") is not None:
                 _remember_usage(client, chunk["usage"])
             yield chunk
+    except requests.RequestException as exc:
+        raise translate_provider_error(exc, provider="sjtu", model=model) from exc
     finally:
         resp.close()
 
@@ -516,24 +524,25 @@ class SJTUClient:
             body["tool_choice"] = tool_choice
         if stream:
             body["stream_options"] = {"include_usage": True}
-            return _campus_stream(self, body)
-        for attempt in range(1, 6):
-            try:
-                resp = requests.post(self.url, headers=self.headers, json=body, timeout=(30, 600))
-            except requests.RequestException:
-                time.sleep(2)
-                continue
-            if resp.status_code == 200:
-                data = resp.json()
-                if isinstance(data, dict):
-                    _remember_usage(self, data.get("usage"))
-                return data
-            if 400 <= resp.status_code < 500 and resp.status_code != 429:
-                raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:500]}")
-            time.sleep(2)
-            if attempt == 5:
-                raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:500]}")
-        raise RuntimeError("请求失败")
+            return _campus_stream(self, body, model=model)
+        try:
+            resp = requests.post(self.url, headers=self.headers, json=body, timeout=(30, 600))
+        except requests.RequestException as exc:
+            raise translate_provider_error(exc, provider="sjtu", model=model) from exc
+        if resp.status_code != 200:
+            raise provider_error_from_http(resp, provider="sjtu", model=model)
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            raise ProviderError(
+                "sjtu", model, "bad_response", status_code=resp.status_code, retryable=False,
+            ) from exc
+        if not isinstance(data, dict):
+            raise ProviderError(
+                "sjtu", model, "bad_response", status_code=resp.status_code, retryable=False,
+            )
+        _remember_usage(self, data.get("usage"))
+        return data
 
 
 class GLMOCRClient:

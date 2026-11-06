@@ -18,7 +18,6 @@ from typing import Any
 from ..db import Database
 from ..llm import calls as model_calls
 from ..llm.calls import DEEPSEEK_FLASH, SCHOOL_CHAT, Brand
-from ..llm.errors import ModelCapacityExceeded
 from ..llm.fake import FakeLLM
 from ..llm.types import AssistantTurn
 from ..memory import attach, prompt_context, standing_block, summary_block
@@ -30,7 +29,7 @@ from .session_tools import tools as turn_tools
 
 def bind(
     llm: Any, *, decide_system: str = REACT, answer_system: str = ANSWER,
-    on_text: Callable[[str], None] | None = None,
+    on_text: Callable[..., None] | None = None,
 ) -> tuple[Callable[..., AssistantTurn], Callable[..., str]]:
     """Turn one injected client into the harness callbacks.
 
@@ -48,8 +47,6 @@ def bind(
             client=llm, system=decide_system, messages=_tool_messages(context),
             tools=schemas, tool_choice="auto", reasoning_effort="none", on_text=on_text,
         )
-        if called.error == "RATE_LIMITED":
-            raise ModelCapacityExceeded(called.brand, called.model)
         turn = called.body if isinstance(called.body, AssistantTurn) else AssistantTurn()
         return _with_usage(turn, (called.prompt_tokens, called.completion_tokens))
 
@@ -59,8 +56,6 @@ def bind(
             client=llm, system=answer_system, messages=_answer_messages(context),
             on_text=on_text,
         )
-        if called.error == "RATE_LIMITED":
-            raise ModelCapacityExceeded(called.brand, called.model)
         text = str(called.body or "").strip()
         answer.prompt_tokens = called.prompt_tokens
         answer.completion_tokens = called.completion_tokens
@@ -97,8 +92,8 @@ def execute_for(
         tools = turn_tools(db, llm, session, text, images=images, documents=documents)
 
     def execute(run: dict[str, Any]) -> dict[str, Any]:
-        def on_text(growing: str) -> None:
-            note_running_reply(db, run["id"], growing)
+        def on_text(growing: str, generation_id: str | None = None) -> None:
+            note_running_reply(db, run["id"], growing, generation_id=generation_id)
             
         decide, answer = bind(llm, decide_system=decide_system, answer_system=answer_system, on_text=on_text)
         return execute_run(db, tools, decide=decide, answer=answer)(run)

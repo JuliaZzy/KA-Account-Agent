@@ -1,13 +1,8 @@
-"""Rate limits, concurrency gates, daily org budget, and the three switches.
+"""限流、并发闸门、组织日预算以及三个开关。
 
-The numbers are the starting points from the run roadmap. Each one is an
-environment value, read on use, so a process can change them without a new
-default buried in a call site. Redis holds the windows and the gates. The
-database stays the ledger.
+这些数值来自执行路线图的起点。每一项都是环境变量，在调用时读取，这样进程可在不改动调用点默认埋参的情况下调整配置。Redis 保存时间窗口与闸门；数据库只做账务账本。
 
-A gate is a sorted set of holders, not one shared counter. Each holder renews
-its own score. A crashed process loses the seat on the same 300s window the
-old counter key used, including while other calls keep the key alive.
+闸门是一套「持有者」的有序集合，而不是单一共享计数器。每个持有者自行更新自己的 score。进程崩溃后会在与旧计数器键相同的 300s 窗口内失去席位——即便其他请求仍在维持该键存活，也不例外。
 """
 
 from __future__ import annotations

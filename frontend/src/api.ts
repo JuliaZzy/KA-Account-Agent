@@ -61,7 +61,7 @@ export function cancelRun(runId: string, orgId: string, userId: string): Promise
 export type AgentRun = {
   id: string;
   status: string;
-  output_json?: { text?: string } | null;
+  output_json?: { text?: string; generation_id?: string } | null;
   error_json?: { message?: string; kind?: string } | null;
 };
 

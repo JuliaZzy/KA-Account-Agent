@@ -8,6 +8,7 @@ into the same function-calling list so the model fills arguments via tool_choice
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -98,8 +99,8 @@ def mcp_enabled() -> bool:
     """
     if not env("SOCIALCRAWL_API_KEY"):
         return False
-    if os.environ.get("PYTEST_CURRENT_TEST") and env("KA_ACCOUNT_MCP") != "1":
-        return False
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return env("KA_ACCOUNT_MCP") == "1"
     return True
 
 
@@ -299,20 +300,16 @@ class McpHub:
     def close(self) -> None:
         async def _close_all() -> None:
             for server in list(self._servers.values()):
-                try:
+                with contextlib.suppress(Exception):
                     await server.close()
-                except Exception:
-                    pass
             self._servers.clear()
             self._by_tool.clear()
             self._ready = False
             self._failed = None
 
         if self._loop is not None and self._loop.is_running():
-            try:
+            with contextlib.suppress(Exception):
                 self._run(_close_all(), timeout=15)
-            except Exception:
-                pass
             self._loop.call_soon_threadsafe(self._loop.stop)
             if self._thread is not None:
                 self._thread.join(timeout=5)

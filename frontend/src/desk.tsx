@@ -108,6 +108,7 @@ const NAV = [
   { to: "/reports", label: "Reports", hint: "数据报告", icon: "analytics" },
   { to: "/memory", label: "Memory", hint: "智能记忆", icon: "neurology" },
   { to: "/monitor", label: "Monitor", hint: "系统监控", icon: "monitoring" },
+  { to: "/run-data", label: "Run data", hint: "Run 表数据", icon: "table_chart" },
 ] as const;
 
 function initials(name: string): string {

@@ -17,8 +17,8 @@ from .client import (
     open_client,
     qwen_client,
 )
+from .errors import ModelCapacityExceeded, ProviderError
 from .fake import FakeLLM
-from .errors import ModelCapacityExceeded
 from .parse import parse_json_loose
 from .types import AssistantTurn, Message, ToolCall
 
@@ -30,6 +30,7 @@ __all__ = [
     "GLMOCRClient",
     "Message",
     "ModelCapacityExceeded",
+    "ProviderError",
     "QwenClient",
     "SJTUClient",
     "ToolCall",

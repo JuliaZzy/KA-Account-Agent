@@ -21,6 +21,7 @@ import json
 import logging
 import re
 import time
+import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, field
 from types import SimpleNamespace
@@ -28,8 +29,9 @@ from typing import Any, Literal
 
 from ..services.entry_guard import acquire_model, org_budget
 from ..services.run_names import EntryErrorCode, StepEvent, StepStatus
+from . import breaker
 from .client import VENDORS, client_for
-from .errors import ModelCapacityExceeded
+from .errors import BREAKER_KINDS, ModelCapacityExceeded, ProviderError, translate_provider_error
 from .parse import parse_json_loose
 from .types import AssistantTurn, ToolCall
 
@@ -330,11 +332,6 @@ def _call_double(
         if accept_any or key in params:
             kwargs[key] = value
     return _await(chat(**kwargs))
-
-
-def _publish(on_text: Callable[[str], None] | None, text: str) -> None:
-    if on_text is not None and text:
-        on_text(text)
 
 
 def _assemble_stream(chunks: Any, on_text: Callable[[str], None]) -> Any:
@@ -653,6 +650,15 @@ def _save(
             error_json["code"] = str(code)
         if isinstance(error, ModelCapacityExceeded):
             error_json["retryable"] = True
+        if isinstance(error, ProviderError):
+            error_json["retryable"] = error.retryable
+            error_json["kind"] = error.kind
+            if error.status_code is not None:
+                error_json["status_code"] = error.status_code
+            if error.retry_after_seconds is not None:
+                error_json["retry_after_seconds"] = error.retry_after_seconds
+            if error.request_id is not None:
+                error_json["request_id"] = error.request_id
     row = ledger.db.insert_model_call(
         ledger.run_id, ledger.step_id,
         provider=provider,
@@ -711,6 +717,9 @@ def _fail(
         payload["error"] = str(error_code)
     if isinstance(error, ModelCapacityExceeded):
         payload["retryable"] = True
+    if isinstance(error, ProviderError):
+        payload["retryable"] = error.retryable
+        payload["kind"] = error.kind
     if call_id:
         payload["model_call_id"] = call_id
     _note(ledger, StepEvent.MODEL_FAILED, payload)
@@ -722,20 +731,26 @@ def _fail(
 
 def _capacity_failed(
     ledger: _Ledger | None, *, brand: str, model_name: str, purpose: str | None,
+    error: Exception,
 ) -> None:
     """Record a refused provider entry without charging the model budget."""
     if ledger is None:
         return
-    _note(ledger, StepEvent.MODEL_FAILED, {
+    code = str(getattr(error, "code", None) or EntryErrorCode.RATE_LIMITED)
+    payload: dict[str, Any] = {
         "purpose": purpose,
         "trace_id": ledger.trace_id,
         "model": model_name,
         "brand": brand,
-        "error": EntryErrorCode.RATE_LIMITED,
-        "retryable": True,
+        "error": code,
+        "retryable": bool(getattr(error, "retryable", True)),
         "status": StepStatus.FAILED,
         "step_id": ledger.step_id,
-    })
+    }
+    kind = getattr(error, "kind", None)
+    if kind is not None:
+        payload["kind"] = str(kind)
+    _note(ledger, StepEvent.MODEL_FAILED, payload)
 
 
 def call_model(
@@ -754,7 +769,7 @@ def call_model(
     tool_choice: str | None = None,
     reasoning_effort: str | None = None,
     purpose: str | None = None,
-    on_text: Callable[[str], None] | None = None,
+    on_text: Callable[..., None] | None = None,
     db: Any | None = None,
     run_id: str | None = None,
     step_id: str | None = None,
@@ -795,11 +810,30 @@ def call_model(
         )
 
     started = time.perf_counter()
+    ticket = None if brand == "fake" else breaker.acquire(brand)
+    if ticket is not None and not ticket.allowed:
+        closed = ProviderError(
+            brand, model_name, "circuit_open",
+            retry_after_seconds=ticket.retry_after_seconds, retryable=True,
+        )
+        _capacity_failed(
+            ledger, brand=brand, model_name=model_name, purpose=purpose, error=closed,
+        )
+        raise closed
+
     held = acquire_model(brand)
     if held is None:
+        breaker.release(ticket)
         busy = ModelCapacityExceeded(brand, model_name)
-        _capacity_failed(ledger, brand=brand, model_name=model_name, purpose=purpose)
+        _capacity_failed(
+            ledger, brand=brand, model_name=model_name, purpose=purpose, error=busy,
+        )
         raise busy
+
+    generation_id = uuid.uuid4().hex
+
+    def emit(text: str) -> None:
+        _emit_text(on_text, text, generation_id)
 
     # 调用模型
     try:
@@ -807,14 +841,17 @@ def call_model(
             brand=brand, model_name=model_name, kind=kind, expect=expect,
             temperature=temperature, top_p=top_p, system=system, messages=messages,
             schema=schema, tools=tools, tool_choice=tool_choice,
-            reasoning_effort=reasoning_effort, client=used, on_text=on_text,
+            reasoning_effort=reasoning_effort, client=used,
+            on_text=emit if on_text is not None else None,
         )
     except Exception as exc:
+        error = _transport_error(exc, brand=brand, model_name=model_name, client=used)
+        _record_breaker(brand, error)
         _fail(
             ledger, brand=brand, model_name=model_name, system=system, messages=messages,
-            schema=schema, tools=tools, client=used, started=started, error=exc, purpose=purpose,
+            schema=schema, tools=tools, client=used, started=started, error=error, purpose=purpose,
         )
-        raise
+        raise error from exc
     finally:
         held.release()
 
@@ -825,6 +862,9 @@ def call_model(
             schema=schema, tools=tools, client=used, started=started, error=lost, purpose=purpose,
         )
         raise lost
+
+    if brand != "fake":
+        breaker.record_success(brand)
 
     # 解释返回值
     try:
@@ -840,7 +880,7 @@ def call_model(
 
     # 非流式回调：发送文本
     if on_text is not None and not streamed:
-        _publish(on_text, text)
+        emit(text)
     prompt, completion, source = _tokens(carried.client, system, messages, text)
 
     # 记录模型数据
@@ -886,9 +926,33 @@ def call_model(
 def _unwrap(result: ModelResult) -> Any:
     if result.error == EntryErrorCode.COST_BUDGET_EXCEEDED:
         raise ModelBudgetExceeded()
-    if result.error == EntryErrorCode.RATE_LIMITED:
-        raise ModelCapacityExceeded(result.brand, result.model)
     return result.body
+
+
+def _emit_text(on_text: Callable[..., None] | None, text: str, generation_id: str) -> None:
+    if on_text is None or not text:
+        return
+    try:
+        on_text(text, generation_id=generation_id)
+    except TypeError:
+        on_text(text)
+
+
+def _transport_error(exc: Exception, *, brand: str, model_name: str, client: Any) -> Exception:
+    if isinstance(exc, (ProviderError, ModelCapacityExceeded, ModelBudgetExceeded)):
+        return exc
+    if isinstance(client, VENDORS):
+        return translate_provider_error(exc, provider=brand, model=model_name)
+    return exc
+
+
+def _record_breaker(brand: str, error: Exception) -> None:
+    if brand == "fake" or not isinstance(error, ProviderError):
+        return
+    if error.kind in BREAKER_KINDS:
+        breaker.record_failure(brand)
+    else:
+        breaker.release_probe(brand)
 
 
 def school_json(
@@ -909,7 +973,7 @@ def school_json(
 
 def school_text(
     model: str, *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
-    temperature: float = 0, on_text: Callable[[str], None] | None = None,
+    temperature: float = 0, on_text: Callable[..., None] | None = None,
     db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
     purpose: str | None = None,
 ) -> Iterator[str]:
@@ -953,7 +1017,7 @@ def flash_json(
 
 def flash_tools(
     *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
-    tools: list[dict[str, Any]], on_text: Callable[[str], None] | None = None,
+    tools: list[dict[str, Any]], on_text: Callable[..., None] | None = None,
     db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
     purpose: str | None = None,
 ) -> AssistantTurn:

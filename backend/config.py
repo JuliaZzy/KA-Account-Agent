@@ -23,7 +23,8 @@ def env(name: str, default: str = "") -> str:
 @dataclass(frozen=True)
 class LLMSettings:
     timeout: int = 7200
-    max_retries: int = 3
+    # Vendor chat clients force SDK retries off. Worker / Run retry is the only layer.
+    max_retries: int = 0
 
 
 @dataclass(frozen=True)

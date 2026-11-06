@@ -18,7 +18,7 @@ from typing import Any
 
 from ..contract import contract_discount_for_next_order
 from ..db import Database
-from ..llm.errors import ModelCapacityExceeded
+from ..llm.errors import ModelCapacityExceeded, ProviderError
 from ..memory import prompt_context, recall, record_history, summary_block, with_memory
 from ..orchestrator.status import status
 from ..schemas import AgentSettings, CommercialRule, Partnership
@@ -136,7 +136,7 @@ def prepare_order(
         )
         slots, language = merge_slots(current, ex.slots), ex.reply_language
         events.append(status("po-extract", "抽取", "订单字段已填上", state="done"))
-    except ModelCapacityExceeded:
+    except (ModelCapacityExceeded, ProviderError):
         raise
     except Exception as err:
         events.append({"type": "warning", "message": f"extraction failed: {err}"})
@@ -207,7 +207,7 @@ def run_po_turn(
             reply_text += tok
             yield {"type": "token", "text": tok}
         yield status("po-reply", "回复", "回复已写完", state="done")
-    except ModelCapacityExceeded:
+    except (ModelCapacityExceeded, ProviderError):
         raise
     except Exception as err:
         yield {"type": "warning", "message": f"reply failed: {err}"}

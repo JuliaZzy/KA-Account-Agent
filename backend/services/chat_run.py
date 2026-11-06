@@ -160,7 +160,7 @@ def execute_chat(db: Database, llm: Any) -> Callable[[dict[str, Any]], dict[str,
     from .task_run import execute_task
 
     def execute(run: dict[str, Any]) -> dict[str, Any]:
-        # open 类型：写会画标题，打 tag
+        # 如果有 open 类型：写 session 标题，打 tag
         if run.get("run_type") == RunType.OPEN:
             from ..orchestrator.turn import execute_open
 
@@ -169,25 +169,37 @@ def execute_chat(db: Database, llm: Any) -> Callable[[dict[str, Any]], dict[str,
         # 有子任务，执行 execute_task
         if run.get("run_type") != RunType.CHAT or run.get("owner_run_id"):
             return execute_task(db, llm, run)
+
         payload = run.get("input_json") if isinstance(run.get("input_json"), dict) else {}
 
-        # 顶层 chat，走主管线
+        # 顶层 chat
+        ## 检测输入，后续会加一个规则检测 & 重试机制
         session_id = str(payload.get("session_id") or "")
         session = db.session(session_id)
         if not session:
             raise ValueError("chat run has no session")
         text = str(payload.get("message") or "")
+        ## 主管线
         output = execute_parent(db, llm, run, session)
-        row = find_agent_run_by_id(db, run["id"])
+
+        ## 判断是否需要写回复
+        row = find_agent_run_by_id(db, run["id"]) # 重查数据库状态，而不是直接使用 output 的 status
         if output is None or (row is not None and row["status"] in (
             RunStatus.WAITING_FOR_USER, RunStatus.WAITING_FOR_TASKS,
         )):
             return output or {}
-        state = load_state(latest_checkpoint(db, run["id"]))
+
+        ## 汇总子任务结果
+        ### 从 checkpoint 再读一遍本轮所有子任务的结果
+        state = load_state(latest_checkpoint(db, run["id"]))   
         raw = (state or {}).get("results") or {}
         results = list(raw.values()) if isinstance(raw, dict) else list(raw)
+        ### 把结果映射成 desk 格式
         extra, fields, _side = desk_from_results(results)
+        ### 取出 Answer 回复的内容
         reply = str((output or {}).get("text") or "").strip() or "How can I help?"
+
+        ## 持锁写回复
         with hold_session(session_id):
             session = db.session(session_id) or session
             save_reply(db, session, text, reply, extra, llm=llm, session_fields=fields, run_id=run["id"])

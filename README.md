@@ -114,7 +114,7 @@ backend/                 FastAPI、领域逻辑、任务执行、数据层
 frontend/                React 桌面
 scripts/                 快照下载与目录构建
 tests/                   Python 与前端测试
-docs/                    设计、运行状态和迁移说明
+docs/                    设计、运行状态和迁移说明（报错重试见 docs/retry.md）
 ```
 
 执行路径：

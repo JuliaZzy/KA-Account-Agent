@@ -165,6 +165,7 @@ def test_model_capacity_is_an_explicit_retryable_error(monkeypatch):
         )
     assert raised.value.brand == "qwen"
     assert raised.value.model == QWEN_PLAN
+    assert raised.value.code == "MODEL_CAPACITY_EXCEEDED"
 
 
 def test_client_for_replaces_the_wrong_vendor(monkeypatch):
@@ -227,7 +228,7 @@ def test_vendor_usage_is_actual_and_a_missing_usage_is_estimated(db):
     events = db.run_trace("dist-1", run["id"])["events"]
     started = next(event for event in events if event["event_type"] == "model.started")
     completed = next(event for event in events if event["event_type"] == "model.completed")
-    assert started["payload_json"]["display"] == "正在思考"
+    assert started["payload_json"]["display"] == "正在思考..."
     assert started["payload_json"]["purpose"] == "probe"
     assert started["payload_json"]["trace_id"] == run["trace_id"]
     assert completed["payload_json"]["usage_source"] == "actual"

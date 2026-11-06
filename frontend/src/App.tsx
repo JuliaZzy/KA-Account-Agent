@@ -5,6 +5,7 @@ import { Chat } from "./pages/Chat";
 import { Contracts } from "./pages/Contracts";
 import { MemoryPage } from "./pages/Memory";
 import { MonitorPage } from "./pages/Monitor";
+import { RunDataPage } from "./pages/RunData";
 import { Orders } from "./pages/Orders";
 import { Products } from "./pages/Products";
 import { Reports } from "./pages/Reports";
@@ -21,6 +22,7 @@ export function App() {
           <Route path="/reports" element={<Reports />} />
           <Route path="/memory" element={<MemoryPage />} />
           <Route path="/monitor" element={<MonitorPage />} />
+          <Route path="/run-data" element={<RunDataPage />} />
         </Routes>
       </Shell>
     </DeskProvider>

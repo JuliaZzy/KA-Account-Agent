@@ -154,11 +154,13 @@ class QueueMixin:
         delays: tuple[timedelta, ...],
         *,
         spend_attempt: bool = True,
+        delay: timedelta | None = None,
     ) -> str | None:
         """Count one transient failure. `retry` queues the run again; `dead_letter` stops it.
 
         `spend_attempt=False` is an infrastructure requeue: the run goes back to queued
         and an outbox is armed, but the execution counter stays where it was.
+        `delay` overrides the computed wait, used when the vendor sent Retry-After.
         None when the run is no longer running, for example because it was cancelled.
         """
         now = utcnow()
@@ -177,10 +179,13 @@ class QueueMixin:
                 except (TypeError, ValueError):
                     infrastructure_attempts = 1
                 error = {**error, "infrastructure_attempts": infrastructure_attempts}
-                base_seconds = max(1.0, delays[0].total_seconds())
-                backoff = min(60.0, base_seconds * (2 ** min(infrastructure_attempts - 1, 6)))
-                jittered = backoff * random.uniform(0.5, 1.5)
-                when = now + timedelta(seconds=jittered)
+                if delay is not None:
+                    when = now + delay
+                else:
+                    base_seconds = max(1.0, delays[0].total_seconds()) if delays else 1.0
+                    backoff = min(60.0, base_seconds * (2 ** min(infrastructure_attempts - 1, 6)))
+                    jittered = max(0.05, random.uniform(0.0, backoff))
+                    when = now + timedelta(seconds=jittered)
                 self._arm_execution_outbox(
                     s, run, box, attempts=int(box.attempts) if box else 0, when=when, error=error, now=now,
                 )

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as R
 
 import { api, cancelRun, followRun, getRunEvents, postJson, resumeRun, streamMessage, type RunEvent } from "../api";
 import { CHAT_DOC_EXTS, CHAT_IMAGE_EXTS, clipAttachedFiles, fileExt } from "../chat-files";
-import { flightOf, isChatBusy, isForgotten, onForgetChat, patchFlight, setActiveChat, useFlight } from "../chat-live";
+import { flightOf, isChatBusy, isForgotten, liveFromRun, onForgetChat, patchFlight, setActiveChat, useFlight } from "../chat-live";
 import { NeedPartnership, useDesk } from "../desk";
 import {
   citationSources,
@@ -430,7 +430,7 @@ function ChatDesk() {
     setAttachNote(null);
     patchFlight(chatId, {
       busy: true, streaming: true, runId: null, error: null, approvalTool: null,
-      draft: "", files: [], live: "", task: null, tasks: [], steps: [],
+      draft: "", files: [], live: "", generationId: null, task: null, tasks: [], steps: [],
     });
     const maxImages = desk.meta?.max_images;
     const images: string[] = [];
@@ -471,9 +471,7 @@ function ChatDesk() {
       if (!runId || !userId) throw new Error("run was not created");
       const ended = await followRun(runId, partnership.id, userId, stop.signal, (events, run) => {
         steps = activitiesFromEvents(events, run.status);
-        patchFlight(chatId, { steps });
-        const partial = run.output_json?.text;
-        if (typeof partial === "string" && partial) patchFlight(chatId, { live: partial });
+        patchFlight(chatId, { steps, ...liveFromRun(flightOf(chatId), run.output_json) });
         parkedTool = waitingToolName(events) ?? parkedTool;
       });
       if (ended.status === "cancelled") {
@@ -501,7 +499,7 @@ function ChatDesk() {
       }
     } finally {
       stops.current.delete(chatId);
-      patchFlight(chatId, { busy: false, streaming: false, live: "", task: null, tasks: [] });
+      patchFlight(chatId, { busy: false, streaming: false, live: "", generationId: null, task: null, tasks: [] });
     }
     void desk.reloadSessions().catch(() => undefined);
   }
@@ -525,9 +523,7 @@ function ChatDesk() {
       });
       const ended = await followRun(runId, partnership.id, userId, stop.signal, (events, run) => {
         steps = activitiesFromEvents(events, run.status);
-        patchFlight(chatId, { steps });
-        const partial = run.output_json?.text;
-        if (typeof partial === "string" && partial) patchFlight(chatId, { live: partial });
+        patchFlight(chatId, { steps, ...liveFromRun(flightOf(chatId), run.output_json) });
         parkedTool = waitingToolName(events) ?? parkedTool;
       });
       if (ended.status === "cancelled") {
@@ -561,7 +557,7 @@ function ChatDesk() {
       }
     } finally {
       stops.current.delete(chatId);
-      patchFlight(chatId, { busy: false, streaming: false, live: "", task: null, tasks: [] });
+      patchFlight(chatId, { busy: false, streaming: false, live: "", generationId: null, task: null, tasks: [] });
     }
     void desk.reloadSessions().catch(() => undefined);
   }

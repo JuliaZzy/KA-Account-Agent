@@ -12,7 +12,9 @@ puts the run back without spending that budget.
 from __future__ import annotations
 
 import logging
+import random
 import time
+import uuid
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
@@ -21,7 +23,7 @@ from sqlalchemy.exc import OperationalError
 
 from ..db import Database, utcnow
 from ..db.database import ChatTurnBusy
-from ..llm.errors import ModelCapacityExceeded
+from ..llm.errors import ModelCapacityExceeded, ProviderError
 from ..repositories.run_repository import (
     RUN_TERMINAL_STATUSES,
     RunStatus,
@@ -30,6 +32,7 @@ from ..repositories.run_repository import (
     complete_run,
     fail_run,
     find_agent_run_by_id,
+    note_running_reply,
     schedule_retry,
 )
 from ..repositories.run_repository import (
@@ -43,6 +46,8 @@ from .entry_guard import acquire_run, queue_enabled
 LEASE_FOR = timedelta(minutes=10)
 RETRY_AFTER = timedelta(minutes=1), timedelta(minutes=5), timedelta(minutes=15)
 INFRASTRUCTURE_AFTER = (timedelta(seconds=5),)
+PROVIDER_AFTER = (timedelta(seconds=1),)
+RETRY_AFTER_CAP = 300.0
 
 log = logging.getLogger(__name__)
 
@@ -83,6 +88,7 @@ def _finish_claimed(
         if run_lease is not None and run_lease.lost:
             raise LeaseLost("running gate lease was lost")
     except ModelCapacityExceeded as exc:
+        _abandon_running_reply(db, run_id)
         schedule_retry(
             db, run_id, {
                 "kind": "infrastructure",
@@ -92,6 +98,25 @@ def _finish_claimed(
                 "message": str(exc),
             },
             INFRASTRUCTURE_AFTER, spend_attempt=False,
+        )
+        return True
+    except ProviderError as exc:
+        if not exc.retryable:
+            return _settle(db, run_id, exc, permanent=True, retry_after=retry_after)
+        _abandon_running_reply(db, run_id)
+        schedule_retry(
+            db, run_id, {
+                "kind": "infrastructure",
+                "code": exc.code,
+                "brand": exc.provider,
+                "model": exc.model,
+                "provider_kind": exc.kind,
+                "status_code": exc.status_code,
+                "retry_after_seconds": exc.retry_after_seconds,
+                "request_id": exc.request_id,
+                "message": str(exc),
+            },
+            PROVIDER_AFTER, spend_attempt=False, delay=_provider_delay(exc),
         )
         return True
     except (InfrastructureError, OperationalError) as exc:
@@ -175,6 +200,9 @@ def _settle(
     retry_after: tuple[timedelta, ...],
 ) -> bool:
     error = {"kind": "permanent" if permanent else "transient", "message": str(exc)}
+    code = getattr(exc, "code", None)
+    if code is not None:
+        error["code"] = str(code)
     if not run_id:
         return True
     outcome = (
@@ -188,6 +216,18 @@ def _settle(
 
 def _lease_deadline() -> datetime:
     return utcnow() + LEASE_FOR
+
+
+def _provider_delay(exc: ProviderError) -> timedelta | None:
+    if exc.retry_after_seconds is None:
+        return None
+    seconds = min(RETRY_AFTER_CAP, max(0.0, float(exc.retry_after_seconds)))
+    return timedelta(seconds=seconds * random.uniform(0.9, 1.1))
+
+
+def _abandon_running_reply(db: Database, run_id: str) -> None:
+    """Start a new generation so the desk drops tokens from the failed stream."""
+    note_running_reply(db, run_id, "", generation_id=uuid.uuid4().hex)
 
 
 def _over_duration(run: dict[str, Any]) -> bool:

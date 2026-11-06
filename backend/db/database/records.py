@@ -41,6 +41,31 @@ class RecordMixin:
             row = self._write_checkpoint(s, run_id, state, utcnow())
             return _row_dict(row) if row is not None else None
 
+    def append_checkpoint_result(self, run_id: str, task_id: str, result: dict[str, Any]) -> int | None:
+        """Merge one fan-out result while holding the owner run lock."""
+        with self.tx() as s:
+            run = self._lock_run(s, run_id)
+            if run is None:
+                return None
+            previous = s.scalars(
+                select(orm.Checkpoint)
+                .where(orm.Checkpoint.run_id == run_id)
+                .order_by(orm.Checkpoint.checkpoint_index.desc())
+                .limit(1)
+            ).first()
+            state = dict(previous.state_json or {}) if previous is not None else {}
+            results = dict(state.get("orchestrator", {}).get("results") or {})
+            orchestrator = dict(state.get("orchestrator") or {})
+            results[task_id] = result
+            finished = [str(item) for item in (orchestrator.get("finished") or []) if item]
+            if task_id not in finished:
+                finished.append(task_id)
+            orchestrator["results"] = results
+            orchestrator["finished"] = finished
+            state["orchestrator"] = orchestrator
+            row = self._write_checkpoint(s, run_id, state, utcnow())
+            return _row_dict(row) if row is not None else None
+
     def insert_step(
         self, 
         run_id: str, 

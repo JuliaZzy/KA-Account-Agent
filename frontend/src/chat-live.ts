@@ -10,6 +10,8 @@ export type Flight = {
   /** Run id from the stream. The cancel click and the trace poll use it. */
   runId: string | null;
   live: string;
+  /** Labels one model attempt. A new id means the previous live tokens are stale. */
+  generationId: string | null;
   error: string | null;
   draft: string;
   files: File[];
@@ -26,6 +28,7 @@ const EMPTY: Flight = {
   streaming: false,
   runId: null,
   live: "",
+  generationId: null,
   error: null,
   draft: "",
   files: [],
@@ -118,6 +121,21 @@ export function useFlight(sid: string | null): Flight {
 
 export function useChatPresence(): { activeId: string | null; busyIds: string[] } {
   return useSyncExternalStore(subscribePresence, () => presence, () => presence);
+}
+
+export function liveFromRun(
+  flight: Flight,
+  output: { text?: string; generation_id?: string } | null | undefined,
+): Partial<Flight> {
+  const generationId = output?.generation_id ?? null;
+  const partial = output?.text;
+  if (generationId && generationId !== flight.generationId) {
+    return { generationId, live: typeof partial === "string" ? partial : "" };
+  }
+  if (typeof partial === "string" && partial) {
+    return { live: partial };
+  }
+  return {};
 }
 
 export function resetChatLive(): void {

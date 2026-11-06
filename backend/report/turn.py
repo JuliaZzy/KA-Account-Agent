@@ -22,7 +22,7 @@ from typing import Any
 from ..codefix import format_failures, with_reflection
 from ..db import Database, utcnow
 from ..llm import calls as model_calls
-from ..llm.errors import ModelCapacityExceeded
+from ..llm.errors import ModelCapacityExceeded, ProviderError
 from ..memory import actor_id, attach, prompt_context, prompt_turns, standing_block, summary_block
 from ..text2sql import QueryResult, answer_question
 from ..text2sql.table_metadata import catalog_text
@@ -746,7 +746,7 @@ def _plan(
             temperature=0,
             trace=trace,
         )
-    except ModelCapacityExceeded:
+    except (ModelCapacityExceeded, ProviderError):
         raise
     except Exception:
         raw = {}
@@ -793,7 +793,7 @@ def _plan_risks(
             messages=messages,
             schema=risk_plan_schema(), temperature=0, trace=trace,
         )
-    except ModelCapacityExceeded:
+    except (ModelCapacityExceeded, ProviderError):
         raise
     except Exception:
         return RiskPlan(False, [], [])
@@ -986,7 +986,7 @@ def _charts(llm: Any, message: str, asked: list[_Ask], trace: _RunTrace | None =
             messages=[{"role": "user", "content": "按查询结果选择图表。"}],
             schema=chart_schema(), temperature=0, trace=trace,
         )
-    except ModelCapacityExceeded:
+    except (ModelCapacityExceeded, ProviderError):
         raise
     except Exception as err:
         raw = {"error": str(err).split("\n", 1)[0][:300]}
@@ -1082,7 +1082,7 @@ def _code_wizard(
             messages=[{"role": "user", "content": "只为当前章节写 analyze(datasets)。"}],
             schema=code_wizard_schema(), temperature=0, trace=trace,
         )
-    except ModelCapacityExceeded:
+    except (ModelCapacityExceeded, ProviderError):
         raise
     except Exception as err:
         return [], str(err).split("\n", 1)[0][:200], []
@@ -1172,7 +1172,7 @@ def _write_section(
             messages=messages,
             schema=section_schema(), temperature=0, trace=trace,
         )
-    except ModelCapacityExceeded:
+    except (ModelCapacityExceeded, ProviderError):
         raise
     except Exception:
         return "", []
@@ -1195,7 +1195,7 @@ def _write_summary(
             messages=messages,
             schema=section_schema(), temperature=0, trace=trace,
         )
-    except ModelCapacityExceeded:
+    except (ModelCapacityExceeded, ProviderError):
         raise
     except Exception:
         return "", []
@@ -1599,7 +1599,7 @@ def _review_report(
             messages=[{"role": "user", "content": "找出问题并给这整份报告打分。"}],
             schema=review_schema(), temperature=0, trace=trace,
         )
-    except ModelCapacityExceeded:
+    except (ModelCapacityExceeded, ProviderError):
         raise
     except Exception as err:
         return None, [], [], str(err).split("\n", 1)[0][:200]
@@ -1668,7 +1668,7 @@ def _revise_report(
             messages=[{"role": "user", "content": "按审核意见修改整份报告。"}],
             schema=revise_schema(), temperature=0, trace=trace,
         )
-    except ModelCapacityExceeded:
+    except (ModelCapacityExceeded, ProviderError):
         raise
     except Exception:
         return ""

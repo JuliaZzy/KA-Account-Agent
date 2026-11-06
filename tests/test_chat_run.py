@@ -200,10 +200,11 @@ def test_a_prose_reply_is_published_while_the_model_is_still_writing(db):
     seen: list[str] = []
     original = db.note_running_reply
 
-    def spy(target_id: str, text: str):
-        row = original(target_id, text)
+    def spy(target_id: str, text: str, *, generation_id: str | None = None):
+        row = original(target_id, text, generation_id=generation_id)
         if row is not None:
             assert row["status"] == "running"
+            assert generation_id
             seen.append(text)
         return row
 

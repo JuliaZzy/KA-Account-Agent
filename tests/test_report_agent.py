@@ -253,8 +253,8 @@ def test_review_passes_at_85_and_revises_below_it_for_three_rounds():
 
 
 def test_reflection_retries_a_failure_and_keeps_three_tries():
-    from backend.llm import FakeLLM
     from backend.codefix import format_failures, with_reflection
+    from backend.llm import FakeLLM
 
     def fail_then_ok(artifact: str):
         if artifact == "ok":

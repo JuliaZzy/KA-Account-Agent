@@ -30,7 +30,7 @@
 
 worker 把模型容量不足视为 infrastructure retry：释放当前 Run lease，把 Run 放回 `queued`，重新 arm outbox，并使用 `spend_attempt=False`，因此不会消耗业务执行次数。重试等待采用指数退避和 full jitter，等待时间逐步增加并设置上限，避免大量 Run 同时重新抢占同一个 provider。Run 的最大时长仍然是整体重试的边界。
 
-本地并发不足和厂商故障分开处理。面试表述中，厂商返回 429、5xx 或超时时，重试策略读取可用的 `Retry-After`，按 provider 维护退避状态；连续失败时打开 provider 级熔断器，冷却后用一次 half-open 探测恢复。熔断器用于保护不健康的下游，不替代本地并发 lease。
+本地并发不足和厂商故障分开处理。厂商返回 429、5xx 或超时时，worker 读取 `Retry-After`，按 provider 做基础设施重试；连续失败时打开 provider 级熔断器，冷却后用一次 half-open 探测恢复。细节见 [`retry.md`](retry.md)。
 
 工具并发是另一层。工具的失败结果留在当前 Run 的工具记录里；只有注册为可重试的读工具才在同一工具调用内重试，副作用工具不自动重复。模型容量重试和工具结果重试不混用，避免把已经完成的副作用重新执行。
 

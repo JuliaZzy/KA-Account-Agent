@@ -820,10 +820,14 @@ class RunMixin:
             s.flush()
             return _row_dict(run)
 
-    def note_running_reply(self, run_id: str, text: str) -> dict[str, Any] | None:
+    def note_running_reply(
+        self, run_id: str, text: str, *, generation_id: str | None = None,
+    ) -> dict[str, Any] | None:
         """Store reply text while the run is still running. The status stays running.
-        
-        None when the run is missing or not running.
+
+        `generation_id` labels this attempt so the desk can drop tokens from a
+        failed stream when the worker retries. None when the run is missing or
+        not running.
         """
         with self.tx() as s:
             run = s.scalars(
@@ -833,7 +837,10 @@ class RunMixin:
             ).first()
             if run is None:
                 return None
-            run.output_json = {"text": text}
+            payload: dict[str, Any] = {"text": text}
+            if generation_id:
+                payload["generation_id"] = generation_id
+            run.output_json = payload
             s.flush()
             return _row_dict(run)
 
@@ -916,6 +923,8 @@ class RunMixin:
                 "model_calls": self._run_rows(s, orm.ModelCall, orm.ModelCall.created_at, run_id),
                 "tool_calls": self._run_rows(s, orm.ToolCall, orm.ToolCall.created_at, run_id),
                 "checkpoints": self._run_rows(s, orm.Checkpoint, orm.Checkpoint.checkpoint_index, run_id),
+                "usage_records": self._run_rows(s, orm.UsageRecord, orm.UsageRecord.created_at, run_id),
+                "audit_logs": self._run_rows(s, orm.AuditLog, orm.AuditLog.created_at, run_id),
                 "outbox": self._payload_rows(s, orm.OutboxJob, run_id),
                 "dead_letters": self._payload_rows(s, orm.DeadLetterJob, run_id),
             }
@@ -976,7 +985,7 @@ class RunMixin:
                 ),
                 "model_rate_limited": self._count(
                     s, orm.ModelCall, org,
-                    orm.ModelCall.error_json["code"].astext == "RATE_LIMITED",
+                    orm.ModelCall.error_json["code"].astext == "PROVIDER_RATE_LIMITED",
                     joined=orm.ModelCall,
                 ),
                 "tool_calls": self._count(s, orm.ToolCall, orm.ToolCall.org_id == org_id),

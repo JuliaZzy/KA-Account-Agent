@@ -173,7 +173,7 @@ Run 接口只认 `X-User-Id`。用它查出 `users` 行，`org_id` 取 `distribu
 
 对话调用从 `backend/llm/calls.py` 的 `call_model` 进去。`client` 由调用方传入。一次调用一行 `model_calls`、一行 `usage_records`，挂上这次的 `run_id` 和 `step_id`。厂商给了 usage 时 `usage_source` 为 `actual`。两边都是 0，或根本没有 usage，按本地估算（一个汉字大约一个 token，其余大约四个字符一个），`usage_source` 为 `estimated`。估算不记成厂商数字。
 
-`max_model_calls` 或 `max_tokens` 有值且已经用满时，不打模型，写 `model.failed`，错误码 `COST_BUDGET_EXCEEDED`。这一步不把整条 run 改成失败。模型容量不足是另一种基础设施重试：不返回空回答，抛出可识别的容量错误，由 worker 释放 lease、把 run 放回 `queued`，并以 `spend_attempt=False` 重新 arm outbox。
+`max_model_calls` 或 `max_tokens` 有值且已经用满时，不打模型，写 `model.failed`，错误码 `COST_BUDGET_EXCEEDED`。这一步不把整条 run 改成失败。本地模型槽满、厂商 429/5xx/超时的重试、熔断和 `Retry-After` 见 [`retry.md`](retry.md)。
 
 org 日预算看当天 `usage_records` 的 token 和费用。`KA_ACCOUNT_ORG_DAILY_TOKENS` 和 `KA_ACCOUNT_ORG_DAILY_COST_CENTS` 默认 0，表示不封顶。接近 80% 时一天记一条内部事件 `run.budget_warning`。超过则不再打模型。
 
@@ -196,7 +196,7 @@ org 日预算看当天 `usage_records` 的 token 和费用。`KA_ACCOUNT_ORG_DAI
 | 每家搜索、查数、翻译、汇率 | 20 |
 | 每个模型 provider | 32 |
 
-闸门在建 run、领 run、真正调用工具之前、`call_model` 打模型之前。模型闸门满时不打厂商，抛出可识别的容量错误并走 infrastructure requeue；模型调用不会用空文本或固定兜底回答掩盖这次重试。infrastructure requeue 使用指数退避和 jitter，等待时间封顶，且不增加业务执行次数。
+闸门在建 run、领 run、真正调用工具之前、`call_model` 打模型之前。模型闸门满时不打厂商，抛出 `ModelCapacityExceeded` 并走 infrastructure requeue。厂商 429 是另一件事，见 [`retry.md`](retry.md)。
 
 `SEND_EMAIL_ENABLED`、`MCP_TOOLS_ENABLED`、`QUEUE_ENABLED` 默认开。关上队列时 worker 不再领新的 `execute_run`，Celery 任务 30 秒后再试，已经领走的跑完。
 

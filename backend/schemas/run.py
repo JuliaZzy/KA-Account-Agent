@@ -229,6 +229,8 @@ class TraceResponse(BaseModel):
     model_calls: list[ModelCall] = Field(default_factory=list)
     tool_calls: list[ToolCall] = Field(default_factory=list)
     checkpoints: list[Checkpoint] = Field(default_factory=list)
+    usage_records: list[UsageRecord] = Field(default_factory=list)
+    audit_logs: list[AuditLog] = Field(default_factory=list)
     outbox: list[OutboxJob] = Field(default_factory=list)
     dead_letters: list[DeadLetterJob] = Field(default_factory=list)
 

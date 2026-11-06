@@ -44,10 +44,14 @@ else
 end
 """
 
-# One hash field per task, then decrement the counter, in one round trip.
+# One hash field per task, then decrement the counter once, in one round trip.
 _STORE = """
+local first = redis.call("hexists", KEYS[1], ARGV[1]) == 0
 redis.call("hset", KEYS[1], ARGV[1], ARGV[2])
-local left = redis.call("decr", KEYS[2])
+local left = redis.call("get", KEYS[2])
+if first and left then
+  left = redis.call("decr", KEYS[2])
+end
 redis.call("expire", KEYS[1], ARGV[3])
 redis.call("expire", KEYS[2], ARGV[3])
 return left

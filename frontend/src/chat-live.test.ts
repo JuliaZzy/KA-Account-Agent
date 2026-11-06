@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { chatPresence, flightOf, forgetChat, isChatBusy, isForgotten, patchFlight, resetChatLive, setActiveChat } from "./chat-live";
+import { chatPresence, flightOf, forgetChat, isChatBusy, isForgotten, liveFromRun, patchFlight, resetChatLive, setActiveChat } from "./chat-live";
 
 describe("per-chat live state", () => {
   beforeEach(() => resetChatLive());
@@ -38,6 +38,15 @@ describe("per-chat live state", () => {
     patchFlight("a", { steps: shorter });
     expect(flightOf("a").steps).toEqual(shorter);
     expect(flightOf("b").steps).toEqual(longer);
+  });
+
+  it("a new generation_id drops tokens from a failed stream", () => {
+    patchFlight("a", { busy: true, live: "Hel", generationId: "gen-1" });
+    const cleared = liveFromRun(flightOf("a"), { text: "", generation_id: "gen-2" });
+    expect(cleared).toEqual({ generationId: "gen-2", live: "" });
+    patchFlight("a", cleared);
+    const next = liveFromRun(flightOf("a"), { text: "你好", generation_id: "gen-2" });
+    expect(next).toEqual({ live: "你好" });
   });
 
   it("a deleted chat ignores a reply that arrives late", () => {

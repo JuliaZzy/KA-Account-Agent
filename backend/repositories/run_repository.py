@@ -117,8 +117,10 @@ def sweep_waiting_for_tasks(
 def complete_run(db: Database, run_id: str, output: dict[str, Any]) -> dict[str, Any] | None:
     return db.complete_run(run_id, output)
 
-def note_running_reply(db: Database, run_id: str, text: str) -> dict[str, Any] | None:
-    return db.note_running_reply(run_id, text)
+def note_running_reply(
+    db: Database, run_id: str, text: str, *, generation_id: str | None = None,
+) -> dict[str, Any] | None:
+    return db.note_running_reply(run_id, text, generation_id=generation_id)
 
 def fail_run(db: Database, run_id: str, error: dict[str, Any]) -> dict[str, Any] | None:
     return db.fail_run(run_id, error)
@@ -130,8 +132,9 @@ def schedule_retry(
     delays: tuple[timedelta, ...],
     *,
     spend_attempt: bool = True,
+    delay: timedelta | None = None,
 ) -> str | None:
-    return db.schedule_retry(run_id, error, delays, spend_attempt=spend_attempt)
+    return db.schedule_retry(run_id, error, delays, spend_attempt=spend_attempt, delay=delay)
 
 def latest_checkpoint(db: Database, run_id: str) -> dict[str, Any] | None:
     return db.latest_checkpoint(run_id)

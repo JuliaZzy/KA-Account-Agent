@@ -76,4 +76,4 @@ class Database(
                 setattr(row, k, v)
 
 
-__all__ = ["Database", "ChatTurnBusy", "InvalidRunTransition", "utcnow"]
+__all__ = ["ChatTurnBusy", "Database", "InvalidRunTransition", "utcnow"]

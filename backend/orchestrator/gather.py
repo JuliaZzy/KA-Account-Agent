@@ -7,12 +7,11 @@ import uuid
 from typing import Any
 
 from ..db import Database
-from ..redis_store import begin_turn, load_results, store_result
+from ..redis_store import begin_turn, drop_turn, load_results, store_result
 from ..repositories.run_repository import (
     append_checkpoint,
     append_run_event,
     create_agent_run,
-    find_agent_run_by_id,
     find_runs_by_owner,
     latest_checkpoint,
     mark_waiting_for_tasks,
@@ -27,7 +26,7 @@ from ..services.run_names import (
     RunType,
     StepEvent,
 )
-from .plan import PlanTask, parse_tasks, ready_wave, run_type_for, tool_name_for
+from .plan import PlanTask, ready_wave, run_type_for, tool_name_for
 
 log = logging.getLogger(__name__)
 
@@ -136,7 +135,7 @@ def finish_child(
     run: dict[str, Any],
     result: dict[str, Any],
 ) -> None:
-    """Write this task into Redis and the owner checkpoint. The last one wakes the owner."""
+    """Persist the result, then use Redis only to coordinate the fast wake-up path."""
     payload = run.get("input_json") if isinstance(run.get("input_json"), dict) else {}
     session_id = str(payload.get("session_id") or "")
     wave_id = str(payload.get("wave_id") or "")
@@ -144,9 +143,8 @@ def finish_child(
     owner_id = str(run.get("owner_run_id") or payload.get("owner_run_id") or "")
     if not session_id or not wave_id or not task_id:
         return
-    left = store_result(session_id, wave_id, task_id, result)
     if owner_id:
-        _persist_owner_result(db, owner_id, task_id, result)
+        db.append_checkpoint_result(owner_id, task_id, result)
         append_run_event(db, str(run.get("org_id") or ""), owner_id, (
             StepEvent.TOOL_COMPLETED if result.get("ok") else StepEvent.TOOL_FAILED
         ), {
@@ -154,34 +152,16 @@ def finish_child(
             "task_id": task_id,
             "ok": bool(result.get("ok")),
         })
+    try:
+        left = store_result(session_id, wave_id, task_id, result)
+    except Exception:
+        log.exception("failed to write wave result to Redis")
+        left = None
     if left == 0 and owner_id:
         woke = requeue_waiting_tasks(db, owner_id, {"wave_id": wave_id})
         if woke is not None:
+            drop_turn(session_id, wave_id)
             dispatch_pending(db)
-
-
-def _persist_owner_result(db: Database, owner_id: str, task_id: str, result: dict[str, Any]) -> None:
-    """Keep the wave result on the owner checkpoint so Redis is not the only copy."""
-    owner = find_agent_run_by_id(db, owner_id)
-    if owner is None:
-        return
-    state = load_state(latest_checkpoint(db, owner_id)) or {}
-    results = dict(state.get("results") or {})
-    results[task_id] = result
-    finished = [str(item) for item in (state.get("finished") or []) if item]
-    if task_id not in finished:
-        finished.append(task_id)
-    extra = {
-        key: value for key, value in state.items()
-        if key not in {"tasks", "finished", "results", "wave_id", "wave_ids"}
-    }
-    append_checkpoint(db, owner_id, checkpoint_state(
-        parse_tasks({"tasks": state.get("tasks") or []}),
-        finished, results,
-        wave_id=state.get("wave_id") if isinstance(state.get("wave_id"), str) else None,
-        wave_ids=[str(item) for item in (state.get("wave_ids") or [])],
-        extra=extra,
-    ))
 
 
 def _enqueue_child(
