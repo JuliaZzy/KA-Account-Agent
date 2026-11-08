@@ -18,11 +18,20 @@ export function activitiesFromEvents(raw: unknown, status?: string): Activity[] 
   if (!Array.isArray(raw)) return [];
   const rows = raw.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
-    const row = item as { sequence?: unknown; payload_json?: unknown };
+    const row = item as { sequence?: unknown; event_type?: unknown; payload_json?: unknown };
     const sequence = Number(row.sequence);
-    const title = textField(row.payload_json, "display");
+    const eventType = String(row.event_type ?? "");
+    const toolName = textField(row.payload_json, "tool_name");
+    const title = textField(row.payload_json, "display") || (
+      toolName && (eventType === "tool.completed" || eventType === "tool.failed")
+        ? `${eventType === "tool.failed" ? "未完成" : "已完成"} ${toolName}`
+        : ""
+    );
     if (!Number.isInteger(sequence) || sequence <= 0 || !title) return [];
-    return [{ id: String(sequence), title, detail: "", state: "done" as const, sequence }];
+    return [{
+      id: String(sequence), title, detail: "", state: "done" as const, sequence,
+      terminal: eventType === "tool.completed" || eventType === "tool.failed",
+    }];
   });
   rows.sort((a, b) => a.sequence - b.sequence);
   const moving = status === "queued" || status === "running";
@@ -30,7 +39,7 @@ export function activitiesFromEvents(raw: unknown, status?: string): Activity[] 
     id: row.id,
     title: row.title,
     detail: row.detail,
-    state: moving && index === rows.length - 1 ? "running" as const : "done" as const,
+    state: moving && index === rows.length - 1 && !row.terminal ? "running" as const : "done" as const,
   }));
 }
 

@@ -612,10 +612,9 @@ def open_client(brand: str) -> Any:
 
 
 def client_for(brand: str, injected: Any | None) -> Any:
-    """Reuse the injected object when it already is this brand, or when it is a test double.
+    """The client for this call. None opens the vendor named by `brand`.
 
-    A campus client passed for official DeepSeek is replaced. FakeLLM and the other
-    doubles are not one of the four vendors and are used as given.
+    A test double is used as given. A vendor object of another brand is replaced.
     """
     if brand == "fake":
         if injected is None:

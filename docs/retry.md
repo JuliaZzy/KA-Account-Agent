@@ -39,7 +39,7 @@ worker / Run       读 Retry-After，释放 model lease 和 run lease
 outbox dispatcher  到期的 outbox 交给 Celery
 ```
 
-Celery 任务 `execute_run` 的 `max_retries=None` 只用于队列关闭和 `SessionBusy`，不负责厂商错误。厂商错误由 worker 写回 outbox，再投一次。
+Celery 任务 `execute_run` 的 `max_retries=None` 只用于队列关闭和 `SessionBusy`，不负责厂商错误或 worker 丢失。worker 丢失导致的 broker 重投由执行 outbox 在 PostgreSQL 中单独计数，超过上限后进入现有死信流程；偶发丢失仍会重新执行。厂商错误由 worker 写回 outbox，再投一次。
 
 以前会叠在一起：SDK 重试 3 次 × 校园客户端循环 5 次 × worker 再试 3 次。现在客户端一次失败就抛，由 worker 统一等。
 
@@ -108,7 +108,7 @@ KA_ACCOUNT_CIRCUIT_COOLDOWN_SECONDS=30
 { "text": "Hel", "generation_id": "…" }
 ```
 
-前端 `followRun` 看到新的 `generation_id` 就丢掉上一轮 live token，从新文本开始画。半截 503 之后 worker 会先写一轮空文本和新 id，再把 Run 放回 queued，避免失败那一段一直挂在屏幕上。成功提交时 `complete_run` 仍只写最终 `{ "text": "…" }`。
+前端 `followRun` 看到新的 `generation_id` 就丢掉上一轮 live token，从新文本开始画。半截 503 之后 worker 会先写一轮空文本和新 id，再把 Run 放回 queued，避免失败那一段一直挂在屏幕上。正文增量同时通过 `run.reply_updated` 事件推送，成功提交时 `complete_run` 仍只写最终 `{ "text": "…" }`。
 
 不要在客户端里把第二次请求的 token 接到第一次后面。重试是整段 Run 再领一次，新的 generation。
 

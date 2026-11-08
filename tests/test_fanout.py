@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import threading
 
+import pytest
+
 from backend import service
 from backend.llm import FakeLLM
 from backend.redis_store import begin_turn, drop_turn, fx_drop, fx_put, load_results, store_result
@@ -21,6 +23,19 @@ def test_results_arrive_in_any_order_and_read_back_together():
         assert loaded["a"]["payload"]["n"] == 1 and loaded["b"]["payload"]["n"] == 2
     finally:
         drop_turn("sess-redis", "turn-1")
+
+
+def test_dispatch_prior_rejects_missing_or_malformed_results():
+    from backend.orchestrator.gather import _collect_prior
+    from backend.orchestrator.plan import PlanTask
+
+    ready = [PlanTask(id="next", kind="tool", name="translate", depends_on=["source"])]
+    with pytest.raises(ValueError, match="missing result for dependency 'source'"):
+        _collect_prior(ready, {})
+    with pytest.raises(ValueError, match="expected object"):
+        _collect_prior(ready, {"source": "bad"})
+    with pytest.raises(ValueError, match="missing one of"):
+        _collect_prior(ready, {"source": {"id": "source"}})
 
 
 def test_cached_exchange_rate_skips_the_network(monkeypatch):
@@ -119,6 +134,12 @@ def test_same_wave_is_two_child_runs(db, monkeypatch):
     children = db.find_runs_by_owner(parent_id)
     assert len(children) == 2
     assert {child["status"] for child in children} == {"queued"}
+    events = db.list_run_events("dist-1", parent_id) or []
+    assert sum(event["event_type"] == "tool.started" for event in events) == 2
+    saved = db.latest_checkpoint(parent_id) or {}
+    blob = (saved.get("state_json") or {}).get("orchestrator") or {}
+    assert set(blob.get("wave_ids") or []) == {"c", "d"}
+    assert blob.get("wave_id")
     for child in children:
         assert work_once(db, "w2", execute, run_id=child["id"]) is True
     assert db.find_agent_run_by_id(parent_id)["status"] == "queued"
@@ -201,3 +222,118 @@ def test_sweep_leaves_a_parent_while_a_child_is_still_running(db):
     assert db.claim_chat_turn(child["id"], "w2", utcnow() + timedelta(minutes=5)) is not None
     assert sweep_waiting_for_tasks(db, stale_after=timedelta(0)) == 0
     assert db.find_agent_run_by_id(parent["id"])["status"] == "waiting_for_tasks"
+
+
+def _running_owner(db, key: str) -> dict:
+    from datetime import timedelta
+
+    from backend.db import utcnow
+
+    db.upsert_user("u-a", "dist-1", "Ada")
+    parent, _created = db.create_agent_run(
+        "dist-1", "u-a", "chat", key, {"session_id": "sess-commit", "message": "hi"},
+    )
+    assert db.claim_chat_turn(parent["id"], "w1", utcnow() + timedelta(minutes=5)) is not None
+    return parent
+
+
+def _wave_child(key: str, task_id: str) -> dict:
+    return {
+        "run_type": "data",
+        "idempotency_key": key,
+        "input": {"task_id": task_id, "wave_id": "wave-1"},
+        "started": {"tool_name": "data.query", "task_id": task_id, "display": "data.query"},
+    }
+
+
+def _wave_checkpoint() -> dict:
+    return {
+        "context": [],
+        "completed_tool_calls": [],
+        "last": "user",
+        "orchestrator": {
+            "wave_id": "wave-1", "wave_ids": ["a", "b"], "tasks": [], "finished": [], "results": {},
+        },
+    }
+
+
+def test_task_wave_commits_children_checkpoint_and_park_together(db):
+    parent = _running_owner(db, "owner-commit")
+    parked = db.commit_task_wave(parent["id"], [
+        _wave_child("child-a", "a"),
+        _wave_child("child-b", "b"),
+    ], _wave_checkpoint(), {"wave_id": "wave-1", "task_ids": ["a", "b"]})
+    assert parked is not None and parked["status"] == "waiting_for_tasks"
+    children = db.find_runs_by_owner(parent["id"])
+    assert {child["idempotency_key"] for child in children} == {"child-a", "child-b"}
+    assert {child["status"] for child in children} == {"queued"}
+    # The owner's own execute row plus one per new child. A second park adds neither.
+    assert len(db.find_pending_outbox_jobs()) == 3
+    events = db.list_run_events("dist-1", parent["id"]) or []
+    assert sum(event["event_type"] == "tool.started" for event in events) == 2
+    assert db.latest_checkpoint(parent["id"]) is not None
+    assert db.commit_task_wave(parent["id"], [
+        _wave_child("child-a", "a"),
+        _wave_child("child-b", "b"),
+    ], _wave_checkpoint(), {"wave_id": "wave-1"}) is None
+    assert len(db.find_runs_by_owner(parent["id"])) == 2
+    assert len(db.find_pending_outbox_jobs()) == 3
+
+
+def test_task_wave_reuses_an_existing_child_without_a_second_outbox(db):
+    parent = _running_owner(db, "owner-reuse")
+    existing, created = db.create_agent_run(
+        "dist-1", "u-a", "data", "child-a", {"task_id": "a"}, owner_run_id=parent["id"],
+    )
+    assert created is True
+    parked = db.commit_task_wave(parent["id"], [
+        _wave_child("child-a", "a"),
+        _wave_child("child-b", "b"),
+    ], _wave_checkpoint(), {"wave_id": "wave-1"})
+    assert parked is not None
+    children = db.find_runs_by_owner(parent["id"])
+    assert len(children) == 2
+    assert any(child["id"] == existing["id"] for child in children)
+    assert len(db.find_pending_outbox_jobs()) == 3
+
+
+def test_task_wave_rolls_back_when_a_child_insert_fails(db):
+    from sqlalchemy.exc import SQLAlchemyError
+
+    parent = _running_owner(db, "owner-rollback")
+    try:
+        db.commit_task_wave(parent["id"], [
+            _wave_child("child-ok", "a"),
+            _wave_child("x" * 201, "b"),
+        ], _wave_checkpoint(), {"wave_id": "wave-1"})
+    except SQLAlchemyError:
+        pass
+    else:
+        raise AssertionError("oversized idempotency key should fail the wave")
+    assert db.find_agent_run_by_id(parent["id"])["status"] == "running"
+    assert db.find_agent_run_by_idempotency("dist-1", "child-ok") is None
+    assert db.find_runs_by_owner(parent["id"]) == []
+    assert db.latest_checkpoint(parent["id"]) is None
+    assert len(db.find_pending_outbox_jobs()) == 1
+
+
+def test_task_wave_leaves_a_running_owner_when_the_checkpoint_is_invalid(db):
+    parent = _running_owner(db, "owner-bad-checkpoint")
+    try:
+        db.commit_task_wave(parent["id"], [_wave_child("child-ok", "a")], {"nope": True})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("checkpoint should be rejected")
+    assert db.find_agent_run_by_id(parent["id"])["status"] == "running"
+    assert db.find_runs_by_owner(parent["id"]) == []
+
+
+def test_task_wave_does_not_park_after_cancel_was_requested(db):
+    parent = _running_owner(db, "owner-cancel")
+    assert db.request_run_cancel("dist-1", parent["id"], "stop") is not None
+    assert db.commit_task_wave(
+        parent["id"], [_wave_child("child-a", "a")], _wave_checkpoint(), {"wave_id": "wave-1"},
+    ) is None
+    assert db.find_agent_run_by_id(parent["id"])["status"] == "running"
+    assert db.find_runs_by_owner(parent["id"]) == []

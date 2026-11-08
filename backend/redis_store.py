@@ -137,10 +137,13 @@ def _release(session_id: str, token: str) -> None:
 
 
 def begin_turn(session_id: str, turn_id: str, task_ids: list[str]) -> None:
-    """Arm the counter. Each finished task decrements it."""
+    """PLAN 里同一波并行子任务的 redis 倒计时"""
     pipe = client().pipeline()
+    # 清理掉上一次的倒计时
     pipe.delete(_turn_key(session_id, turn_id), _left_key(session_id, turn_id))
+    # 剩余计数设置为 len(task_ids)
     pipe.set(_left_key(session_id, turn_id), len(task_ids), ex=TURN_TTL_S)
+    # 过期时间设置为 TURN_TTL_S
     pipe.expire(_turn_key(session_id, turn_id), TURN_TTL_S)
     pipe.execute()
 

@@ -68,6 +68,7 @@ class ModelResult:
     completion_tokens: int
     usage_source: str
     error: str | None = None
+    reasoning: str | None = None
 
 
 @dataclass
@@ -334,18 +335,24 @@ def _call_double(
     return _await(chat(**kwargs))
 
 
-def _assemble_stream(chunks: Any, on_text: Callable[[str], None]) -> Any:
+def _assemble_stream(chunks: Any, on_text: Callable[..., None]) -> Any:
     parts: list[str] = []
+    reasoning_parts: list[str] = []
     calls: dict[int, dict[str, str]] = {}
     for chunk in chunks:
         delta = _choice_delta(chunk)
         piece = _delta_text(delta)
+        thought = _delta_reasoning(delta)
+        if thought:
+            reasoning_parts.append(thought)
         if piece:
             parts.append(piece)
-            on_text("".join(parts))
+        if piece or thought:
+            on_text("".join(parts), reasoning="".join(reasoning_parts))
         _take_tool_delta(calls, delta)
     message = SimpleNamespace(
         content="".join(parts) or None,
+        reasoning_content="".join(reasoning_parts) or None,
         tool_calls=[_tool_namespace(calls[index]) for index in sorted(calls)] or None,
     )
     return SimpleNamespace(choices=[SimpleNamespace(message=message)])
@@ -368,6 +375,38 @@ def _delta_text(delta: Any) -> str:
         return ""
     content = delta.get("content") if isinstance(delta, dict) else getattr(delta, "content", None)
     return content if isinstance(content, str) else ""
+
+
+def _delta_reasoning(delta: Any) -> str:
+    if delta is None:
+        return ""
+    content = (
+        delta.get("reasoning_content")
+        if isinstance(delta, dict)
+        else getattr(delta, "reasoning_content", None)
+    )
+    return content if isinstance(content, str) else ""
+
+
+def _extract_reasoning(raw: Any) -> str | None:
+    if isinstance(raw, AssistantTurn):
+        value = getattr(raw, "reasoning_content", None)
+        return value.strip() if isinstance(value, str) and value.strip() else None
+    message: Any = None
+    if isinstance(raw, dict):
+        choices = raw.get("choices") or []
+        if choices and isinstance(choices[0], dict):
+            message = choices[0].get("message")
+    else:
+        choices = getattr(raw, "choices", None) or []
+        if choices:
+            message = getattr(choices[0], "message", None)
+    value = (
+        message.get("reasoning_content")
+        if isinstance(message, dict)
+        else getattr(message, "reasoning_content", None)
+    )
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
 
 def _take_tool_delta(calls: dict[int, dict[str, str]], delta: Any) -> None:
@@ -832,8 +871,8 @@ def call_model(
 
     generation_id = uuid.uuid4().hex
 
-    def emit(text: str) -> None:
-        _emit_text(on_text, text, generation_id)
+    def emit(text: str, *, reasoning: str | None = None) -> None:
+        _emit_text(on_text, text, generation_id, reasoning)
 
     # 调用模型
     try:
@@ -869,6 +908,7 @@ def call_model(
     # 解释返回值
     try:
         body, text = _interpret(expect, carried.response, getattr(carried, "tool_alias", None))
+        reasoning = _extract_reasoning(carried.response)
     except Exception as exc:
         _fail(
             ledger, brand=_ledger_brand(brand, carried.client), model_name=model_name,
@@ -880,7 +920,7 @@ def call_model(
 
     # 非流式回调：发送文本
     if on_text is not None and not streamed:
-        emit(text)
+        emit(text, reasoning=reasoning)
     prompt, completion, source = _tokens(carried.client, system, messages, text)
 
     # 记录模型数据
@@ -892,6 +932,8 @@ def call_model(
         response = {"content": body.content, "tool_calls": [asdict(call) for call in body.tool_calls]}
     else:
         response = {"text": text}
+    if reasoning:
+        response["reasoning"] = reasoning
     call_id = _save(
         ledger, provider=brand, model_name=model_name, system=system, messages=messages,
         schema=schema, tools=tools, response=response, prompt_tokens=prompt, completion_tokens=completion,
@@ -920,6 +962,7 @@ def call_model(
     return ModelResult(
         brand=brand, model=model_name, body=body,
         prompt_tokens=prompt, completion_tokens=completion, usage_source=source,
+        reasoning=reasoning,
     )
 
 
@@ -929,13 +972,21 @@ def _unwrap(result: ModelResult) -> Any:
     return result.body
 
 
-def _emit_text(on_text: Callable[..., None] | None, text: str, generation_id: str) -> None:
-    if on_text is None or not text:
+def _emit_text(
+    on_text: Callable[..., None] | None,
+    text: str,
+    generation_id: str,
+    reasoning: str | None = None,
+) -> None:
+    if on_text is None or (not text and not reasoning):
         return
     try:
-        on_text(text, generation_id=generation_id)
+        on_text(text, generation_id=generation_id, reasoning=reasoning)
     except TypeError:
-        on_text(text)
+        try:
+            on_text(text, generation_id=generation_id)
+        except TypeError:
+            on_text(text)
 
 
 def _transport_error(exc: Exception, *, brand: str, model_name: str, client: Any) -> Exception:

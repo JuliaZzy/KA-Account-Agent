@@ -25,9 +25,73 @@ from .support import _row_dict, utcnow
 
 # How many times `work_once` may enter a run before a transient error is dead-lettered.
 EXECUTION_MAX_ATTEMPTS = 3
+# A redelivered Celery message may mean the worker process was lost. Keep a
+# separate durable budget so a poison task cannot loop through the broker forever.
+WORKER_LOST_MAX_REDELIVERIES = 3
 
 
 class QueueMixin:
+    def record_worker_loss_redelivery(
+        self, run_id: str, *, max_attempts: int = WORKER_LOST_MAX_REDELIVERIES,
+    ) -> str:
+        """Count a broker redelivery and dead-letter a repeatedly lost run."""
+        now = utcnow()
+        with self.tx() as s:
+            run = s.scalars(
+                select(orm.AgentRun).where(orm.AgentRun.id == run_id).with_for_update()
+            ).first()
+            if run is None or run.status in (
+                RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED, RunStatus.WAITING_FOR_USER,
+            ):
+                return "ack"
+            boxes = list(s.scalars(
+                select(orm.OutboxJob)
+                .where(
+                    orm.OutboxJob.job_type == "execute_run",
+                    orm.OutboxJob.payload_json["run_id"].as_string() == run_id,
+                )
+                .order_by(orm.OutboxJob.created_at)
+                .with_for_update()
+            ))
+            box = boxes[-1] if boxes else None
+            count = 0
+            for item in boxes:
+                value = (
+                    item.last_error_json.get("worker_loss_redeliveries", 0)
+                    if isinstance(item.last_error_json, dict) else 0
+                )
+                try:
+                    count = max(count, int(value))
+                except (TypeError, ValueError):
+                    continue
+            try:
+                count = int(count) + 1
+            except (TypeError, ValueError):
+                count = 1
+            error = {
+                "kind": "worker_lost",
+                "code": "WORKER_LOST_REDELIVERY",
+                "message": "Celery redelivered the task after worker loss",
+                "worker_loss_redeliveries": count,
+            }
+            if box is not None:
+                box.last_error_json = error
+            else:
+                run.error_json = error
+            if count <= max_attempts:
+                s.flush()
+                return "continue"
+            if run.status == RunStatus.QUEUED:
+                self._transition(
+                    s, run, RunStatus.RUNNING, {"reason": "worker_lost_dead_letter"}, now,
+                    actor_type="sweeper", actor_id="worker-loss",
+                )
+            if run.status in (RunStatus.RUNNING, RunStatus.WAITING_FOR_TASKS):
+                self._fail_locked_run(s, run, error, "dead_letter", now)
+            self._dead_letter(s, run, error, now, attempts=count)
+            s.flush()
+            return "dead_letter"
+
     def find_pending_outbox_jobs(self, limit: int = 100) -> list[dict[str, Any]]:
         """Pending outbox rows whose `next_attempt_at` has arrived, oldest first."""
         now = utcnow()

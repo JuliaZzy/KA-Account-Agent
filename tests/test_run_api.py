@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from backend.db import InvalidRunTransition, utcnow
 from backend.main import create_app
+from backend.schemas import Partnership
 from backend.services.run_names import RunStatus, ToolCallStatus
 
 HEADERS = {"X-Org-Id": "org-1", "X-User-Id": "user-1"}
@@ -185,6 +186,23 @@ def test_transient_error_retries_then_dead_letters(make_db):
         "run.retry_scheduled", "run.retry_scheduled", "run.retry_scheduled",
     ]
     assert events[-1]["payload_json"]["reason"] == "dead_letter"
+
+
+def test_worker_loss_redeliveries_eventually_dead_letter(make_db):
+    from backend.services.dispatcher import dispatch_pending
+
+    db = _db(make_db, "worker-loss-dead-letter")
+    client = TestClient(create_app(db))
+    run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
+    dispatch_pending(db)
+
+    for _ in range(3):
+        assert db.record_worker_loss_redelivery(run_id) == "continue"
+    assert db.record_worker_loss_redelivery(run_id) == "dead_letter"
+    assert client.get(f"/runs/{run_id}", headers=HEADERS).json()["status"] == "failed"
+    letters = db.list_dead_letter_jobs(db.run_trace("org-1", run_id)["outbox"][0]["id"])
+    assert len(letters) == 1
+    assert letters[0]["error_json"]["code"] == "WORKER_LOST_REDELIVERY"
 
 
 def test_model_capacity_requeues_without_spending_execution_attempt(make_db):
@@ -1914,6 +1932,104 @@ def test_a_left_running_side_effect_is_not_called_again(make_db):
     row = db.list_tool_calls(run_id)[0]
     assert row["status"] == "response_lost"
     events = db.list_run_events("org-1", run_id)
+    assert any(event["event_type"] == "tool.manual_review" for event in events)
+
+
+def test_planned_side_effect_is_claimed_before_the_handler_and_reused(make_db, monkeypatch):
+    from backend.services.run_loop import Tool, ToolRegistry
+    from backend.services.task_run import execute_task
+
+    db = _db(make_db, "planned-side-effect")
+    db.upsert_partnership(Partnership(
+        id="ps-1", brand_id="brand-1", distributor_id="org-1", ship_to_country="US",
+        currency="USD", brand_name="Brand", distributor_name="Org 1",
+    ))
+    db.upsert_user("u-1", "org-1", "User")
+    session = db.create_session("planned-side-session", "ps-1", "u-1")
+    calls: list[dict] = []
+
+    def send(args, **_kwargs):
+        calls.append(dict(args))
+        return {"ok": True, "message_id": "m-1"}
+
+    registry = ToolRegistry([Tool(
+        name="send_email", description="Send", fn=send, side_effect=True,
+        idempotency_required=True,
+    )])
+    monkeypatch.setattr("backend.services.task_run.turn_tools", lambda *args, **kwargs: registry)
+    payload = {
+        "session_id": session["id"], "owner_run_id": "parent-1", "task_id": "mail-1",
+        "kind": "tool", "name": "send_email", "tool_name": "send_email",
+        "input": {"to": "buyer@example.com", "subject": "Quote", "body": "10 cases"},
+        "wave_id": "wave-1",
+    }
+    run, _ = db.create_agent_run(
+        "org-1", "u-1", "tool", "chat:planned-side-session:parent-1:mail-1", payload,
+        owner_run_id="parent-1",
+    )
+
+    first = execute_task(db, None, run)
+    second = execute_task(db, None, run)
+    replay, _ = db.create_agent_run(
+        "org-1", "u-1", "tool", "chat:planned-side-session:parent-1:mail-1:replay", payload,
+        owner_run_id="parent-1",
+    )
+    third = execute_task(db, None, replay)
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert third["ok"] is True
+    assert calls == [payload["input"]]
+    rows = db.list_tool_calls(run["id"])
+    assert len(rows) == 1
+    assert rows[0]["status"] == ToolCallStatus.SUCCEEDED
+    assert rows[0]["idempotency_key"] == "send_email:parent-1:mail-1"
+
+
+def test_planned_side_effect_with_lost_response_is_not_retried(make_db, monkeypatch):
+    from backend.services.run_loop import Tool, ToolRegistry
+    from backend.services.task_run import execute_task
+
+    db = _db(make_db, "planned-lost-response")
+    db.upsert_partnership(Partnership(
+        id="ps-1", brand_id="brand-1", distributor_id="org-1", ship_to_country="US",
+        currency="USD", brand_name="Brand", distributor_name="Org 1",
+    ))
+    db.upsert_user("u-1", "org-1", "User")
+    session = db.create_session("lost-response-session", "ps-1", "u-1")
+    calls: list[dict] = []
+
+    def send(args, **_kwargs):
+        calls.append(dict(args))
+        raise KeyboardInterrupt("crash after the external call")
+
+    registry = ToolRegistry([Tool(
+        name="send_email", description="Send", fn=send, side_effect=True,
+        idempotency_required=True,
+    )])
+    monkeypatch.setattr("backend.services.task_run.turn_tools", lambda *args, **kwargs: registry)
+    payload = {
+        "session_id": session["id"], "owner_run_id": "parent-2", "task_id": "mail-2",
+        "kind": "tool", "name": "send_email", "tool_name": "send_email",
+        "input": {"to": "buyer@example.com", "subject": "Quote", "body": "10 cases"},
+        "wave_id": "wave-2",
+    }
+    run, _ = db.create_agent_run(
+        "org-1", "u-1", "tool", "chat:lost-response-session:parent-2:mail-2", payload,
+        owner_run_id="parent-2",
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        execute_task(db, None, run)
+    result = execute_task(db, None, run)
+
+    assert result["ok"] is False
+    assert "manual review" in result["error"]
+    assert len(calls) == 1
+    rows = db.list_tool_calls(run["id"])
+    assert len(rows) == 1
+    assert rows[0]["status"] == ToolCallStatus.RESPONSE_LOST
+    events = db.list_run_events("org-1", run["id"])
     assert any(event["event_type"] == "tool.manual_review" for event in events)
 
 

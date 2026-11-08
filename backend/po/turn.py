@@ -56,8 +56,14 @@ def load_bundle(db: Database, partnership_id: str, user_id: str | None = None) -
     return Bundle(partnership=p, settings=settings, catalog=Catalog(db.products(p.brand_id)), rules=db.rules(p.brand_id))
 
 
-def _check(bundle: Bundle, slots: PoSlots, llm: Any | None) -> CheckResult:
-    resolve = (lambda refs: resolve_references(llm, refs, bundle.catalog.resolver_rows())) if llm else None
+def _check(
+    bundle: Bundle, slots: PoSlots, llm: Any | None, *, resolve_names: bool = True,
+) -> CheckResult:
+    # Confirm passes resolve_names=False. The conversation already settled the slots.
+    resolve = (
+        (lambda refs: resolve_references(llm, refs, bundle.catalog.resolver_rows()))
+        if resolve_names else None
+    )
     check = run_code_check(
         slots=slots, catalog=bundle.catalog, rules=bundle.rules,
         partnership_id=bundle.partnership.id, ship_to_country=bundle.partnership.ship_to_country, resolve=resolve,
@@ -247,7 +253,7 @@ def confirm_order(db: Database, bundle: Bundle, session: dict[str, Any], token: 
     # conversation, and re-extracting at click time would let the model re-decide an
     # order the user has already read.
     slots = PoSlots(**session["slots"])
-    check = _check(bundle, slots, llm=None)
+    check = _check(bundle, slots, None, resolve_names=False)
     draft = build_draft(slots, check, bundle.partnership.currency, bundle.settings)
     if not draft or not check.ready or hash_draft(draft) != session.get("confirm_hash"):
         db.update_session(session["id"], stage="gathering", confirm_token=None, confirm_hash=None, confirm_expires_at=None)

@@ -86,7 +86,13 @@ export type RunTrace = {
 export type RunEvent = {
   sequence: number;
   event_type: string;
-  payload_json?: { tool_name?: string; display?: string };
+  payload_json?: {
+    tool_name?: string;
+    display?: string;
+    text?: string;
+    reasoning?: string;
+    generation_id?: string;
+  };
 };
 
 const RUN_SETTLED = new Set(["succeeded", "failed", "cancelled", "waiting_for_user"]);

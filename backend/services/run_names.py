@@ -108,6 +108,7 @@ class StepEvent(StrEnum):
     RUN_QUEUE_STALE = "run.queue_stale"
     RUN_WAITING_REMINDER = "run.waiting_reminder"
     RUN_BUDGET_WARNING = "run.budget_warning"
+    RUN_REPLY_UPDATED = "run.reply_updated"
     STEP_STARTED = "step.started"
     STEP_COMPLETED = "step.completed"
     STEP_FAILED = "step.failed"
@@ -149,6 +150,7 @@ PUBLIC_RUN_EVENTS = frozenset({
     StepEvent.RUN_COMPLETED,
     StepEvent.RUN_FAILED,
     StepEvent.RUN_CANCELLED,
+    StepEvent.RUN_REPLY_UPDATED,
 })
 
 # The page paints `display` and does not keep a second copy of these sentences.
@@ -185,6 +187,7 @@ PRIVATE_PAYLOAD_KEYS = frozenset({
     "prompt_tokens",
     "completion_tokens",
     "total_tokens",
+    "reasoning",
 })
 
 

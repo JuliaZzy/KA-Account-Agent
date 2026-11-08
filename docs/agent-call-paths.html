@@ -289,6 +289,97 @@
     border-style: dashed;
   }
 
+  .runtime {
+    width: 1160px;
+    margin: 0 auto 26px;
+    padding: 14px 16px 16px;
+    background: var(--card);
+    border: 1.5px solid var(--ink);
+    border-radius: 16px;
+    box-shadow: var(--shadow);
+  }
+  .runtime h2 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 650;
+  }
+  .runtime .intro {
+    margin: 4px 0 12px;
+    color: var(--muted);
+    font-family: "Avenir Next", "PingFang SC", sans-serif;
+    font-size: 12px;
+  }
+  .runtime-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .runtime-step {
+    position: relative;
+    min-height: 128px;
+    padding: 9px 10px 8px;
+    background: #fafaf9;
+    border: 1px solid #d6d3d1;
+    border-radius: 10px;
+  }
+  .runtime-step h3 {
+    margin: 0;
+    font-family: "Avenir Next", "PingFang SC", sans-serif;
+    font-size: 13px;
+    font-weight: 650;
+  }
+  .runtime-step .fn {
+    margin-top: 3px;
+    color: #57534e;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 10px;
+    line-height: 1.35;
+  }
+  .runtime-step .db {
+    margin-top: 6px;
+    padding-top: 5px;
+    border-top: 1px solid #e7e5e4;
+    color: #1c1917;
+    font-family: "Avenir Next", "PingFang SC", sans-serif;
+    font-size: 10.5px;
+    line-height: 1.35;
+  }
+  .runtime-step .db b {
+    color: #9a3412;
+    font-weight: 650;
+  }
+  .runtime-arrow {
+    position: absolute;
+    top: 50%;
+    right: -10px;
+    z-index: 2;
+    width: 12px;
+    height: 0;
+    border-top: 1.5px solid var(--line);
+  }
+  .runtime-arrow::after {
+    content: "";
+    position: absolute;
+    right: -1px;
+    top: -5px;
+    border: 4px solid transparent;
+    border-left: 7px solid var(--line);
+    border-right: 0;
+  }
+  .runtime-step:nth-child(4n) .runtime-arrow { display: none; }
+  .runtime-loop {
+    grid-column: 1 / -1;
+    margin-top: -1px;
+    padding: 5px 8px;
+    color: #9a3412;
+    background: #fff7ed;
+    border: 1px dashed #c2410c;
+    border-radius: 8px;
+    font-family: "Avenir Next", "PingFang SC", sans-serif;
+    font-size: 10.5px;
+    text-align: center;
+  }
+
   .col.report {
     --g: 96px;
     --spine: 18px;
@@ -603,6 +694,61 @@
       <span><i class="swatch contract"></i>合同结果</span>
     </div>
   </header>
+
+  <section class="runtime" aria-label="一次聊天 run 的运行时生命周期">
+    <h2>一次聊天 run：函数、队列与数据库</h2>
+    <p class="intro">这里是上面的业务编排图如何真正跑起来。<code>execute_run()</code> 只处理一个 run 的一次投递；父 run 等子 run 时会释放租约，子任务完成后再重新入队。</p>
+    <div class="runtime-grid">
+      <article class="runtime-step">
+        <h3>1 · HTTP 收到消息</h3>
+        <div class="fn">session_router.message()<br>→ service.handle_message()</div>
+        <div class="db"><b>读取：</b>sessions<br><b>内存：</b>请求体、附件</div>
+        <i class="runtime-arrow" aria-hidden="true"></i>
+      </article>
+      <article class="runtime-step">
+        <h3>2 · 创建 queued run</h3>
+        <div class="fn">enqueue_chat_run()<br>→ create_agent_run()<br>→ dispatch_pending()</div>
+        <div class="db"><b>写入：</b>agent_runs、run_events(run.created)、outbox_jobs<br><b>注意：</b>此时还没有 agent_steps</div>
+        <i class="runtime-arrow" aria-hidden="true"></i>
+      </article>
+      <article class="runtime-step">
+        <h3>3 · Celery 领一次任务</h3>
+        <div class="fn">celery.tasks.execute_run()<br>→ run_worker.work_once()<br>→ claim_chat_turn()</div>
+        <div class="db"><b>更新：</b>agent_runs(lease/status)<br><b>写入：</b>run_events(run.started)</div>
+        <i class="runtime-arrow" aria-hidden="true"></i>
+      </article>
+      <article class="runtime-step">
+        <h3>4 · 父 run 做 PLAN</h3>
+        <div class="fn">execute_chat()<br>→ execute_parent()<br>→ make_plan()</div>
+        <div class="db"><b>写入：</b>agent_steps、model_calls、usage_records<br><b>产物：</b>tasks[] 计划</div>
+        <i class="runtime-arrow" aria-hidden="true"></i>
+      </article>
+      <article class="runtime-step">
+        <h3>5 · 按波派子 run</h3>
+        <div class="fn">dispatch_wave()<br>→ _enqueue_child()<br>→ mark_waiting_for_tasks()</div>
+        <div class="db"><b>写入：</b>子 agent_runs、outbox_jobs、父 checkpoints<br><b>状态：</b>父 run → waiting_for_tasks</div>
+        <i class="runtime-arrow" aria-hidden="true"></i>
+      </article>
+      <article class="runtime-step">
+        <h3>6 · 子 run 执行任务</h3>
+        <div class="fn">execute_run()<br>→ execute_task()<br>→ tool.fn(...)</div>
+        <div class="db"><b>写入：</b>子 agent_steps、tool_calls、model_calls、output_json<br><b>暂存：</b>Redis wave mailbox</div>
+        <i class="runtime-arrow" aria-hidden="true"></i>
+      </article>
+      <article class="runtime-step">
+        <h3>7 · 波次完成，唤醒父 run</h3>
+        <div class="fn">finish_child()<br>→ requeue_waiting_tasks()<br>→ dispatch_pending()</div>
+        <div class="db"><b>更新：</b>父 checkpoints.results、agent_runs(→ queued)<br><b>写入：</b>outbox_jobs、父 run 事件</div>
+        <i class="runtime-arrow" aria-hidden="true"></i>
+      </article>
+      <article class="runtime-step">
+        <h3>8 · ANSWER 并完成</h3>
+        <div class="fn">execute_parent()<br>→ compose_answer()<br>→ save_reply()<br>→ _finish_claimed() / complete_run()</div>
+        <div class="db"><b>写入：</b>model_calls、usage_records、sessions.history<br><b>终态：</b>agent_runs → succeeded</div>
+      </article>
+      <div class="runtime-loop">5–7 会按依赖重复；没有 tasks 时，4 直接进入 8。首次无标题会话还会并行创建一个 OPEN run，执行 execute_open() 写 sessions.title / tags。</div>
+    </div>
+  </section>
 
   <div class="orch-row">
     <div class="open-run">

@@ -119,8 +119,9 @@ def complete_run(db: Database, run_id: str, output: dict[str, Any]) -> dict[str,
 
 def note_running_reply(
     db: Database, run_id: str, text: str, *, generation_id: str | None = None,
+    reasoning: str | None = None,
 ) -> dict[str, Any] | None:
-    return db.note_running_reply(run_id, text, generation_id=generation_id)
+    return db.note_running_reply(run_id, text, generation_id=generation_id, reasoning=reasoning)
 
 def fail_run(db: Database, run_id: str, error: dict[str, Any]) -> dict[str, Any] | None:
     return db.fail_run(run_id, error)
@@ -219,6 +220,16 @@ def mark_waiting_for_tasks(
     db: Database, run_id: str, payload: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     return db.mark_waiting_for_tasks(run_id, payload)
+
+
+def commit_task_wave(
+    db: Database,
+    owner_run_id: str,
+    children: list[dict[str, Any]],
+    checkpoint: dict[str, Any],
+    wait_payload: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    return db.commit_task_wave(owner_run_id, children, checkpoint, wait_payload)
 
 
 def requeue_waiting_tasks(

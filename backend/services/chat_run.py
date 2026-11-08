@@ -141,18 +141,11 @@ def _queued_descendants(db: Database, root_id: str) -> list[dict[str, Any]]:
     return pending
 
 
-def client_for_chat() -> Any:
-    """Campus client for a compose worker. Tests inject FakeLLM instead.
+def execute_chat(db: Database, llm: Any | None = None) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    """The callable `work_once` takes. Chat parents plan; other run types are one task.
 
-    Call sites name the model. This client does not carry one.
+    None opens the vendor named by each call. Tests pass FakeLLM.
     """
-    from ..llm.client import campus_client
-
-    return campus_client()
-
-
-def execute_chat(db: Database, llm: Any) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    """The callable `work_once` takes. Chat parents plan; other run types are one task."""
     from ..orchestrator.gather import load_state
     from ..orchestrator.parent import execute_parent
     from ..orchestrator.speak import save_reply

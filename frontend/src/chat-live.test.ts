@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { chatPresence, flightOf, forgetChat, isChatBusy, isForgotten, liveFromRun, patchFlight, resetChatLive, setActiveChat } from "./chat-live";
+import { chatPresence, flightOf, forgetChat, isChatBusy, isForgotten, liveFromEvents, liveFromRun, patchFlight, resetChatLive, setActiveChat } from "./chat-live";
 
 describe("per-chat live state", () => {
   beforeEach(() => resetChatLive());
@@ -47,6 +47,13 @@ describe("per-chat live state", () => {
     patchFlight("a", cleared);
     const next = liveFromRun(flightOf("a"), { text: "你好", generation_id: "gen-2" });
     expect(next).toEqual({ live: "你好" });
+  });
+
+  it("reads the latest reply from durable SSE events", () => {
+    patchFlight("a", { generationId: "gen-1", live: "旧" });
+    expect(liveFromEvents(flightOf("a"), [
+      { event_type: "run.reply_updated", payload_json: { text: "新", generation_id: "gen-1" } },
+    ])).toEqual({ live: "新" });
   });
 
   it("a deleted chat ignores a reply that arrives late", () => {

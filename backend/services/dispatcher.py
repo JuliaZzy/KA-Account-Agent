@@ -14,9 +14,9 @@ from ..repositories.run_repository import find_pending_outbox_jobs, mark_outbox_
 
 
 def dispatch_pending(db: Database, limit: int = 100) -> int:
-    """Publish one batch. Returns how many outbox rows were marked dispatched.
+    """发布一批待处理 outbox。返回被标记为已派发的行数。
 
-    Tests do not call Redis. They mark the row dispatched and pass `run_id` to `work_once`.
+    测试不调用 Redis：直接把行标成已派发，再把 `run_id` 传给 `work_once`。
     """
     delivered = 0
     for job in find_pending_outbox_jobs(db, limit):

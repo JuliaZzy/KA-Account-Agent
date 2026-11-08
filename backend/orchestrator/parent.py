@@ -84,8 +84,15 @@ def compose_answer(
     step = db.insert_step(run_id, StepType.MODEL, step_name(StepType.MODEL, None), {"purpose": "orchestrator.answer"})
     step_id = None if step is None else step["id"]
 
-    def on_text(growing: str, generation_id: str | None = None) -> None:
-        note_running_reply(db, run_id, growing, generation_id=generation_id)
+    def on_text(
+        growing: str,
+        generation_id: str | None = None,
+        reasoning: str | None = None,
+    ) -> None:
+        kwargs: dict[str, Any] = {"generation_id": generation_id}
+        if reasoning:
+            kwargs["reasoning"] = reasoning
+        note_running_reply(db, run_id, growing, **kwargs)
 
     caught: Exception | None = None
     reply = ""

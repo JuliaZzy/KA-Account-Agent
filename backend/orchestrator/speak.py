@@ -94,7 +94,7 @@ def save_reply(
         assistant["report_series"] = series
     record_history(
         db, session, [*history, {"role": "user", "content": text}, assistant], llm=llm,
-        run_id=run_id,
+        fold=True, run_id=run_id,
         **(session_fields or {}),
     )
     return {

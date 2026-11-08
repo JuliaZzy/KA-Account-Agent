@@ -9,12 +9,10 @@ from typing import Any
 from ..db import Database
 from ..redis_store import begin_turn, drop_turn, load_results, store_result
 from ..repositories.run_repository import (
-    append_checkpoint,
     append_run_event,
-    create_agent_run,
+    commit_task_wave,
     find_runs_by_owner,
     latest_checkpoint,
-    mark_waiting_for_tasks,
     requeue_waiting_tasks,
 )
 from ..services.dispatcher import dispatch_pending
@@ -78,31 +76,96 @@ def dispatch_wave(
     payload: dict[str, Any],
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """Enqueue the next ready wave and park the owner. None if there is nothing ready."""
-    ready = ready_wave(tasks, set(finished))
+    """Enqueue the next ready wave and park the owner. None if there is nothing ready.
+
+    The child runs, `tool.started` events, checkpoint, and `waiting_for_tasks`
+    commit together. Redis is armed first so a fast child cannot store a result
+    into a counter that does not exist yet. A commit that does not park drops
+    that counter. Workers are published only after the commit.
+    """
+
+    # 计算就绪波
+    ready = ready_wave(tasks, set(finished))   # 依赖全部 finished，但自己还没跑
     if not ready:
         return None
+
     wave_id = uuid.uuid4().hex
     session_id = str(session["id"])
-    begin_turn(session_id, wave_id, [task.id for task in ready])
-    prior = [results[dep] for task in ready for dep in task.depends_on if dep in results]
-    for task in ready:
-        _enqueue_child(db, owner, session, task, payload, wave_id, prior)
-        append_run_event(db, owner["org_id"], owner["id"], StepEvent.TOOL_STARTED, {
-            "tool_name": tool_name_for(task),
-            "task_id": task.id,
-            "display": tool_name_for(task),
-        })
-    saved = append_checkpoint(db, owner["id"], checkpoint_state(
-        tasks, finished, results, wave_id=wave_id, wave_ids=[task.id for task in ready], extra=extra,
-    ))
-    if saved is None:
+    task_ids = [task.id for task in ready]
+    begin_turn(session_id, wave_id, task_ids)
+
+    try:
+        prior = _collect_prior(ready, results)
+        children = [
+            _child_spec(owner, session, task, payload, wave_id, prior) for task in ready
+        ]
+        parked = commit_task_wave(db, owner["id"], children, checkpoint_state(
+            tasks, finished, results, wave_id=wave_id, wave_ids=task_ids, extra=extra,
+        ), {"wave_id": wave_id, "task_ids": task_ids})
+    except Exception:
+        drop_turn(session_id, wave_id)
+        raise
+    if parked is None:
+        drop_turn(session_id, wave_id)
         return None
-    parked = mark_waiting_for_tasks(db, owner["id"], {
-        "wave_id": wave_id, "task_ids": [task.id for task in ready],
-    })
+
+    # 出队，触发下一个 ready 波
     dispatch_pending(db)
     return parked
+
+
+def _collect_prior(
+    ready: list[PlanTask], results: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Collect dependency results and reject an incomplete or malformed envelope."""
+    prior: list[dict[str, Any]] = []
+    for task in ready:
+        for dependency_id in task.depends_on:
+            if dependency_id not in results:
+                raise ValueError(
+                    f"missing result for dependency {dependency_id!r} of task {task.id!r}"
+                )
+            result = results[dependency_id]
+            if not isinstance(result, dict):
+                raise ValueError(
+                    f"invalid result for dependency {dependency_id!r} of task {task.id!r}: expected object"
+                )
+            required = ("id", "kind", "name", "ok", "error", "payload")
+            if any(key not in result for key in required):
+                raise ValueError(
+                    f"invalid result for dependency {dependency_id!r} of task {task.id!r}: "
+                    f"missing one of {required!r}"
+                )
+            if result["id"] != dependency_id:
+                raise ValueError(
+                    f"invalid result for dependency {dependency_id!r} of task {task.id!r}: id mismatch"
+                )
+            if not isinstance(result["kind"], str) or not result["kind"]:
+                raise ValueError(
+                    f"invalid result for dependency {dependency_id!r} of task {task.id!r}: "
+                    "kind must be a string"
+                )
+            if not isinstance(result["name"], str) or not result["name"]:
+                raise ValueError(
+                    f"invalid result for dependency {dependency_id!r} of task {task.id!r}: "
+                    "name must be a string"
+                )
+            if not isinstance(result["ok"], bool):
+                raise ValueError(
+                    f"invalid result for dependency {dependency_id!r} of task {task.id!r}: ok must be boolean"
+                )
+            if result["error"] is not None and not isinstance(result["error"], str):
+                raise ValueError(
+                    f"invalid result for dependency {dependency_id!r} of task {task.id!r}: "
+                    "error must be string or null"
+                )
+            if not isinstance(result["payload"], dict):
+                raise ValueError(
+                    f"invalid result for dependency {dependency_id!r} of task {task.id!r}: "
+                    "payload must be object"
+                )
+            prior.append(result)
+    return prior
 
 
 def collect_wave(
@@ -164,8 +227,7 @@ def finish_child(
             dispatch_pending(db)
 
 
-def _enqueue_child(
-    db: Database,
+def _child_spec(
     owner: dict[str, Any],
     session: dict[str, Any],
     task: PlanTask,
@@ -174,30 +236,30 @@ def _enqueue_child(
     prior: list[dict[str, Any]],
 ) -> dict[str, Any]:
     session_id = str(session["id"])
-    key = f"chat:{session_id}:{owner['id']}:{task.id}"
-    child_input = {
-        "session_id": session_id,
-        "owner_run_id": owner["id"],
-        "task_id": task.id,
-        "kind": task.kind,
-        "name": task.name,
-        "tool_name": tool_name_for(task),
-        "input": task.input,
-        "prior": prior,
-        "wave_id": wave_id,
-        "message": payload.get("message") or "",
-        "images": payload.get("images") or [],
-        "documents": payload.get("documents") or [],
-        "attachments": payload.get("attachments") or [],
-        "model": payload.get("model"),
-    }
+    tool_name = tool_name_for(task)
     run_type = run_type_for(task)
     try:
         RunType(run_type)
     except ValueError:
         run_type = RunType.TOOL
-    child, _created = create_agent_run(
-        db, owner["org_id"], owner["user_id"], run_type, key, child_input,
-        owner_run_id=owner["id"],
-    )
-    return child
+    return {
+        "run_type": run_type,
+        "idempotency_key": f"chat:{session_id}:{owner['id']}:{task.id}",
+        "input": {
+            "session_id": session_id,
+            "owner_run_id": owner["id"],
+            "task_id": task.id,
+            "kind": task.kind,
+            "name": task.name,
+            "tool_name": tool_name,
+            "input": task.input,
+            "prior": prior,
+            "wave_id": wave_id,
+            "message": payload.get("message") or "",
+            "images": payload.get("images") or [],
+            "documents": payload.get("documents") or [],
+            "attachments": payload.get("attachments") or [],
+            "model": payload.get("model"),
+        },
+        "started": {"tool_name": tool_name, "task_id": task.id, "display": tool_name},
+    }

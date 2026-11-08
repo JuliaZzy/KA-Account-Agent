@@ -88,7 +88,7 @@ Run 接口只认 `X-User-Id`。用它查出 `users` 行，`org_id` 取 `distribu
 
 `GET /runs/{id}/events?after=` 返回 `sequence` 大于 `after` 的公开事件。没传 `after` 时用请求头 `Last-Event-ID`，两个都没有就从 0 开始。
 
-公开事件推给聊天页：`run.created`、`run.started`、`step.started`、`step.completed`、`model.started`、`model.completed`、`tool.started`、`tool.completed`、`tool.failed`、`tool.manual_review`、`run.waiting_for_user`、`run.requeued_by_sweeper`、`run.completed`、`run.failed`、`run.cancelled`。
+公开事件推给聊天页：`run.created`、`run.started`、`step.started`、`step.completed`、`model.started`、`model.completed`、`tool.started`、`tool.completed`、`tool.failed`、`tool.manual_review`、`run.reply_updated`、`run.waiting_for_user`、`run.requeued_by_sweeper`、`run.completed`、`run.failed`、`run.cancelled`。
 
 内部事件留在库里，从 `/trace` 读，不进聊天时间线：`run.retry_scheduled`、`run.resumed`、`run.cancel_requested`、`run.enqueued`、`run.queue_stale`、`run.waiting_reminder`、`run.budget_warning`。跳过还是确认，读库里的 `run.resumed`。
 
@@ -96,7 +96,7 @@ Run 接口只认 `X-User-Id`。用它查出 `users` 行，`org_id` 取 `distribu
 
 `GET /runs/{id}/events/stream` 先把已落库的行推完，再 `LISTEN run_events`。通知到达，或 15 秒心跳到达，就按当前 `sequence` 再查一次。没有新行就发 `: heartbeat`，不占序号。一条 SSE 是 `id`（sequence）、`event`（event_type）、`data`（公开 payload）。`run.completed`、`run.failed`、`run.cancelled` 推出后关闭。`run.waiting_for_user` 不关闭。这条流不调模型、不调工具、不改状态。
 
-正在生成的正文在 `output_json.text`。写正文不产生事件，页面边听事件流边读这条 run。
+正在生成的正文在 `output_json.text`，每次更新同时写一条 `run.reply_updated`，payload 带 `text` 和 `generation_id`。模型返回的 `reasoning_content` 写在对应 `model_calls.response_json.reasoning`，公开事件会隐藏它。
 
 | | 取消 | 断连 |
 |---|---|---|

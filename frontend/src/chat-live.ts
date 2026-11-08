@@ -138,6 +138,21 @@ export function liveFromRun(
   return {};
 }
 
+/** Read the latest durable reply event. This makes the SSE path as fast as the run poll. */
+export function liveFromEvents(
+  flight: Flight,
+  events: { event_type: string; payload_json?: { text?: string; generation_id?: string } }[],
+): Partial<Flight> {
+  const event = [...events].reverse().find((item) => item.event_type === "run.reply_updated");
+  const payload = event?.payload_json;
+  if (!payload || typeof payload.text !== "string") return {};
+  const generationId = payload.generation_id ?? flight.generationId;
+  if (generationId && generationId !== flight.generationId) {
+    return { generationId, live: payload.text };
+  }
+  return { live: payload.text };
+}
+
 export function resetChatLive(): void {
   flights.clear();
   dropped.clear();

@@ -363,17 +363,20 @@ def fold_session(db: Database, llm: Any, session_id: str, run_id: str | None) ->
 
 def record_history(
     db: Database, session: dict[str, Any], history: list[dict[str, Any]], *,
-    llm: Any | None = None, run_id: str | None = None, **fields: Any,
+    llm: Any | None = None, fold: bool | None = None, run_id: str | None = None, **fields: Any,
 ) -> None:
     """Store the whole transcript. Folding, when the prefix is long enough, does not run inside the reply.
 
     The cursor and summary are left for the fold itself, so a save cannot overwrite a fold that
     already finished. The chat route schedules that fold after the stream is sent. Without a
     scheduler the fold still runs here, so a direct caller sees the summary before this returns.
+    `fold` defaults to whether a client was passed. A chat reply sets it so the worker can fold
+    without injecting a vendor; `llm` None then opens the campus client inside the fold.
     """
     db.update_session(session["id"], history=history, **fields)
     folded = int(session.get("folded_through") or 0)
-    if llm is None or _prefix_tokens(history, folded) < FOLD_TOKENS:
+    should_fold = (llm is not None) if fold is None else fold
+    if not should_fold or _prefix_tokens(history, folded) < FOLD_TOKENS:
         return
     session_id = str(session["id"])
 

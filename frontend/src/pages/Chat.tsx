@@ -2,7 +2,10 @@ import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as R
 
 import { api, cancelRun, followRun, getRunEvents, postJson, resumeRun, streamMessage, type RunEvent } from "../api";
 import { CHAT_DOC_EXTS, CHAT_IMAGE_EXTS, clipAttachedFiles, fileExt } from "../chat-files";
-import { flightOf, isChatBusy, isForgotten, liveFromRun, onForgetChat, patchFlight, setActiveChat, useFlight } from "../chat-live";
+import {
+  flightOf, isChatBusy, isForgotten, liveFromEvents, liveFromRun, onForgetChat,
+  patchFlight, setActiveChat, useFlight,
+} from "../chat-live";
 import { NeedPartnership, useDesk } from "../desk";
 import {
   citationSources,
@@ -471,7 +474,11 @@ function ChatDesk() {
       if (!runId || !userId) throw new Error("run was not created");
       const ended = await followRun(runId, partnership.id, userId, stop.signal, (events, run) => {
         steps = activitiesFromEvents(events, run.status);
-        patchFlight(chatId, { steps, ...liveFromRun(flightOf(chatId), run.output_json) });
+        patchFlight(chatId, {
+          steps,
+          ...liveFromRun(flightOf(chatId), run.output_json),
+          ...liveFromEvents(flightOf(chatId), events),
+        });
         parkedTool = waitingToolName(events) ?? parkedTool;
       });
       if (ended.status === "cancelled") {
@@ -523,7 +530,11 @@ function ChatDesk() {
       });
       const ended = await followRun(runId, partnership.id, userId, stop.signal, (events, run) => {
         steps = activitiesFromEvents(events, run.status);
-        patchFlight(chatId, { steps, ...liveFromRun(flightOf(chatId), run.output_json) });
+        patchFlight(chatId, {
+          steps,
+          ...liveFromRun(flightOf(chatId), run.output_json),
+          ...liveFromEvents(flightOf(chatId), events),
+        });
         parkedTool = waitingToolName(events) ?? parkedTool;
       });
       if (ended.status === "cancelled") {

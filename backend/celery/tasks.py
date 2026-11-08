@@ -46,6 +46,18 @@ def execute_run(self, run_id: str, trace_id: str | None = None) -> str:
         raise self.retry(countdown=30)
     db = Database()
 
+    # Celery does not increment max_retries when a worker process is lost.
+    # Count redeliveries in Postgres so poison tasks eventually enter the
+    # existing dead-letter flow while transient worker loss remains recoverable.
+    if (self.request.delivery_info or {}).get("redelivered"):
+        from ..db.database.queue import WORKER_LOST_MAX_REDELIVERIES
+
+        outcome = db.record_worker_loss_redelivery(
+            run_id, max_attempts=WORKER_LOST_MAX_REDELIVERIES,
+        )
+        if outcome == "dead_letter":
+            return run_id
+
     # worker 唯一标识，抢租约
     worker_id = f"celery:{os.getpid()}"
 

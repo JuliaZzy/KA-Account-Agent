@@ -99,6 +99,25 @@ def _histogram(
     }
 
 
+def _wave_child(child: dict[str, Any]) -> tuple[str, str, dict[str, Any], dict[str, Any]]:
+    """One child of `commit_task_wave`: key, run type, input, and the owner's started event."""
+    if not isinstance(child, dict):
+        raise ValueError("task wave child must be an object")
+    key = child.get("idempotency_key")
+    run_type = child.get("run_type")
+    run_input = child.get("input")
+    started = child.get("started")
+    if not isinstance(key, str) or not key:
+        raise ValueError("task wave child needs an idempotency key")
+    if not isinstance(run_type, str) or not run_type:
+        raise ValueError("task wave child needs a run type")
+    if not isinstance(run_input, dict):
+        raise ValueError("task wave child input must be an object")
+    if not isinstance(started, dict):
+        raise ValueError("task wave child needs a started event")
+    return key, run_type, run_input, started
+
+
 class RunMixin:
     def find_agent_run(self, org_id: str, run_id: str) -> dict[str, Any] | None:
         """Load one run. `org_id` is part of the lookup, so another org's id looks missing."""
@@ -413,40 +432,77 @@ class RunMixin:
         run_id = f"run_{uuid.uuid4().hex}"
         try:
             with self.tx() as s:
-                run = orm.AgentRun(
-                    id=run_id,
+                run = self._insert_queued_run(
+                    s,
+                    run_id=run_id,
                     org_id=org_id,
                     user_id=user_id,
                     run_type=run_type,
                     idempotency_key=idempotency_key,
-                    status=RunStatus.QUEUED,
-                    input_json=run_input,
+                    run_input=run_input,
+                    now=now,
                     parent_run_id=parent_run_id,
                     owner_run_id=owner_run_id,
-                    trace_id=uuid.uuid4().hex,
                     max_model_calls=max_model_calls,
                     max_tokens=max_tokens,
                     max_tool_calls=max_tool_calls,
                     max_duration_seconds=max_duration_seconds,
-                    created_at=now,
-                    updated_at=now,
                 )
-                s.add(run)
-                s.flush()
-                created = {"status": RunStatus.QUEUED}
-                if parent_run_id is not None:
-                    created["parent_run_id"] = parent_run_id
-                if owner_run_id is not None:
-                    created["owner_run_id"] = owner_run_id
-                self._append_event(s, run_id, StepEvent.RUN_CREATED, created, now)
-                self._add_execute_outbox(s, run, now)
-                s.flush()
                 return _row_dict(run), True
         except IntegrityError:
             existing = self.find_agent_run_by_idempotency(org_id, idempotency_key)
             if existing is None:
                 raise
             return existing, False
+
+    def _insert_queued_run(
+        self,
+        s: Session,
+        *,
+        run_id: str,
+        org_id: str,
+        user_id: str,
+        run_type: str,
+        idempotency_key: str,
+        run_input: dict[str, Any],
+        now: datetime,
+        parent_run_id: str | None = None,
+        owner_run_id: str | None = None,
+        max_model_calls: int | None = None,
+        max_tokens: int | None = None,
+        max_tool_calls: int | None = None,
+        max_duration_seconds: int | None = None,
+    ) -> orm.AgentRun:
+        """Insert a queued run, `run.created`, and its execute outbox. The caller owns the transaction."""
+        run = orm.AgentRun(
+            id=run_id,
+            org_id=org_id,
+            user_id=user_id,
+            run_type=run_type,
+            idempotency_key=idempotency_key,
+            status=RunStatus.QUEUED,
+            input_json=run_input,
+            parent_run_id=parent_run_id,
+            owner_run_id=owner_run_id,
+            trace_id=uuid.uuid4().hex,
+            max_model_calls=max_model_calls,
+            max_tokens=max_tokens,
+            max_tool_calls=max_tool_calls,
+            max_duration_seconds=max_duration_seconds,
+            created_at=now,
+            updated_at=now,
+        )
+        s.add(run)
+        s.flush()
+        created: dict[str, Any] = {"status": RunStatus.QUEUED}
+        if parent_run_id is not None:
+            created["parent_run_id"] = parent_run_id
+        if owner_run_id is not None:
+            created["owner_run_id"] = owner_run_id
+        self._append_event(s, run_id, StepEvent.RUN_CREATED, created, now)
+        self._add_execute_outbox(s, run, now)
+        s.flush()
+        return run
 
     def find_agent_run_by_id(self, run_id: str) -> dict[str, Any] | None:
         """Load a run by primary key. The worker has noorg header; the HTTP API still filters by org."""
@@ -822,6 +878,7 @@ class RunMixin:
 
     def note_running_reply(
         self, run_id: str, text: str, *, generation_id: str | None = None,
+        reasoning: str | None = None,
     ) -> dict[str, Any] | None:
         """Store reply text while the run is still running. The status stays running.
 
@@ -840,7 +897,11 @@ class RunMixin:
             payload: dict[str, Any] = {"text": text}
             if generation_id:
                 payload["generation_id"] = generation_id
+            if reasoning:
+                payload["reasoning"] = reasoning
             run.output_json = payload
+            if text:
+                self._append_event(s, run_id, StepEvent.RUN_REPLY_UPDATED, payload, utcnow())
             s.flush()
             return _row_dict(run)
 
@@ -877,6 +938,62 @@ class RunMixin:
             if run is None or run.cancel_requested_at is not None:
                 return None
             self._transition(s, run, RunStatus.WAITING_FOR_TASKS, payload or {}, now)
+            s.flush()
+            return _row_dict(run)
+
+    def commit_task_wave(
+        self,
+        owner_run_id: str,
+        children: list[dict[str, Any]],
+        checkpoint: dict[str, Any],
+        wait_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Park one wave in a single commit.
+
+        Each child is a queued run, `run.created`, and an execute outbox. The owner
+        also gets one `tool.started` per child, the checkpoint, and the move from
+        `running` to `waiting_for_tasks`. A child idempotency key that already exists
+        is reused and does not get another outbox row.
+
+        None when the owner is missing, not running, already asked to cancel, or
+        `children` is empty. Redis and the outbox publish stay outside this commit.
+        """
+        now = utcnow()
+        specs = [_wave_child(child) for child in children]
+        with self.tx() as s:
+            run = s.scalars(
+                select(orm.AgentRun)
+                .where(orm.AgentRun.id == owner_run_id, orm.AgentRun.status == RunStatus.RUNNING)
+                .with_for_update()
+            ).first()
+            if run is None or run.cancel_requested_at is not None or not specs:
+                return None
+            self._require_checkpoint_state(checkpoint)
+            keys = [key for key, _run_type, _run_input, _started in specs]
+            existing = s.scalars(
+                select(orm.AgentRun).where(
+                    orm.AgentRun.org_id == run.org_id,
+                    orm.AgentRun.idempotency_key.in_(keys),
+                )
+            ).all()
+            by_key = {row.idempotency_key: row for row in existing}
+            for key, run_type, run_input, started in specs:
+                if key not in by_key:
+                    by_key[key] = self._insert_queued_run(
+                        s,
+                        run_id=f"run_{uuid.uuid4().hex}",
+                        org_id=run.org_id,
+                        user_id=run.user_id,
+                        run_type=run_type,
+                        idempotency_key=key,
+                        run_input=run_input,
+                        now=now,
+                        owner_run_id=run.id,
+                    )
+                self._append_event(s, run.id, StepEvent.TOOL_STARTED, started, now)
+            if self._write_checkpoint(s, run.id, checkpoint, now) is None:
+                raise RuntimeError("owner missing while committing a task wave")
+            self._transition(s, run, RunStatus.WAITING_FOR_TASKS, wait_payload or {}, now)
             s.flush()
             return _row_dict(run)
 

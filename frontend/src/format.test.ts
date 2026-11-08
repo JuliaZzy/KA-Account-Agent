@@ -155,6 +155,11 @@ describe("desk formatters", () => {
       { id: "1", title: "已开始", detail: "", state: "done" },
       { id: "2", title: "正在思考", detail: "", state: "running" },
     ]);
+    expect(activitiesFromEvents([
+      { sequence: 4, event_type: "tool.completed", payload_json: { tool_name: "report.draft" } },
+    ], "running")).toEqual([
+      { id: "4", title: "已完成 report.draft", detail: "", state: "done" },
+    ]);
     expect(activitiesFromEvents(null)).toEqual([]);
   });
 

@@ -92,8 +92,15 @@ def execute_for(
         tools = turn_tools(db, llm, session, text, images=images, documents=documents)
 
     def execute(run: dict[str, Any]) -> dict[str, Any]:
-        def on_text(growing: str, generation_id: str | None = None) -> None:
-            note_running_reply(db, run["id"], growing, generation_id=generation_id)
+        def on_text(
+            growing: str,
+            generation_id: str | None = None,
+            reasoning: str | None = None,
+        ) -> None:
+            kwargs: dict[str, Any] = {"generation_id": generation_id}
+            if reasoning:
+                kwargs["reasoning"] = reasoning
+            note_running_reply(db, run["id"], growing, **kwargs)
             
         decide, answer = bind(llm, decide_system=decide_system, answer_system=answer_system, on_text=on_text)
         return execute_run(db, tools, decide=decide, answer=answer)(run)

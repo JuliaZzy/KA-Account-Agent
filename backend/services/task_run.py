@@ -10,7 +10,7 @@ from ..db import Database
 from ..llm.errors import ModelCapacityExceeded, ProviderError
 from ..orchestrator.gather import finish_child
 from ..orchestrator.plan import PlanTask, tool_name_for
-from ..services.run_names import StepStatus, StepType, ToolCallStatus, step_name
+from ..services.run_names import StepStatus, StepType, ToolCallStatus, step_name, tool_error
 from ..services.session_tools import tools as turn_tools
 
 log = logging.getLogger(__name__)
@@ -60,6 +60,28 @@ def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
             db.finish_step(step_id, StepStatus.FAILED, None, {"message": result["error"]})
         finish_child(db, run, result)
         return result
+
+    # Planned side effects run outside run_loop.execute_tool. Reserve their
+    # idempotency seat before entering the handler, so a lease retry can tell
+    # "the call may have escaped" from "the process died before the call".
+    claimed_id: str | None = None
+    if tool.side_effect and tool.idempotency_required and step_id:
+        key = _planned_idempotency_key(name, run, payload, step_id)
+        claimed = db.claim_tool_call(
+            run["id"], step_id, tool_name=name, args=args, idempotency_key=key,
+        )
+        if claimed is None:
+            result = _failed(payload, "tool run is no longer active", name=name)
+            db.finish_step(step_id, StepStatus.FAILED, None, {"message": result["error"]})
+            finish_child(db, run, result)
+            return result
+        row, created = claimed
+        if not created:
+            result = _reused_planned_call(db, step_id, payload, name, row)
+            finish_child(db, run, result)
+            return result
+        claimed_id = str(row["id"])
+
     try:
         raw = tool.fn(args, context={
             "run_id": run["id"], "step_id": step_id,
@@ -76,15 +98,95 @@ def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
             "error": None if ok else str(raw.get("error") or "tool failed"),
             "payload": raw,
         }
-        _record_tool(db, run, step_id, name, args, result, raw if ok else None)
+        if claimed_id:
+            _complete_planned_call(db, claimed_id, result, raw if ok else None)
+        else:
+            _record_tool(db, run, step_id, name, args, result, raw if ok else None)
     except (ModelCapacityExceeded, ProviderError):
         raise
     except Exception as exc:
         log.exception("child tool %s failed", name)
         result = _failed(payload, str(exc), name=name)
-        _record_tool(db, run, step_id, name, args, result, None)
+        if claimed_id:
+            _complete_planned_call(db, claimed_id, result, None)
+        else:
+            _record_tool(db, run, step_id, name, args, result, None)
     finish_child(db, run, result)
     return result
+
+
+def _planned_idempotency_key(
+    name: str, run: dict[str, Any], payload: dict[str, Any], step_id: str,
+) -> str:
+    """Use the owning plan and task identity for planned side effects."""
+    task_id = str(payload.get("task_id") or step_id)
+    owner_id = str(run.get("owner_run_id") or payload.get("owner_run_id") or run["id"])
+    return f"{name}:{owner_id}:{task_id}"
+
+
+def _reused_planned_call(
+    db: Database,
+    step_id: str,
+    payload: dict[str, Any],
+    name: str,
+    row: dict[str, Any],
+) -> dict[str, Any]:
+    """Settle a retry from the durable side-effect row without calling the handler."""
+    status = str(row.get("status") or ToolCallStatus.FAILED)
+    if status == ToolCallStatus.RUNNING:
+        error = tool_error(
+            "TOOL_RESPONSE_LOST", "side-effect result was lost; manual review is required",
+        )
+        db.complete_tool_call(
+            row["id"], result={}, status=ToolCallStatus.RESPONSE_LOST, latency_ms=0,
+            error=error, audit=True, manual_review=True,
+            step_status=StepStatus.FAILED, step_output={}, step_error=error,
+        )
+        result = _failed(payload, error["message"], name=name)
+        db.finish_step(step_id, StepStatus.FAILED, {}, error)
+        return result
+
+    if status == ToolCallStatus.SUCCEEDED:
+        raw = row.get("result_json") if isinstance(row.get("result_json"), dict) else {}
+        ok = raw.get("ok", True) is not False and not raw.get("error")
+        result = {
+            "id": payload.get("task_id"), "kind": payload.get("kind"), "name": name,
+            "ok": bool(ok), "error": None if ok else str(raw.get("error") or "tool failed"),
+            "payload": raw,
+        }
+        db.finish_step(step_id, StepStatus.SUCCEEDED if ok else StepStatus.FAILED, raw, None if ok else {
+            "message": result["error"],
+        })
+        return result
+
+    stored_error = row.get("error_json") if isinstance(row.get("error_json"), dict) else {}
+    message = str(stored_error.get("message") or "tool failed")
+    result = _failed(payload, message, name=name)
+    db.finish_step(step_id, StepStatus.FAILED, {}, stored_error or {"message": message})
+    return result
+
+
+def _complete_planned_call(
+    db: Database,
+    tool_call_id: str,
+    result: dict[str, Any],
+    output: dict[str, Any] | None,
+) -> None:
+    """Close a pre-claimed planned side effect and its current step atomically."""
+    ok = bool(result.get("ok"))
+    status = ToolCallStatus.SUCCEEDED if ok else ToolCallStatus.FAILED
+    error = None if ok else {"message": result.get("error") or "tool failed"}
+    db.complete_tool_call(
+        tool_call_id,
+        result=output or {},
+        status=status,
+        latency_ms=0,
+        error=error,
+        audit=True,
+        step_status=StepStatus.SUCCEEDED if ok else StepStatus.FAILED,
+        step_output=output if ok else {},
+        step_error=error,
+    )
 
 
 def _record_tool(
