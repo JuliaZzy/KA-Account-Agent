@@ -99,7 +99,7 @@ def test_pdf_ocr_is_a_tool_step_while_the_run_is_running(db, monkeypatch):
         (1, "# Agreement\n\nMinimum order USD 500."),
     ]
     assert db.run_trace("dist-1", run["id"])["steps"] == []
-    assert db.claim_run(run["id"], "worker-test", utcnow() + timedelta(minutes=5)) is not None
+    assert db.claim_chat_turn(run["id"], "worker-test", utcnow() + timedelta(minutes=5)) is not None
     pages = load_pages("notes.txt", b"hello\n\nthere", db=db, run_id=run["id"])
     assert pages == [(1, "hello\n\nthere")]
     pages = load_pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"])

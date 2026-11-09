@@ -249,6 +249,9 @@ def run_loop(
                 content=text,
                 prompt_tokens=int(getattr(answer, "prompt_tokens", 0) or 0),
                 completion_tokens=int(getattr(answer, "completion_tokens", 0) or 0),
+                cache_hit_tokens=getattr(answer, "cache_hit_tokens", None),
+                cache_miss_tokens=getattr(answer, "cache_miss_tokens", None),
+                cache_creation_tokens=getattr(answer, "cache_creation_tokens", None),
             )
         if not text:
             raise PermanentRunError("model returned empty content")
@@ -1288,10 +1291,15 @@ def _record_model_step(
     response = _assistant_message(turn) if turn is not None else _last_assistant(context)
     prompt_tokens = int(getattr(turn, "prompt_tokens", 0) or 0) if turn is not None else 0
     completion_tokens = int(getattr(turn, "completion_tokens", 0) or 0) if turn is not None else 0
+    cache_hit_tokens = getattr(turn, "cache_hit_tokens", None) if turn is not None else None
+    cache_miss_tokens = getattr(turn, "cache_miss_tokens", None) if turn is not None else None
+    cache_creation_tokens = getattr(turn, "cache_creation_tokens", None) if turn is not None else None
     recorded = insert_model_call(
         db, run["id"], step["id"],
         provider=provider, model=model_name, request={"messages": _request_messages(context)},
         response=response, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+        cache_hit_tokens=cache_hit_tokens, cache_miss_tokens=cache_miss_tokens,
+        cache_creation_tokens=cache_creation_tokens,
         latency_ms=latency_ms, status=StepStatus.SUCCEEDED,
     )
     if recorded is None:

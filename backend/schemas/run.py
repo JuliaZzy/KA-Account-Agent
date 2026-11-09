@@ -148,6 +148,9 @@ class UsageRecord(BaseModel):
     completion_tokens: int
     total_tokens: int
     estimated_cost_cents: int
+    cache_hit_tokens: int | None = None
+    cache_miss_tokens: int | None = None
+    cache_creation_tokens: int | None = None
     usage_source: str | None = None
     created_at: datetime
 
@@ -162,9 +165,12 @@ class ModelCall(BaseModel):
     response_json: dict[str, Any]
     prompt_tokens: int
     completion_tokens: int
-    usage_source: str | None = None
     latency_ms: int
     status: str
+    cache_hit_tokens: int | None = None
+    cache_miss_tokens: int | None = None
+    cache_creation_tokens: int | None = None
+    usage_source: str | None = None
     error_json: dict[str, Any] | None = None
     created_at: datetime
 

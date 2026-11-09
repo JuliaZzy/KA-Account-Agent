@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 
-import { api, cancelRun, followRun, getRunEvents, postJson, resumeRun, streamMessage, type RunEvent } from "../api";
+import { api, cancelRun, createChatRun, followRun, getRunEvents, postJson, resumeRun, type RunEvent } from "../api";
 import { CHAT_DOC_EXTS, CHAT_IMAGE_EXTS, clipAttachedFiles, fileExt } from "../chat-files";
 import {
   flightOf, isChatBusy, isForgotten, liveFromEvents, liveFromRun, onForgetChat,
@@ -455,22 +455,14 @@ function ChatDesk() {
     let committed = false;
     let parkedTool: string | null = null;
     try {
-      await streamMessage(chatId, {
+      const created = await createChatRun(chatId, {
         message: trimmed,
         images,
         attachments: documents.map((d) => d.name),
         files: documents,
-      }, async (event) => {
-        if (typeof event.run_id === "string" && event.run_id) patchFlight(chatId, { runId: event.run_id });
-        if (event.type === "session") {
-          title = (event.title as string | null) ?? title;
-          tags = (event.tags as string[]) ?? tags;
-          desk.nameSession(chatId, title, tags);
-        } else if (event.type === "error") {
-          throw new Error(String(event.message ?? "The model could not finish this reply."));
-        }
       }, stop.signal);
-      const runId = flightOf(chatId).runId;
+      const runId = created.run_id;
+      patchFlight(chatId, { runId });
       if (!runId || !userId) throw new Error("run was not created");
       const ended = await followRun(runId, partnership.id, userId, stop.signal, (events, run) => {
         steps = activitiesFromEvents(events, run.status);

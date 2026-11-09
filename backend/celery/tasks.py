@@ -67,5 +67,5 @@ def execute_run(self, run_id: str, trace_id: str | None = None) -> str:
 
     # 若会话繁忙，则 2 秒后重试
     except SessionBusy as e:
-        raise self.retry(countdown=2) from e
+        raise self.retry(countdown=10) from e
     return run_id

@@ -288,7 +288,7 @@ def test_code_fix_is_recorded_on_the_tool_step(db):
     from backend.llm import FakeLLM
 
     run, _created = db.create_agent_run("dist-1", "u-a", "chat", "codefix-trace", {"message": "fix"})
-    claimed = db.claim_run(run["id"], "worker-test", utcnow() + timedelta(minutes=5))
+    claimed = db.claim_chat_turn(run["id"], "worker-test", utcnow() + timedelta(minutes=5))
     assert claimed is not None
     step = db.insert_step(run["id"], "tool", "report.draft", {})
     assert step is not None

@@ -93,11 +93,6 @@ def find_agent_run_by_id(db: Database, run_id: str) -> dict[str, Any] | None:
     return db.find_agent_run_by_id(run_id)
 
 
-def claim_run(
-    db: Database, run_id: str, worker_id: str, lease_expires_at: datetime,
-) -> dict[str, Any] | None:
-    return db.claim_run(run_id, worker_id, lease_expires_at)
-
 def claim_chat_turn(
     db: Database, run_id: str, worker_id: str, lease_expires_at: datetime,
 ) -> dict[str, Any] | None:

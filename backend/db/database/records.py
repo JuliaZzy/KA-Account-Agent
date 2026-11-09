@@ -24,6 +24,16 @@ _TOOL_DONE = frozenset({ToolCallStatus.SUCCEEDED, ToolCallStatus.FAILED})
 _TOOL_SETTLE = _TOOL_DONE | {ToolCallStatus.RESPONSE_LOST}
 _CHECKPOINT_KEYS = frozenset({"context", "completed_tool_calls", "last"})
 
+
+def _optional_nonnegative_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return None
+
+
 class RecordMixin:
     def latest_checkpoint(self, run_id: str) -> dict[str, Any] | None:
         with self.tx() as s:
@@ -41,15 +51,30 @@ class RecordMixin:
             row = self._write_checkpoint(s, run_id, state, utcnow())
             return _row_dict(row) if row is not None else None
 
-    def append_checkpoint_result(self, run_id: str, task_id: str, result: dict[str, Any]) -> int | None:
-        """Merge one fan-out result while holding the owner run lock."""
+    def record_child_wave_result(
+        self,
+        org_id: str,
+        owner_run_id: str,
+        task_id: str,
+        result: dict[str, Any],
+        *,
+        event_type: str | None,
+        event_payload: dict[str, Any] | None,
+    ) -> bool | None:
+        """Merge one child result on the owner checkpoint and optionally append a tool event.
+
+        True commits both. None when the owner is missing. False when the org does not match.
+        """
+        now = utcnow()
         with self.tx() as s:
-            run = self._lock_run(s, run_id)
+            run = self._lock_run(s, owner_run_id)
             if run is None:
                 return None
+            if org_id and run.org_id != org_id:
+                return False
             previous = s.scalars(
                 select(orm.Checkpoint)
-                .where(orm.Checkpoint.run_id == run_id)
+                .where(orm.Checkpoint.run_id == owner_run_id)
                 .order_by(orm.Checkpoint.checkpoint_index.desc())
                 .limit(1)
             ).first()
@@ -63,8 +88,12 @@ class RecordMixin:
             orchestrator["results"] = results
             orchestrator["finished"] = finished
             state["orchestrator"] = orchestrator
-            row = self._write_checkpoint(s, run_id, state, utcnow())
-            return _row_dict(row) if row is not None else None
+            if self._write_checkpoint(s, owner_run_id, state, now) is None:
+                return None
+            if event_type and event_payload is not None:
+                self._append_event(s, owner_run_id, event_type, event_payload, now)
+            s.flush()
+            return True
 
     def insert_step(
         self, 
@@ -160,6 +189,9 @@ class RecordMixin:
         completion_tokens: int,
         latency_ms: int,
         status: str,
+        cache_hit_tokens: int | None = None,
+        cache_miss_tokens: int | None = None,
+        cache_creation_tokens: int | None = None,
         error: dict[str, Any] | None = None,
         usage_source: str | None = None,
         emit_event: bool = True,
@@ -174,6 +206,9 @@ class RecordMixin:
         now = utcnow()
         prompt_tokens = max(0, int(prompt_tokens))
         completion_tokens = max(0, int(completion_tokens))
+        cache_hit_tokens = _optional_nonnegative_int(cache_hit_tokens)
+        cache_miss_tokens = _optional_nonnegative_int(cache_miss_tokens)
+        cache_creation_tokens = _optional_nonnegative_int(cache_creation_tokens)
         with self.tx() as s:
             step = self._lock_step(s, run_id, step_id)
             if step is None:
@@ -191,6 +226,9 @@ class RecordMixin:
                 response_json = response or {},
                 prompt_tokens = prompt_tokens,
                 completion_tokens = completion_tokens,
+                cache_hit_tokens = cache_hit_tokens,
+                cache_miss_tokens = cache_miss_tokens,
+                cache_creation_tokens = cache_creation_tokens,
                 usage_source = usage_source,
                 latency_ms = latency_ms,
                 status = status,
@@ -206,6 +244,9 @@ class RecordMixin:
                 model=model,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
+                cache_hit_tokens=cache_hit_tokens,
+                cache_miss_tokens=cache_miss_tokens,
+                cache_creation_tokens=cache_creation_tokens,
                 total_tokens=prompt_tokens + completion_tokens,
                 estimated_cost_cents=0,
                 usage_source=usage_source,

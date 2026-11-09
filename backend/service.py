@@ -1,10 +1,11 @@
 """The agent's operations, independent of transport.
 
-Chat turns live in `orchestrator.handle_message` (the same event stream the HTTP API
-serializes for the web desk). Confirmation is a plain call. Nothing in here knows about
-requests, responses or widgets.
+Chat turns are queued Runs; the HTTP layer returns their ids and the Run API
+streams durable events separately. Confirmation is a plain call. Nothing in
+here knows about requests, responses or widgets.
 
-Events:  {type: route}  {type: token, text}  {type: warning, message}  {type: done, …}
+The legacy direct helper remains available for in-process tests; production
+clients consume the durable Run events instead.
 """
 
 from __future__ import annotations

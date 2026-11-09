@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>KA Account Agent · 一次聊天 run</title>
+<style>
+  :root {
+    --paper: #f3f0e8;
+    --ink: #1c1917;
+    --muted: #57534e;
+    --line: #78716c;
+    --card: #fffdf8;
+    --shadow: 0 1px 0 rgba(28, 25, 23, 0.04), 0 8px 20px rgba(28, 25, 23, 0.05);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    min-height: 100vh;
+    color: var(--ink);
+    background:
+      radial-gradient(circle at 1px 1px, rgba(120, 113, 108, 0.28) 1px, transparent 0) 0 0 / 22px 22px,
+      var(--paper);
+    font: 14px/1.45 "Iowan Old Style", "Palatino Linotype", Palatino, "Songti SC", "Source Han Serif SC", serif;
+  }
+
+  .page {
+    padding: 36px 28px 64px;
+  }
+  .board {
+    width: 1160px;
+    margin: 0 auto;
+  }
+
+  header.top { margin-bottom: 22px; }
+  h1 {
+    margin: 0 0 6px;
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+  }
+  .sub {
+    margin: 0;
+    max-width: 720px;
+    color: var(--muted);
+    font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", sans-serif;
+    font-size: 13.5px;
+  }
+
+  .runtime,
+  .control-flow {
+    margin: 0 auto 26px;
+    padding: 14px 16px 16px;
+    background: var(--card);
+    border: 1.5px solid var(--ink);
+    border-radius: 16px;
+    box-shadow: var(--shadow);
+  }
+  .control-flow { margin-bottom: 0; }
+  .runtime h2,
+  .control-flow h2 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 650;
+  }
+  .runtime .intro,
+  .control-flow .intro {
+    margin: 4px 0 12px;
+    color: var(--muted);
+    font-family: "Avenir Next", "PingFang SC", sans-serif;
+    font-size: 12px;
+  }
+  .runtime-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .runtime-step {
+    position: relative;
+    min-height: 128px;
+    padding: 9px 10px 8px;
+    background: #fafaf9;
+    border: 1px solid #d6d3d1;
+    border-radius: 10px;
+  }
+  .runtime-step h3,
+  .control-card h3 {
+    margin: 0;
+    font-family: "Avenir Next", "PingFang SC", sans-serif;
+    font-size: 13px;
+    font-weight: 650;
+  }
+  .runtime-step .fn,
+  .control-card .fn {
+    margin-top: 3px;
+    color: #57534e;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 10px;
+    line-height: 1.35;
+  }
+  .runtime-step .db {
+    margin-top: 6px;
+    padding-top: 5px;
+    border-top: 1px solid #e7e5e4;
+    color: #1c1917;
+    font-family: "Avenir Next", "PingFang SC", sans-serif;
+    font-size: 10.5px;
+    line-height: 1.35;
+  }
+  .runtime-step .db b,
+  .control-card b { color: #9a3412; font-weight: 650; }
+  .runtime-arrow {
+    position: absolute;
+    top: 50%;
+    right: -10px;
+    z-index: 2;
+    width: 12px;
+    height: 0;
+    border-top: 1.5px solid var(--line);
+  }
+  .runtime-arrow::after {
+    content: "";
+    position: absolute;
+    right: -1px;
+    top: -5px;
+    border: 4px solid transparent;
+    border-left: 7px solid var(--line);
+    border-right: 0;
+  }
+  .runtime-step:nth-child(4n) .runtime-arrow { display: none; }
+  .runtime-loop,
+  .control-state {
+    grid-column: 1 / -1;
+    color: #9a3412;
+    background: #fff7ed;
+    border: 1px dashed #c2410c;
+    border-radius: 8px;
+    font-family: "Avenir Next", "PingFang SC", sans-serif;
+    text-align: center;
+  }
+  .runtime-loop {
+    margin-top: -1px;
+    padding: 5px 8px;
+    font-size: 10.5px;
+  }
+  .control-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .control-card {
+    min-height: 132px;
+    padding: 9px 11px 10px;
+    background: #fafaf9;
+    border: 1px solid #d6d3d1;
+    border-left: 4px solid #60a5fa;
+    border-radius: 10px;
+  }
+  .control-card.retry { border-left-color: #fb923c; background: #fffaf3; }
+  .control-card.worker { border-left-color: #c084fc; background: #fcf9ff; }
+  .control-card.observe { border-left-color: #9ca3af; background: #fafafa; }
+  .control-card p {
+    margin: 5px 0 0;
+    color: var(--muted);
+    font-family: "Avenir Next", "PingFang SC", sans-serif;
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  .control-state {
+    margin-top: 1px;
+    padding: 8px 10px;
+    color: #57534e;
+    font-size: 11px;
+    line-height: 1.45;
+    text-align: left;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+<div class="board">
+  <header class="top">
+    <h1>一次聊天 run</h1>
+    <p class="sub">函数、队列、数据库，以及鉴权、幂等、重试、确认和清扫。业务编排图见 <a href="agent-call-paths.html">Agent 调用路径</a>。</p>
+  </header>
+
+  <section class="runtime" aria-label="一次聊天 run 的运行时生命周期">
+    <h2>一次聊天 run：函数、队列与数据库</h2>
+    <p class="intro"><code>execute_run()</code> 只处理一个 run 的一次投递；父 run 等子 run 时会释放租约，子任务完成后再重新入队。</p>
+    <div class="runtime-grid">
+      <article class="runtime-step">
+        <h3>1 · HTTP 收到消息</h3>
+        <div class="fn">session_router.message()<br>→ service.handle_message()</div>
+        <div class="db"><b>读取：</b>sessions<br><b>内存：</b>请求体、附件</div>
+        <i class="runtime-arrow" aria-hidden="true"></i>
+      </article>
+      <article class="runtime-step">
+        <h3>2 · 创建 queued run</h3>
+        <div class="fn">enqueue_chat_run()<br>→ create_agent_run()<br>→ dispatch_pending()</div>
+        <div class="db"><b>同一 PG 事务：</b>agent_runs、run_events(run.created)、outbox_jobs<br><b>随后：</b>dispatch_pending() 扫 pending outbox，<code>execute_run.delay(run_id)</code>，再标记 outbox 已派发（与 broker 分两段事务，可重扫）<br><b>注意：</b>此时还没有 agent_steps</div>
+        <i class="runtime-arrow" aria-hidden="true"></i>
+      </article>
+      <article class="runtime-step">
+        <h3>3 · Celery 领一次任务</h3>
+        <div class="fn">celery.tasks.execute_run()<br>→ run_worker.work_once()<br>→ claim_chat_turn()</div>
+        <div class="db"><b>更新：</b>agent_runs(lease/status)<br><b>写入：</b>run_events(run.started)</div>
+        <i class="runtime-arrow" aria-hidden="true"></i>
+      </article>
+      <article class="runtime-step">
+        <h3>4 · 父 run 做 PLAN</h3>
+        <div class="fn">execute_chat()<br>→ execute_parent()<br>→ make_plan()</div>
+        <div class="db"><b>写入：</b>agent_steps、model_calls、usage_records<br><b>产物：</b>tasks[] 计划</div>
+        <i class="runtime-arrow" aria-hidden="true"></i>
+      </article>
+      <article class="runtime-step">
+        <h3>5 · 按波派子 run</h3>
+        <div class="fn">dispatch_wave()<br>→ begin_turn()（Redis）<br>→ commit_task_wave()<br>→ dispatch_pending()</div>
+        <div class="db"><b>顺序：</b>先 Redis 计数与信箱，再<b>同一 PG 事务</b>写子 agent_runs、run.created、outbox_jobs、父 tool.started、父 checkpoint、父 waiting_for_tasks；commit 后对子 outbox 调 dispatch_pending() 发 Celery<br><b>不可同事务：</b>Redis、broker 消息</div>
+        <i class="runtime-arrow" aria-hidden="true"></i>
+      </article>
+      <article class="runtime-step">
+        <h3>6 · 子 run 执行任务</h3>
+        <div class="fn">execute_run()<br>→ work_once() / claim_chat_turn()<br>→ execute_task() → tool.fn(...)</div>
+        <div class="db"><b>写入（PG）：</b>子 run_events(run.started)、agent_steps、tool_calls、model_calls、output_json<br><b>结尾 finish_child 前：</b>账本只在 PG；崩溃靠子 run 重试与子 output_json 幂等恢复</div>
+        <i class="runtime-arrow" aria-hidden="true"></i>
+      </article>
+      <article class="runtime-step">
+        <h3>7 · 波次完成，唤醒父 run</h3>
+        <div class="fn">finish_child()<br>→ record_child_wave_result()<br>→ store_result()（Redis）<br>→ requeue_waiting_tasks() → dispatch_pending()</div>
+        <div class="db"><b>同一 PG 事务：</b>父 checkpoint.results + 父 tool.completed/failed<br><b>随后：</b>Redis 递减 left；left=0 时另一 PG 事务父 → queued + outbox + run.resumed，再 dispatch_pending()<br><b>慢路径：</b>Redis 丢则 sweep_waiting_for_tasks（默认 15 分钟）补唤醒</div>
+        <i class="runtime-arrow" aria-hidden="true"></i>
+      </article>
+      <article class="runtime-step">
+        <h3>8 · ANSWER 并完成</h3>
+        <div class="fn">execute_parent()<br>→ compose_answer()<br>→ save_reply()<br>→ _finish_claimed() / complete_run()</div>
+        <div class="db"><b>写入：</b>model_calls、usage_records、sessions.history<br><b>终态：</b>agent_runs → succeeded</div>
+      </article>
+      <div class="runtime-loop">5–7 会按依赖重复；没有 tasks 时，4 直接进入 8。首次无标题会话还会并行创建一个 OPEN run，执行 execute_open() 写 sessions.title / tags。</div>
+    </div>
+  </section>
+
+  <section class="control-flow" aria-label="鉴权、重试和恢复文字流程">
+    <h2>控制流文字版：鉴权、幂等、重试、确认和清扫</h2>
+    <p class="intro">正常路径在上面；这里补充“为什么会停下、什么时候会再投、什么情况下会失败”。每张卡都标出实际函数和文件。</p>
+    <div class="control-grid">
+      <article class="control-card">
+        <h3>1 · Run API 鉴权和入口闸门</h3>
+        <div class="fn">backend/routes/runs.py · get_current_user()<br>backend/services/entry_guard.py · admit_create() / admit_read()</div>
+        <p><b>Run API：</b><code>X-User-Id → db.user() → distributor_id(org_id)</code>，请求里的 org 不参与授权。随后用 Redis 固定窗口限流和并发闸门；失败在 HTTP 层返回 <code>401 UNAUTHENTICATED</code> 或 <code>429 RATE_LIMITED</code>。聊天 message 路由另外检查 session，再由 enqueue 使用 session 的 user/partnership。</p>
+      </article>
+      <article class="control-card">
+        <h3>2 · 幂等地创建 run</h3>
+        <div class="fn">run_service.create_run() / chat_run.enqueue_chat_run()<br>find_run_by_idempotency_key() → create_agent_run()</div>
+        <p><b>同一事务写入：</b><code>agent_runs</code>、<code>run.created</code>、<code>outbox_jobs</code>。同一个幂等键直接返回已有 run。创建时还没有 <code>agent_steps</code>；模型或工具真正开始后才写 step。</p>
+      </article>
+      <article class="control-card worker">
+        <h3>3 · outbox 投递和 worker 领取</h3>
+        <div class="fn">dispatcher.dispatch_pending()<br>celery.tasks.execute_run() → run_worker.work_once()<br>entry_guard.acquire_run() → claim_chat_turn()</div>
+        <p><b>Redis：</b>DB 0 放锁和闸门，DB 1 是 Celery broker，DB 2 放 wave 结果。数据库标记 dispatched 和发送 broker 消息是两个事务，所以 sweeper 会补投。<code>SessionBusy</code> 约 2 秒后重试，队列关闭约 30 秒后重试。</p>
+      </article>
+      <article class="control-card worker">
+        <h3>4 · PLAN、子 run 和 waiting 状态</h3>
+        <div class="fn">chat_run.execute_chat() → parent.execute_parent()<br>plan.make_plan() → gather.dispatch_wave()<br>gather._enqueue_child() / mark_waiting_for_tasks()</div>
+        <p>父 run 派出一波子 run 后进入 <code>waiting_for_tasks</code>，释放租约；每个 child 通过自己的 <code>execute_run()</code> 执行。结果写入 Postgres checkpoint，再用 Redis DB 2 做快速计数和唤醒。</p>
+      </article>
+      <article class="control-card retry">
+        <h3>5 · 模型和上游错误怎么重试</h3>
+        <div class="fn">llm.calls.call_model()<br>ProviderError / ModelCapacityExceeded<br>run_worker._finish_claimed() → schedule_retry()</div>
+        <p>厂商 429、5xx、超时、断网：读取 <code>Retry-After</code> 或使用 jitter 退避，释放模型和 run 租约，并以 <code>spend_attempt=False</code> 重新排队。401/403、400/422、坏响应和预算超限不重试。熔断器按 provider 连续失败后暂时停止请求。</p>
+      </article>
+      <article class="control-card retry">
+        <h3>6 · 工具先校验，再决定是否执行</h3>
+        <div class="fn">run_loop._prepare_tool() / _finish_tool()<br>claim_tool_call() / complete_tool_call()</div>
+        <p>依次检查工具是否存在、开关、参数 schema、用户权限、调用预算和业务幂等键。读工具错误最多重试 2 次；发信和 MCP 等副作用默认不自动重试。重复业务键记 <code>skipped_duplicate</code>；外部系统已收到但结果丢失记 <code>response_lost</code> 并要求人工复核。</p>
+      </article>
+      <article class="control-card retry">
+        <h3>7 · Run 级业务重试和死信</h3>
+        <div class="fn">run_worker._settle()<br>db/database/queue.py · schedule_retry()</div>
+        <p>普通异常、模型解析失败等尚未形成可用业务结果的错误，按 1 分钟、5 分钟、15 分钟重试，最多 3 次。耗尽后 <code>agent_runs → failed</code>，并写入 <code>dead_letter_jobs</code>。基础设施重试不增加业务次数，主要由最大运行时长兜底。</p>
+      </article>
+      <article class="control-card retry">
+        <h3>8 · 确认、跳过和取消</h3>
+        <div class="fn">db.mark_waiting_for_user()<br>routes/runs.py · resume_run() / cancel_run()<br>run_service.resume_run() / cancel_run() → request_run_cancel()</div>
+        <p>需要人工决定的工具先停在 <code>waiting_for_user</code>。确认或跳过后重新变成 <code>queued</code> 并投递；skip 不调用工具。取消接口只先写 <code>cancel_requested_at</code>，worker 收到后才转为 <code>cancelled</code>。关页面或断开 SSE 不会取消 run。</p>
+      </article>
+      <article class="control-card observe">
+        <h3>9 · sweeper 每 15 秒补救一次</h3>
+        <div class="fn">services/sweeper.py · sweep()<br>sweep_expired_leases() / sweep_waiting_for_tasks()<br>sweep_attention() / republish_unclaimed() / dispatch_pending()</div>
+        <p>它不调模型、不执行工具。租约过期则取消、重新排队或失败；<code>waiting_for_tasks</code> 超过 15 分钟且子任务都终态时重新排队；排队过久只记 stale；<code>waiting_for_user</code> 超过一天只提醒，不替用户确认；悬挂副作用转成 <code>response_lost</code>。</p>
+      </article>
+      <article class="control-card observe">
+        <h3>10 · 事件流、实时正文和追踪</h3>
+        <div class="fn">routes/runs.py · events() / stream_run_events()<br>services/run_stream.py · iter_event_stream()<br>db.note_running_reply() → run.reply_updated</div>
+        <p><code>run_events</code> 是按 sequence 保存的事实，Postgres <code>NOTIFY</code> 只负责唤醒 SSE。生成中的正文在 <code>output_json.text</code>；<code>generation_id</code> 变化时前端丢掉失败尝试的半截文本。终态后页面再读取 <code>sessions.history</code>。</p>
+      </article>
+      <div class="control-state"><b>状态速查：</b><code>queued → running → waiting_for_tasks → queued → succeeded</code>；需要人时 <code>running → waiting_for_user → queued</code>；取消可从 queued / waiting_for_user / waiting_for_tasks 进入 cancelled；业务重试耗尽进入 failed；重跑会新建 run，<code>parent_run_id</code> 指向旧 run，<code>owner_run_id</code> 表示本轮父子调度关系。</div>
+    </div>
+  </section>
+</div>
+</div>
+</body>
+</html>

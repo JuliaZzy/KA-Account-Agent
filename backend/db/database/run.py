@@ -510,21 +510,6 @@ class RunMixin:
             row = s.get(orm.AgentRun, run_id)
             return _row_dict(row) if row else None
 
-    def claim_run(self, run_id: str, worker_id: str, lease_expires_at: datetime) -> dict[str, Any] | None:
-        """Claim a queued run and append `run.started` together. None when it is no longer queued."""
-        now = utcnow()
-        with self.tx() as s:
-            run = s.scalars(
-                select(orm.AgentRun)
-                .where(orm.AgentRun.id == run_id, orm.AgentRun.status == RunStatus.QUEUED)
-                .with_for_update()
-            ).first()
-            if run is None:
-                return None
-            self._transition(s, run, RunStatus.RUNNING, {"lease_owner": worker_id}, now, lease_owner=worker_id, lease_expires_at=lease_expires_at)
-            s.flush()
-            return _row_dict(run)
-
     def claim_chat_turn(self, run_id: str, worker_id: str, lease_expires_at: datetime) -> dict[str, Any] | None:
         """Claim a queued run. A chat turn also waits while that session is already running."""
         now = utcnow()

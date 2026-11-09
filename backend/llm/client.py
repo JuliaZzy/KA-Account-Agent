@@ -1,8 +1,9 @@
 """One client per model vendor.
 
 Each chat method returns the vendor's own response and stores that call's token
-counts on `last_usage` (`prompt_tokens`, `completion_tokens`). A stream stores
-them as the chunks are read. OCR is not a chat client.
+counts on `last_usage` (`prompt_tokens`, `completion_tokens`, plus any provider
+cache counters). A stream stores them as the chunks are read. OCR is not a chat
+client.
 """
 
 from __future__ import annotations
@@ -35,12 +36,71 @@ def _usage_count(usage: Any, *names: str) -> int:
     return 0
 
 
+def _usage_value(usage: Any, *names: str) -> int | None:
+    """Read one optional provider usage field without collapsing an absent field to zero."""
+    if usage is None:
+        return None
+    for name in names:
+        raw = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, None)
+        if raw is None:
+            continue
+        try:
+            return max(0, int(raw))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _usage_nested(usage: Any, parent: str, *names: str) -> int | None:
+    details = usage.get(parent) if isinstance(usage, dict) else getattr(usage, parent, None)
+    return _usage_value(details, *names)
+
+
 def _remember_usage(client: Any, usage: Any) -> None:
-    """Chat completions say prompt/completion. The Responses API says input/output."""
+    """Keep common usage plus vendor cache counters for later billing analysis.
+
+    DeepSeek exposes ``prompt_cache_*_tokens`` while Qwen exposes
+    ``cached_tokens`` (sometimes nested under ``prompt_tokens_details`` or
+    ``input_tokens_details``). The normalized fields make those shapes queryable;
+    the provider-specific fields are retained too so no billing detail is lost.
+    """
+    prompt_tokens = _usage_count(usage, "prompt_tokens", "input_tokens")
+    completion_tokens = _usage_count(usage, "completion_tokens", "output_tokens")
+    cache_hit = _usage_value(usage, "prompt_cache_hit_tokens", "cached_tokens")
+    if cache_hit is None:
+        cache_hit = _usage_nested(usage, "prompt_tokens_details", "cached_tokens")
+    if cache_hit is None:
+        cache_hit = _usage_nested(usage, "input_tokens_details", "cached_tokens")
+    cache_miss = _usage_value(usage, "prompt_cache_miss_tokens")
+    cache_creation = _usage_value(usage, "cache_creation_input_tokens")
+    if cache_creation is None:
+        cache_creation = _usage_nested(usage, "prompt_tokens_details", "cache_creation_input_tokens")
+    if cache_creation is None:
+        cache_creation = _usage_nested(usage, "cache_creation", "input_tokens")
+    if cache_miss is None and cache_hit is not None:
+        cache_miss = max(0, prompt_tokens - cache_hit)
     client.last_usage = {
-        "prompt_tokens": _usage_count(usage, "prompt_tokens", "input_tokens"),
-        "completion_tokens": _usage_count(usage, "completion_tokens", "output_tokens"),
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "cache_hit_tokens": cache_hit,
+        "cache_miss_tokens": cache_miss,
+        "cache_creation_tokens": cache_creation,
     }
+    for name in (
+        "prompt_cache_hit_tokens", "prompt_cache_miss_tokens", "cached_tokens",
+        "cache_creation_input_tokens",
+    ):
+        value = _usage_value(usage, name)
+        if value is not None:
+            client.last_usage[name] = value
+    for parent in ("prompt_tokens_details", "input_tokens_details"):
+        details = usage.get(parent) if isinstance(usage, dict) else getattr(usage, parent, None)
+        if details is None:
+            continue
+        for name in ("cached_tokens", "cache_creation_input_tokens"):
+            value = _usage_value(details, name)
+            if value is not None:
+                client.last_usage[f"{parent}.{name}"] = value
 
 
 def _remembering_stream(client: Any, stream: Iterator[Any]) -> Iterator[Any]:

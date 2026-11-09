@@ -230,31 +230,15 @@ export async function followRun(
   }
 }
 
-export async function streamMessage(
+export function createChatRun(
   sid: string,
   body: unknown,
-  onEvent: (event: Record<string, unknown>) => void | Promise<void>,
   signal?: AbortSignal,
-): Promise<void> {
-  const res = await fetch(`/api/sessions/${sid}/message`, {
+): Promise<{ run_id: string }> {
+  return api<{ run_id: string }>(`/api/sessions/${sid}/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
     signal,
   });
-  if (!res.ok || !res.body) throw new ApiError(await readError(res));
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const chunks = buf.split("\n\n");
-    buf = chunks.pop() ?? "";
-    for (const chunk of chunks) {
-      const line = chunk.split("\n").find((item) => item.startsWith("data: "));
-      if (line) await onEvent(JSON.parse(line.slice(6)) as Record<string, unknown>);
-    }
-  }
 }

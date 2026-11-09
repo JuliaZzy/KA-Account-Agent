@@ -29,6 +29,9 @@ class AssistantTurn:
     tool_calls: list[ToolCall] = field(default_factory=list)
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    cache_hit_tokens: int | None = None
+    cache_miss_tokens: int | None = None
+    cache_creation_tokens: int | None = None
 
     def as_message(self) -> Message:
         msg: Message = {"role": "assistant", "content": self.content}

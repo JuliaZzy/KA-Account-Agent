@@ -16,6 +16,8 @@ def open_meta(tags=("po",), title="10 cases fish oil"):
 
 
 def events(resp) -> list[dict]:
+    if resp.headers.get("content-type", "").startswith("application/json"):
+        return [{"type": "run", "run_id": resp.json()["run_id"]}]
     return [json.loads(l[6:]) for l in resp.text.split("\n\n") if l.startswith("data: ")]
 
 

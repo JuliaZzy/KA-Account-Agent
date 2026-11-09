@@ -14,7 +14,7 @@
 POST /message
   → create_agent_run          同一事务：agent_runs + run.created + outbox execute_run
   → dispatch_pending          把到期的 outbox 交给 Celery
-  → 这条 SSE 只交出 run_id    到这里结束
+  → 返回 run_id                到这里结束
 
 Celery execute_run（测试里直接调 work_chat）
   → 领 agent_runs 的租约，状态改为 running

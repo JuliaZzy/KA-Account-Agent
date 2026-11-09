@@ -1,26 +1,20 @@
-"""Chat: open a session, stream one turn, confirm an order, a contract, or a report."""
+"""Chat: open a session, enqueue a turn, confirm an order, a contract, or a report."""
 
 from __future__ import annotations
 
 import base64
-import json
-import logging
-from collections.abc import Iterator
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from .. import service
 from ..db import Database
-from ..deps import get_db, get_llm
-from ..memory import bind_fold_scheduler, reset_fold_scheduler
+from ..deps import get_db
 from ..schemas import Confirm, ConfirmContract, ConfirmReport, DataFeedback, Inbound, InboundFile, NewSession
-from ..stream_pin import pin_stream
+from ..services.chat_run import enqueue_chat_run
 from ._common import partnership_or_404, user_on_partnership
 
 router = APIRouter()
-log = logging.getLogger(__name__)
 
 _MAX_FILE_BYTES = 12 * 1024 * 1024
 
@@ -92,54 +86,25 @@ def get_session(sid: str, db: Database = Depends(get_db)) -> dict[str, Any]:
     return s
 
 
-async def _defer_folds(background_tasks: BackgroundTasks):
-    """Fold after the stream is finished. Set on this request before worker threads copy it."""
-    token = bind_fold_scheduler(background_tasks.add_task)
-    try:
-        yield
-    finally:
-        reset_fold_scheduler(token)
-
-
-@router.post("/api/sessions/{sid}/message")
+@router.post("/api/sessions/{sid}/message", status_code=202)
 def message(
-    sid: str, body: Inbound, background_tasks: BackgroundTasks,
-    db: Database = Depends(get_db), llm: Any = Depends(get_llm),
-    _folds: None = Depends(_defer_folds),
-) -> StreamingResponse:
-    if not db.session(sid):
+    sid: str, body: Inbound, db: Database = Depends(get_db),
+) -> dict[str, str]:
+    """Create a queued Run; the separate Run SSE endpoint streams its progress."""
+    session = db.session(sid)
+    if not session:
         raise HTTPException(404, "session not found")
-    if not body.message.strip() and not body.images and not body.files:
-        raise HTTPException(400, "message required")
     if len(body.images) > service.MAX_IMAGES:
         raise HTTPException(400, f"at most {service.MAX_IMAGES} images")
     documents = [_decode_file(f) for f in body.files]
-
-    def gen() -> Iterator[bytes]:
-        # A model error after the first frame must still close the stream.
-        # The provider body can carry account ids, so the client only gets a fixed line.
-        # Closed in finally so a reader that leaves releases this chat's turn lock.
-        # The lock is held inside the iterator, and closing only this wrapper would
-        # leave that iterator suspended.
-        turn = service.handle_message(
-            db, llm, sid, body.message, body.images, body.attachments, documents, body.model,
-        )
-        try:
-            try:
-                for event in turn:
-                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode()
-            except Exception:
-                log.exception("chat stream failed")
-                err = {"type": "error", "message": "The model could not finish this reply."}
-                yield f"data: {json.dumps(err)}\n\n".encode()
-        finally:
-            turn.close()
-
-    return StreamingResponse(
-        pin_stream(gen()), media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        background=background_tasks,
+    images = [url for url in body.images if isinstance(url, str) and url.startswith("data:image/")]
+    if not body.message.strip() and not images and not documents:
+        raise HTTPException(400, "message required")
+    run = enqueue_chat_run(
+        db, session, body.message, images=images, documents=documents,
+        attachments=body.attachments, model=body.model,
     )
+    return {"run_id": str(run["id"])}
 
 
 @router.post("/api/sessions/{sid}/confirm")

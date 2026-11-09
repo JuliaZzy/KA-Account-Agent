@@ -48,7 +48,10 @@ def bind(
             tools=schemas, tool_choice="auto", reasoning_effort="none", on_text=on_text,
         )
         turn = called.body if isinstance(called.body, AssistantTurn) else AssistantTurn()
-        return _with_usage(turn, (called.prompt_tokens, called.completion_tokens))
+        return _with_usage(turn, (
+            called.prompt_tokens, called.completion_tokens,
+            called.cache_hit_tokens, called.cache_miss_tokens, called.cache_creation_tokens,
+        ))
 
     def answer(context: list[dict[str, Any]]) -> str:
         called = model_calls.call_model(
@@ -59,6 +62,9 @@ def bind(
         text = str(called.body or "").strip()
         answer.prompt_tokens = called.prompt_tokens
         answer.completion_tokens = called.completion_tokens
+        answer.cache_hit_tokens = called.cache_hit_tokens
+        answer.cache_miss_tokens = called.cache_miss_tokens
+        answer.cache_creation_tokens = called.cache_creation_tokens
         return text
 
     decide.brand, decide.model = decide_brand, DEEPSEEK_FLASH
@@ -108,8 +114,11 @@ def execute_for(
     return execute
 
 
-def _with_usage(turn: AssistantTurn, usage: tuple[int, int]) -> AssistantTurn:
-    prompt_tokens, completion_tokens = usage
+def _with_usage(
+    turn: AssistantTurn,
+    usage: tuple[int, int, int | None, int | None, int | None],
+) -> AssistantTurn:
+    prompt_tokens, completion_tokens, cache_hit, cache_miss, cache_creation = usage
     if not isinstance(turn, AssistantTurn):
         return turn
     if turn.prompt_tokens or turn.completion_tokens or (prompt_tokens == 0 and completion_tokens == 0):
@@ -119,6 +128,9 @@ def _with_usage(turn: AssistantTurn, usage: tuple[int, int]) -> AssistantTurn:
         tool_calls=list(turn.tool_calls),
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
+        cache_hit_tokens=cache_hit,
+        cache_miss_tokens=cache_miss,
+        cache_creation_tokens=cache_creation,
     )
 
 def _tool_messages(context: list[dict[str, Any]]) -> list[dict[str, Any]]:

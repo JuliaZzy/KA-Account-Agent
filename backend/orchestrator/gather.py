@@ -9,7 +9,6 @@ from typing import Any
 from ..db import Database
 from ..redis_store import begin_turn, drop_turn, load_results, store_result
 from ..repositories.run_repository import (
-    append_run_event,
     commit_task_wave,
     find_runs_by_owner,
     latest_checkpoint,
@@ -207,14 +206,19 @@ def finish_child(
     if not session_id or not wave_id or not task_id:
         return
     if owner_id:
-        db.append_checkpoint_result(owner_id, task_id, result)
-        append_run_event(db, str(run.get("org_id") or ""), owner_id, (
-            StepEvent.TOOL_COMPLETED if result.get("ok") else StepEvent.TOOL_FAILED
-        ), {
-            "tool_name": result.get("name"),
-            "task_id": task_id,
-            "ok": bool(result.get("ok")),
-        })
+        event_type = StepEvent.TOOL_COMPLETED if result.get("ok") else StepEvent.TOOL_FAILED
+        db.record_child_wave_result(
+            str(run.get("org_id") or ""),
+            owner_id,
+            task_id,
+            result,
+            event_type=event_type,
+            event_payload={
+                "tool_name": result.get("name"),
+                "task_id": task_id,
+                "ok": bool(result.get("ok")),
+            },
+        )
     try:
         left = store_result(session_id, wave_id, task_id, result)
     except Exception:

@@ -68,6 +68,9 @@ class ModelResult:
     completion_tokens: int
     usage_source: str
     error: str | None = None
+    cache_hit_tokens: int | None = None
+    cache_miss_tokens: int | None = None
+    cache_creation_tokens: int | None = None
     reasoning: str | None = None
 
 
@@ -121,7 +124,7 @@ def _ledger_brand(brand: Brand, client: Any) -> Brand:
     return brand
 
 
-def _vendor_usage(client: Any) -> tuple[int, int] | None:
+def _vendor_usage(client: Any) -> dict[str, int | None] | None:
     """返回模型实际使用的 token 数量，没有就返回 None"""
     usage = getattr(client, "last_usage", None)
     if not isinstance(usage, dict):
@@ -132,14 +135,37 @@ def _vendor_usage(client: Any) -> tuple[int, int] | None:
     completion = int(usage.get("completion_tokens") or 0)
     if prompt == 0 and completion == 0:
         return None
-    return prompt, completion
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "cache_hit_tokens": _optional_usage_int(usage.get("cache_hit_tokens")),
+        "cache_miss_tokens": _optional_usage_int(usage.get("cache_miss_tokens")),
+        "cache_creation_tokens": _optional_usage_int(usage.get("cache_creation_tokens")),
+    }
 
 
-def _tokens(client: Any, system: str, messages: list[dict[str, Any]], completion: str) -> tuple[int, int, str]:
+def _optional_usage_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _tokens(
+    client: Any, system: str, messages: list[dict[str, Any]], completion: str,
+) -> tuple[int, int, str, dict[str, int | None]]:
     taken = _vendor_usage(client)
     if taken is not None:
-        return taken[0], taken[1], "actual"
-    return _estimate_tokens(_prompt_text(system, messages)), _estimate_tokens(completion), "estimated"
+        cache = {key: taken[key] for key in (
+            "cache_hit_tokens", "cache_miss_tokens", "cache_creation_tokens",
+        )}
+        return int(taken["prompt_tokens"] or 0), int(taken["completion_tokens"] or 0), "actual", cache
+    return (
+        _estimate_tokens(_prompt_text(system, messages)), _estimate_tokens(completion), "estimated",
+        {"cache_hit_tokens": None, "cache_miss_tokens": None, "cache_creation_tokens": None},
+    )
 
 
 def _school_text(resp: Any) -> str:
@@ -582,6 +608,9 @@ def _interpret(expect: Expect, raw: Any, alias: dict[str, str] | None = None) ->
                 ],
                 prompt_tokens=raw.prompt_tokens,
                 completion_tokens=raw.completion_tokens,
+                cache_hit_tokens=raw.cache_hit_tokens,
+                cache_miss_tokens=raw.cache_miss_tokens,
+                cache_creation_tokens=raw.cache_creation_tokens,
             )
             return restored, raw.content or ""
         message = raw.choices[0].message
@@ -674,6 +703,9 @@ def _save(
     response: dict[str, Any],
     prompt_tokens: int,
     completion_tokens: int,
+    cache_hit_tokens: int | None,
+    cache_miss_tokens: int | None,
+    cache_creation_tokens: int | None,
     usage_source: str,
     latency_ms: int,
     status: str,
@@ -706,6 +738,9 @@ def _save(
         response=response,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
+        cache_hit_tokens=cache_hit_tokens,
+        cache_miss_tokens=cache_miss_tokens,
+        cache_creation_tokens=cache_creation_tokens,
         usage_source=usage_source,
         latency_ms=latency_ms,
         status=status,
@@ -733,10 +768,12 @@ def _fail(
 ) -> None:
     if ledger is None:
         return
-    prompt, completion, source = _tokens(client, system, messages, "")
+    prompt, completion, source, cache = _tokens(client, system, messages, "")
     call_id = _save(
         ledger, provider=brand, model_name=model_name, system=system, messages=messages,
         schema=schema, tools=tools, response={}, prompt_tokens=prompt, completion_tokens=completion,
+        cache_hit_tokens=cache["cache_hit_tokens"], cache_miss_tokens=cache["cache_miss_tokens"],
+        cache_creation_tokens=cache["cache_creation_tokens"],
         usage_source=source, latency_ms=int((time.perf_counter() - started) * 1000),
         status=StepStatus.FAILED, error=error,
     )
@@ -747,6 +784,9 @@ def _fail(
         "brand": brand,
         "prompt_tokens": prompt,
         "completion_tokens": completion,
+        "cache_hit_tokens": cache["cache_hit_tokens"],
+        "cache_miss_tokens": cache["cache_miss_tokens"],
+        "cache_creation_tokens": cache["cache_creation_tokens"],
         "usage_source": source,
         "status": StepStatus.FAILED,
         "step_id": ledger.step_id,
@@ -921,7 +961,7 @@ def call_model(
     # 非流式回调：发送文本
     if on_text is not None and not streamed:
         emit(text, reasoning=reasoning)
-    prompt, completion, source = _tokens(carried.client, system, messages, text)
+    prompt, completion, source, cache = _tokens(carried.client, system, messages, text)
 
     # 记录模型数据
     brand = _ledger_brand(brand, carried.client) # 看是不是 FakeLLM
@@ -937,6 +977,8 @@ def call_model(
     call_id = _save(
         ledger, provider=brand, model_name=model_name, system=system, messages=messages,
         schema=schema, tools=tools, response=response, prompt_tokens=prompt, completion_tokens=completion,
+        cache_hit_tokens=cache["cache_hit_tokens"], cache_miss_tokens=cache["cache_miss_tokens"],
+        cache_creation_tokens=cache["cache_creation_tokens"],
         usage_source=source, latency_ms=int((time.perf_counter() - started) * 1000),
         status=StepStatus.SUCCEEDED, error=None,
     )
@@ -948,6 +990,9 @@ def call_model(
             "brand": brand,
             "prompt_tokens": prompt,
             "completion_tokens": completion,
+            "cache_hit_tokens": cache["cache_hit_tokens"],
+            "cache_miss_tokens": cache["cache_miss_tokens"],
+            "cache_creation_tokens": cache["cache_creation_tokens"],
             "usage_source": source,
             "status": StepStatus.SUCCEEDED,
             "step_id": step_id,
@@ -962,6 +1007,8 @@ def call_model(
     return ModelResult(
         brand=brand, model=model_name, body=body,
         prompt_tokens=prompt, completion_tokens=completion, usage_source=source,
+        cache_hit_tokens=cache["cache_hit_tokens"], cache_miss_tokens=cache["cache_miss_tokens"],
+        cache_creation_tokens=cache["cache_creation_tokens"],
         reasoning=reasoning,
     )
 

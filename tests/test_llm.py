@@ -18,7 +18,7 @@ from backend.llm.calls import (
     qwen_json,
     school_json,
 )
-from backend.llm.client import DeepSeekClient, SJTUClient
+from backend.llm.client import DeepSeekClient, SJTUClient, _remember_usage
 from backend.services.run_names import EntryErrorCode
 
 
@@ -75,6 +75,28 @@ def test_campus_client_requires_sjtu_env(monkeypatch):
     monkeypatch.delenv("SJTU_BASE_URL", raising=False)
     with pytest.raises(RuntimeError, match="SJTU_BASE_URL"):
         SJTUClient()
+
+
+def test_usage_keeps_deepseek_and_qwen_cache_fields():
+    from types import SimpleNamespace
+
+    deepseek = SimpleNamespace()
+    _remember_usage(deepseek, {
+        "prompt_tokens": 100, "completion_tokens": 8,
+        "prompt_cache_hit_tokens": 72, "prompt_cache_miss_tokens": 28,
+    })
+    assert deepseek.last_usage["cache_hit_tokens"] == 72
+    assert deepseek.last_usage["cache_miss_tokens"] == 28
+    assert deepseek.last_usage["prompt_cache_hit_tokens"] == 72
+
+    qwen = SimpleNamespace()
+    _remember_usage(qwen, {
+        "input_tokens": 100, "output_tokens": 8,
+        "prompt_tokens_details": {"cached_tokens": 64},
+    })
+    assert qwen.last_usage["cache_hit_tokens"] == 64
+    assert qwen.last_usage["cache_miss_tokens"] == 36
+    assert qwen.last_usage["prompt_tokens_details.cached_tokens"] == 64
 
 
 def test_vendor_posts_dotted_tool_names_without_dots(monkeypatch):
@@ -199,7 +221,7 @@ class _Campus:
 
 def _open(db, key: str, **caps):
     run, _created = db.create_agent_run("dist-1", "u-a", "chat", key, {"message": "hi"}, **caps)
-    assert db.claim_run(run["id"], "worker-test", utcnow() + timedelta(minutes=5)) is not None
+    assert db.claim_chat_turn(run["id"], "worker-test", utcnow() + timedelta(minutes=5)) is not None
     step = db.insert_step(run["id"], "model", "model", {})
     assert step is not None
     return run, step
@@ -207,7 +229,10 @@ def _open(db, key: str, **caps):
 
 def test_vendor_usage_is_actual_and_a_missing_usage_is_estimated(db):
     run, step = _open(db, "usage-source")
-    metered = _Campus({"prompt_tokens": 11, "completion_tokens": 7})
+    metered = _Campus({
+        "prompt_tokens": 11, "completion_tokens": 7,
+        "cache_hit_tokens": 8, "cache_miss_tokens": 3, "cache_creation_tokens": 0,
+    })
     school_json(
         SCHOOL_CHAT, system="count these", messages=[{"role": "user", "content": "hi"}],
         client=metered, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
@@ -225,6 +250,9 @@ def test_vendor_usage_is_actual_and_a_missing_usage_is_estimated(db):
     assert {row["usage_source"] for row in usage} == {"actual", "estimated"}
     actual = next(row for row in usage if row["usage_source"] == "actual")
     assert actual["provider"] == "sjtu" and actual["model"] == SCHOOL_CHAT
+    assert actual["cache_hit_tokens"] == 8
+    assert actual["cache_miss_tokens"] == 3
+    assert actual["cache_creation_tokens"] == 0
     events = db.run_trace("dist-1", run["id"])["events"]
     started = next(event for event in events if event["event_type"] == "model.started")
     completed = next(event for event in events if event["event_type"] == "model.completed")

@@ -184,7 +184,7 @@ def test_a_running_reply_is_visible_on_the_trace(db):
 
     run, _created = db.create_agent_run("dist-1", "u-a", "chat", "partial-reply", {"message": "hello"})
     assert db.note_running_reply(run["id"], "Hel") is None
-    claimed = db.claim_run(run["id"], "worker-test", utcnow() + timedelta(minutes=5))
+    claimed = db.claim_chat_turn(run["id"], "worker-test", utcnow() + timedelta(minutes=5))
     assert claimed is not None
     assert db.note_running_reply(run["id"], "Hello")["output_json"]["text"] == "Hello"
     trace = db.run_trace("dist-1", run["id"])

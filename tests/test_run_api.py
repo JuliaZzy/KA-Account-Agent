@@ -84,7 +84,7 @@ def test_cancel_and_resume_append_the_next_sequence(make_db):
     assert too_early.status_code == 409
     assert too_early.json()["error"]["code"] == "RUN_NOT_WAITING_FOR_USER"
 
-    claimed = db.claim_run(run_id, "worker-a", utcnow() + timedelta(seconds=10))
+    claimed = db.claim_chat_turn(run_id, "worker-a", utcnow() + timedelta(seconds=10))
     assert claimed is not None
     paused = db.transition_run("org-1", run_id, RunStatus.WAITING_FOR_USER, {})
     assert paused is not None
@@ -308,7 +308,7 @@ def test_forbidden_run_transitions_do_not_commit(make_db):
     reject(queued_id, RunStatus.SUCCEEDED, RunStatus.QUEUED, ["run.created"])
 
     waiting_id = open_run(2)
-    assert db.claim_run(waiting_id, "worker-a", utcnow() + timedelta(minutes=5)) is not None
+    assert db.claim_chat_turn(waiting_id, "worker-a", utcnow() + timedelta(minutes=5)) is not None
     paused = db.transition_run("org-1", waiting_id, RunStatus.WAITING_FOR_USER, {})
     assert paused is not None and paused["lease_owner"] is None
     reject(
@@ -319,7 +319,7 @@ def test_forbidden_run_transitions_do_not_commit(make_db):
     )
 
     succeeded_id = open_run(3)
-    assert db.claim_run(succeeded_id, "worker-a", utcnow() + timedelta(minutes=5)) is not None
+    assert db.claim_chat_turn(succeeded_id, "worker-a", utcnow() + timedelta(minutes=5)) is not None
     assert db.complete_run(succeeded_id, {"answer": "ok"})["status"] == "succeeded"
     reject(
         succeeded_id,
@@ -329,7 +329,7 @@ def test_forbidden_run_transitions_do_not_commit(make_db):
     )
 
     failed_id = open_run(4)
-    assert db.claim_run(failed_id, "worker-a", utcnow() + timedelta(minutes=5)) is not None
+    assert db.claim_chat_turn(failed_id, "worker-a", utcnow() + timedelta(minutes=5)) is not None
     assert db.transition_run("org-1", failed_id, RunStatus.FAILED, {"reason": "permanent"})["status"] == "failed"
     reject(
         failed_id,
@@ -880,7 +880,7 @@ def test_an_expired_lease_is_swept_without_spending_a_retry(make_db):
         )
         run_id = created.json()["id"]
         dispatch_pending(db)
-        assert db.claim_run(run_id, "worker-a", utcnow() + lease_for) is not None
+        assert db.claim_chat_turn(run_id, "worker-a", utcnow() + lease_for) is not None
         return run_id
 
     expired_id = claim("lease:expired", timedelta(seconds=-5))
@@ -911,7 +911,7 @@ def test_an_expired_lease_is_swept_without_spending_a_retry(make_db):
     assert sweep_expired_leases(db) == 1
     assert client.get(f"/runs/{acked_id}", headers=HEADERS).json()["status"] == "queued"
     assert dispatch_pending(db) == 1
-    assert db.claim_run(acked_id, "worker-b", utcnow() + timedelta(minutes=5)) is not None
+    assert db.claim_chat_turn(acked_id, "worker-b", utcnow() + timedelta(minutes=5)) is not None
 
 
 def test_an_expired_lease_cancels_a_run_that_already_asked(make_db):
@@ -924,7 +924,7 @@ def test_an_expired_lease_cancels_a_run_that_already_asked(make_db):
         "/runs", json={**BODY, "idempotency_key": "lease:cancel"}, headers=HEADERS,
     ).json()["id"]
     dispatch_pending(db)
-    assert db.claim_run(run_id, "worker-a", utcnow() - timedelta(seconds=5)) is not None
+    assert db.claim_chat_turn(run_id, "worker-a", utcnow() - timedelta(seconds=5)) is not None
     cancelled = client.post(f"/runs/{run_id}/cancel", headers=HEADERS)
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "running"
@@ -1092,7 +1092,7 @@ def test_event_stream_wakes_when_the_run_is_notified(make_db, monkeypatch):
     from backend.services.dispatcher import dispatch_pending
 
     dispatch_pending(db)
-    assert db.claim_run(run_id, "worker-a", utcnow() + timedelta(seconds=30)) is not None
+    assert db.claim_chat_turn(run_id, "worker-a", utcnow() + timedelta(seconds=30)) is not None
     held: list[bytes] = []
 
     def read() -> None:
@@ -1347,7 +1347,7 @@ def test_tool_budget_does_not_call_the_handler(make_db):
     db = _db(make_db, "tool-budget")
     client = TestClient(create_app(db))
     run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
-    assert db.claim_run(run_id, "worker-a", utcnow() + timedelta(seconds=30)) is not None
+    assert db.claim_chat_turn(run_id, "worker-a", utcnow() + timedelta(seconds=30)) is not None
     run = db.find_agent_run_by_id(run_id)
     assert run is not None
     run["max_tool_calls"] = 0
@@ -1433,7 +1433,7 @@ def test_argument_schema_checks_type_enum_and_extra_fields(make_db):
     db = _db(make_db, "tool-schema")
     client = TestClient(create_app(db))
     run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
-    assert db.claim_run(run_id, "worker-a", utcnow() + timedelta(seconds=30)) is not None
+    assert db.claim_chat_turn(run_id, "worker-a", utcnow() + timedelta(seconds=30)) is not None
     run = db.find_agent_run_by_id(run_id)
     assert run is not None
     called: list[dict] = []
@@ -1485,7 +1485,7 @@ def _leased_run(db, client, key: str):
     run_id = client.post(
         "/runs", json={**BODY, "idempotency_key": key}, headers=HEADERS,
     ).json()["id"]
-    assert db.claim_run(run_id, "worker-a", utcnow() + timedelta(seconds=60)) is not None
+    assert db.claim_chat_turn(run_id, "worker-a", utcnow() + timedelta(seconds=60)) is not None
     run = db.find_agent_run_by_id(run_id)
     assert run is not None
     return run
@@ -1906,7 +1906,7 @@ def test_a_left_running_side_effect_is_not_called_again(make_db):
     run_id = client.post(
         "/runs", json={**BODY, "idempotency_key": "recover-running"}, headers=HEADERS,
     ).json()["id"]
-    assert db.claim_run(run_id, "worker-a", utcnow() + timedelta(seconds=-5)) is not None
+    assert db.claim_chat_turn(run_id, "worker-a", utcnow() + timedelta(seconds=-5)) is not None
     step = db.insert_step(run_id, "tool", "echo", {})
     claimed = db.claim_tool_call(
         run_id, step["id"], tool_name="echo", args={"text": "hi"}, idempotency_key="echo:call_1",
@@ -2042,7 +2042,7 @@ def test_three_expired_leases_fail_the_run(make_db):
         "/runs", json={**BODY, "idempotency_key": "lease:budget"}, headers=HEADERS,
     ).json()["id"]
     for _ in range(3):
-        assert db.claim_run(run_id, "worker-a", utcnow() + timedelta(seconds=-5)) is not None
+        assert db.claim_chat_turn(run_id, "worker-a", utcnow() + timedelta(seconds=-5)) is not None
         sweep_expired_leases(db)
     body = client.get(f"/runs/{run_id}", headers=HEADERS).json()
     assert body["status"] == "failed"
@@ -2062,7 +2062,7 @@ def test_a_terminal_run_is_not_executed_again(make_db):
     db = _db(make_db, "terminal-skip")
     client = TestClient(create_app(db))
     run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
-    assert db.claim_run(run_id, "worker-a", utcnow() + timedelta(minutes=5)) is not None
+    assert db.claim_chat_turn(run_id, "worker-a", utcnow() + timedelta(minutes=5)) is not None
     assert db.complete_run(run_id, {"text": "done"}) is not None
     assert work_once(
         db, "worker-b", execute_run(db, ToolRegistry([]), decide=decide, answer=answer), run_id=run_id,
@@ -2161,7 +2161,7 @@ def test_a_repair_writes_an_audit_row_and_leaves_the_status(make_db):
     db = _db(make_db, "repair")
     client = TestClient(create_app(db))
     run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
-    assert db.claim_run(run_id, "worker-a", utcnow() + timedelta(minutes=5)) is not None
+    assert db.claim_chat_turn(run_id, "worker-a", utcnow() + timedelta(minutes=5)) is not None
     assert db.fail_run(run_id, {"kind": "permanent", "message": "no"}) is not None
     repaired = client.post(
         f"/runs/{run_id}/repair",
@@ -2259,7 +2259,7 @@ def test_the_monitor_lists_one_org_and_reads_the_ledger(make_db):
     assert board.json()["metrics"]["failed"] == 0
     assert all(item["signal"] != "run.failed 比例升高" for item in board.json()["alerts"])
 
-    assert db.claim_run(run_id, "worker-a", utcnow() + timedelta(minutes=5)) is not None
+    assert db.claim_chat_turn(run_id, "worker-a", utcnow() + timedelta(minutes=5)) is not None
     assert db.fail_run(run_id, {"kind": "permanent", "code": "COST_BUDGET_EXCEEDED", "message": "no"}) is not None
     failed = client.get("/monitor", headers=HEADERS).json()
     assert failed["metrics"]["failed"] == 1

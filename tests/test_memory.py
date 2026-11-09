@@ -126,7 +126,7 @@ def test_a_fold_on_a_running_chat_is_recorded_on_that_run(db):
 
     sid = service.new_session(db, "ps-1")["id"]
     run, _created = db.create_agent_run("dist-1", "u-a", "chat", "fold-trace", {"message": "fold", "session_id": sid})
-    assert db.claim_run(run["id"], "worker-test", utcnow() + timedelta(minutes=5)) is not None
+    assert db.claim_chat_turn(run["id"], "worker-test", utcnow() + timedelta(minutes=5)) is not None
     history = [
         bulky("user", 2000, "Q"), bulky("assistant", 2000, "A"),
         {"role": "user", "content": "keep-user"}, {"role": "assistant", "content": "keep-assistant"},
