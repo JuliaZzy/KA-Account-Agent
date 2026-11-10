@@ -7,8 +7,10 @@ the percentile and JSON-summary calculations used by the fixed performance workf
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
-from scripts.load_test_chat import _percentile
+from backend.llm.pricing import call_cost_cny, is_deepseek_peak
+from scripts.load_test_chat import _percentile, summarize_usage_rows
 from scripts.resume_metrics import load_test_metrics
 
 
@@ -81,3 +83,101 @@ def test_load_test_metrics_falls_back_to_result_durations(tmp_path):
     assert metrics["completed_p95_seconds"] == 1.5
     assert metrics["observed_p99_seconds"] is None
     assert metrics["completed_p99_seconds"] is None
+
+
+def test_zero_timeouts_are_not_replaced_by_other_failures(tmp_path):
+    report = {
+        "summary": {"submitted": 1, "completed": 0, "timeouts": 0},
+        "results": [{"completed": False, "outcome": "enqueue_error", "total_ms": 50}],
+    }
+    path = tmp_path / "load.json"
+    path.write_text(json.dumps(report), encoding="utf-8")
+
+    assert load_test_metrics(path)["timeouts"] == 0
+
+
+def test_qwen_and_deepseek_pricing_and_usage_summary():
+    # Weekday 02:30 UTC is 10:30 Beijing time (peak); 00:30 UTC is 08:30 Beijing time (off-peak).
+    peak_time = datetime(2026, 11, 10, 2, 30, tzinfo=UTC)
+    offpeak_time = datetime(2026, 11, 10, 0, 30, tzinfo=UTC)
+    assert is_deepseek_peak(peak_time) is True
+    assert is_deepseek_peak(offpeak_time) is False
+
+    # qwen3.7-flash <=32K tier: miss ¥0.20/1M, implicit hit ¥0.04/1M (20%), output ¥0.80/1M
+    qwen_short = call_cost_cny(
+        "qwen",
+        "qwen3.7-flash",
+        prompt_tokens=10_000,
+        completion_tokens=1_000,
+        cache_hit_tokens=5_000,
+        cache_miss_tokens=5_000,
+    )
+    assert round(qwen_short, 6) == round((5_000 * 0.20 + 5_000 * 0.04 + 1_000 * 0.80) / 1_000_000, 6)
+
+    # qwen3.7-flash >256K tier: miss ¥1.20/1M, implicit hit ¥0.24/1M, output ¥4.80/1M
+    qwen_long = call_cost_cny(
+        "qwen",
+        "qwen3.7-flash",
+        prompt_tokens=1_000_000,
+        completion_tokens=1_000_000,
+        cache_hit_tokens=500_000,
+        cache_miss_tokens=500_000,
+    )
+    assert round(qwen_long, 4) == round(0.5 * 1.20 + 0.5 * 0.24 + 4.80, 4)
+
+    # deepseek-flash peak (¥2.00 miss / ¥0.04 hit / ¥8.00 out) vs off-peak (half)
+    ds_peak = call_cost_cny(
+        "deepseek",
+        "deepseek-flash",
+        prompt_tokens=1_000_000,
+        completion_tokens=1_000_000,
+        cache_hit_tokens=500_000,
+        cache_miss_tokens=500_000,
+        created_at=peak_time,
+    )
+    ds_offpeak = call_cost_cny(
+        "deepseek",
+        "deepseek-flash",
+        prompt_tokens=1_000_000,
+        completion_tokens=1_000_000,
+        cache_hit_tokens=500_000,
+        cache_miss_tokens=500_000,
+        created_at=offpeak_time,
+    )
+    assert round(ds_peak, 4) == round(0.5 * 2.00 + 0.5 * 0.04 + 8.00, 4)
+    assert round(ds_offpeak, 4) == round(ds_peak / 2, 4)
+
+    usage = summarize_usage_rows(
+        [
+            {
+                "run_id": "r1",
+                "run_type": "chat",
+                "provider": "qwen",
+                "model": "qwen3.7-flash",
+                "prompt_tokens": 1368,
+                "completion_tokens": 10,
+                "cache_hit_tokens": 1024,
+                "cache_miss_tokens": 344,
+                "created_at": peak_time,
+            },
+            {
+                "run_id": "r2",
+                "run_type": "open",
+                "provider": "qwen",
+                "model": "qwen3.7-flash",
+                "prompt_tokens": 405,
+                "completion_tokens": 18,
+                "cache_hit_tokens": 0,
+                "cache_miss_tokens": 405,
+                "created_at": peak_time,
+            },
+        ],
+        requests=1,
+    )
+    assert usage["prompt_tokens"] == 1773
+    assert usage["completion_tokens"] == 28
+    assert usage["cache_hit_tokens"] == 1024
+    assert usage["cache_miss_tokens"] == 749
+    assert usage["cache_hit_ratio"] == round(1024 / 1773 * 100, 2)
+    assert usage["estimated_cost_cny"] > 0
+    assert usage["uncached_cost_cny"] > usage["estimated_cost_cny"]

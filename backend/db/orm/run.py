@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, ForeignKey, Index, Integer, String, UniqueConstraint, desc, func
+from sqlalchemy import BigInteger, ForeignKey, Index, Integer, String, UniqueConstraint, desc, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, JSONCol, TimestampCol
@@ -22,6 +22,12 @@ class AgentRun(Base):
         Index("idx_agent_runs_org_created", "org_id", desc("created_at")),
         # Worker scan for queued / running runs.
         Index("idx_agent_runs_status_created", "status", "created_at"),
+        # The sweeper only needs old queued runs; terminal history stays out of this index.
+        Index(
+            "idx_agent_runs_queued_at",
+            "queued_at",
+            postgresql_where=text("status = 'queued'"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -34,6 +40,11 @@ class AgentRun(Base):
     output_json: Mapped[dict[str, Any] | None] = mapped_column(JSONCol, nullable=True)
     error_json: Mapped[dict[str, Any] | None] = mapped_column(JSONCol, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TimestampCol, server_default=func.now())
+    queued_at: Mapped[datetime] = mapped_column(TimestampCol, server_default=func.now())
+    # Celery holds a SoftBusy retry as an ETA task in worker memory, so Redis shows an empty
+    # queue while the run is legitimately waiting. Each retry stamps this column so the sweeper
+    # does not read that silence as a lost message. `queued_at` stays the queue-entry time.
+    queue_heartbeat_at: Mapped[datetime | None] = mapped_column(TimestampCol)
     started_at: Mapped[datetime | None] = mapped_column(TimestampCol)
     ended_at: Mapped[datetime | None] = mapped_column(TimestampCol)
     cancel_requested_at: Mapped[datetime | None] = mapped_column(TimestampCol)
@@ -41,6 +52,7 @@ class AgentRun(Base):
     lease_owner: Mapped[str | None] = mapped_column(String(64))
     lease_expires_at: Mapped[datetime | None] = mapped_column(TimestampCol)
     attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    redispatch_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     parent_run_id: Mapped[str | None] = mapped_column(
         String(64), ForeignKey("agent_runs.id", ondelete="SET NULL"), index=True,
     )

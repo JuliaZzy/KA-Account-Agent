@@ -60,14 +60,14 @@ def test_two_sessions_overlap_on_the_model(db):
 
 
 def test_enqueue_yields_the_run_before_the_title(db):
-    """HTTP returns the run id before the worker names the chat."""
+    """Enqueue writes a provisional title; OPEN refine replaces it after chat ends."""
     db.upsert_user("u-a", "dist-1", "Ada")
     sid = service.new_session(db, "ps-1", "u-a")["id"]
     llm = FakeLLM(json_replies=[{"tags": ["data"], "title": "订单总额"}])
     turn = service.handle_message(db, llm, sid, "how much did I order")
     first = next(turn)
     assert first["type"] == "run"
-    assert db.session(sid).get("title") is None
+    assert db.session(sid).get("title") == "how much did I order"
     list(turn)
     assert work_chat(db, llm, first["run_id"]) is True
     assert db.session(sid)["title"] == "订单总额"

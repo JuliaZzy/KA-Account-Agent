@@ -93,6 +93,143 @@ def test_named_models():
     assert QWEN_PLAN == "qwen3.7-flash"
 
 
+def test_assemble_stream_drains_async_generator():
+    from types import SimpleNamespace
+
+    from backend.llm.calls import _assemble_stream
+
+    async def _chunks():
+        yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(
+            content="你", reasoning_content=None,
+        ))])
+        yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(
+            content="好", reasoning_content=None,
+        ))])
+
+    seen: list[str] = []
+
+    def on_text(text: str, *, reasoning: str = "") -> None:
+        del reasoning
+        seen.append(text)
+
+    assembled = _assemble_stream(_chunks(), on_text)
+    assert assembled.choices[0].message.content == "你好"
+    assert seen == ["你", "你好"]
+
+
+def test_assemble_stream_keeps_sync_iterator():
+    from types import SimpleNamespace
+
+    from backend.llm.calls import _assemble_stream
+
+    chunks = [
+        SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(
+            content="hi", reasoning_content=None,
+        ))]),
+    ]
+    assembled = _assemble_stream(chunks, lambda *_a, **_k: None)
+    assert assembled.choices[0].message.content == "hi"
+
+
+def test_qwen_stream_reports_text_while_the_stream_is_still_open():
+    """on_text must fire per chunk, not after the whole stream is buffered."""
+    from types import SimpleNamespace
+
+    from backend.llm.calls import _call_qwen
+
+    timeline: list[str] = []
+
+    def _chunk(text: str):
+        return SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(
+            content=text, reasoning_content=None,
+        ))])
+
+    async def _stream():
+        timeline.append("chunk1 yielded")
+        yield _chunk("你")
+        # Resumed only after the consumer finished handling chunk 1.
+        timeline.append("chunk2 yielded")
+        yield _chunk("好")
+        timeline.append("stream closed")
+
+    class _Client:
+        async def chat_completion(self, **_kwargs):
+            return _stream()
+
+    def on_text(text: str, *, reasoning: str = "") -> None:
+        del reasoning
+        timeline.append(f"on_text {text}")
+
+    called = _call_qwen(
+        _Client(), kind="chat_completion", model="qwen3.7-flash", system="s", messages=[],
+        stream=True, temperature=None, tools=None, tool_choice=None, reasoning_effort="none",
+        on_text=on_text,
+    )
+
+    assert timeline == [
+        "chunk1 yielded", "on_text 你", "chunk2 yielded", "on_text 你好", "stream closed",
+    ]
+    assert called.response.choices[0].message.content == "你好"
+
+
+def _slow_qwen_client(first_delay: float, gap: float, chunks: int = 3):
+    import asyncio
+    from types import SimpleNamespace
+
+    def _chunk(text: str):
+        return SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(
+            content=text, reasoning_content=None,
+        ))])
+
+    async def _stream():
+        await asyncio.sleep(first_delay)
+        for index in range(chunks):
+            yield _chunk(str(index))
+            await asyncio.sleep(gap)
+
+    class _Client:
+        async def chat_completion(self, **_kwargs):
+            return _stream()
+
+    return _Client()
+
+
+def _qwen_call(client):
+    from backend.llm.calls import _call_qwen
+
+    return _call_qwen(
+        client, kind="chat_completion", model="qwen3.7-flash", system="s", messages=[],
+        stream=True, temperature=None, tools=None, tool_choice=None, reasoning_effort="none",
+        on_text=lambda *_a, **_k: None,
+    )
+
+
+def test_qwen_stream_that_goes_silent_times_out_as_a_retryable_provider_error(monkeypatch):
+    from backend.llm.errors import translate_provider_error
+
+    monkeypatch.setenv("KA_ACCOUNT_QWEN_TIMEOUT_SECONDS", "5")
+    monkeypatch.setenv("KA_ACCOUNT_QWEN_CHUNK_IDLE_SECONDS", "0.05")
+    with pytest.raises(TimeoutError) as caught:
+        _qwen_call(_slow_qwen_client(first_delay=0, gap=1.0))
+    error = translate_provider_error(caught.value, provider="qwen", model="qwen3.7-flash")
+    assert (error.kind, error.code, error.retryable) == ("timeout", "PROVIDER_TIMEOUT", True)
+
+
+def test_qwen_call_over_the_total_budget_times_out(monkeypatch):
+    monkeypatch.setenv("KA_ACCOUNT_QWEN_TIMEOUT_SECONDS", "0.2")
+    monkeypatch.setenv("KA_ACCOUNT_QWEN_CHUNK_IDLE_SECONDS", "5")
+    # Chunks keep arriving inside the idle limit, so only the total ceiling can stop it.
+    with pytest.raises(TimeoutError):
+        _qwen_call(_slow_qwen_client(first_delay=0, gap=0.1, chunks=50))
+
+
+def test_qwen_call_inside_both_limits_completes(monkeypatch):
+    monkeypatch.setenv("KA_ACCOUNT_QWEN_TIMEOUT_SECONDS", "5")
+    monkeypatch.setenv("KA_ACCOUNT_QWEN_CHUNK_IDLE_SECONDS", "1")
+    called = _qwen_call(_slow_qwen_client(first_delay=0.05, gap=0.01))
+    assert called.response.choices[0].message.content == "012"
+
+
 def test_qwen_json_sends_schema_and_turns_thinking_off(monkeypatch):
     from types import SimpleNamespace
 
@@ -246,6 +383,28 @@ def test_an_org_over_its_daily_tokens_does_not_call(db, monkeypatch):
             client=client, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
         )
     assert client.calls == 1
+
+
+def test_an_org_accumulates_cost_cents_and_stops_at_daily_cost_cap(db, monkeypatch):
+    run, step = _open(db, "org-daily-cost")
+    # 25,000 uncached prompt tokens on qwen3.7-flash costs 0.5 cents per call; two calls round to 1 cent.
+    client = _VendorStub({"prompt_tokens": 25_000, "completion_tokens": 0})
+    school_json(
+        SCHOOL_CHAT, system="first", messages=[{"role": "user", "content": "hi"}],
+        client=client, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
+    )
+    school_json(
+        SCHOOL_CHAT, system="second", messages=[{"role": "user", "content": "hi"}],
+        client=client, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
+    )
+    assert db.org_daily_usage("dist-1")["estimated_cost_cents"] == 1
+    monkeypatch.setenv("KA_ACCOUNT_ORG_DAILY_COST_CENTS", "1")
+    with pytest.raises(ModelBudgetExceeded):
+        school_json(
+            SCHOOL_CHAT, system="third", messages=[{"role": "user", "content": "hi"}],
+            client=client, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
+        )
+    assert client.calls == 2
 
 
 def test_a_run_over_its_token_budget_does_not_call(db):

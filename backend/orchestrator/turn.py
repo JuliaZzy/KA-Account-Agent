@@ -95,7 +95,12 @@ def name_new_chat(db: Database, llm:Any, session: dict[str, Any], run: dict[str,
 
 
 def execute_open(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
-    """Background OPEN: tags and title only. No wave box, no events on the chat run."""
+    """Background OPEN: refine tags and title. No wave box, no events on the chat run.
+
+    The sidebar already shows a provisional title from the first message. If that
+    title was replaced (user edit), skip overwrite and keep the new title.
+    """
+    from ..services.session_title import clear_provisional
     from ..turn_lock import hold_session
 
     payload = run.get("input_json") if isinstance(run.get("input_json"), dict) else {}
@@ -103,8 +108,14 @@ def execute_open(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
     session = db.session(session_id)
     if not session:
         return {"ok": False, "error": "chat run has no session"}
-    if session.get("title"):
-        return {"ok": True, "title": session.get("title"), "tags": list(session.get("tags") or [])}
+    provisional = str(payload.get("provisional_title") or "")
+    current_title = str(session.get("title") or "")
+    if provisional and current_title and current_title != provisional:
+        clear_provisional(session_id)
+        return {
+            "ok": True, "title": current_title, "tags": list(session.get("tags") or []),
+            "skipped": "user_title",
+        }
     message = str(payload.get("message") or "")
     attachments = [name for name in (payload.get("attachments") or []) if isinstance(name, str)]
     try:
@@ -118,10 +129,19 @@ def execute_open(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
     with hold_session(session_id):
         current = db.session(session_id) or session
-        if current.get("title"):
-            return {"ok": True, "title": current.get("title"), "tags": list(current.get("tags") or [])}
-        db.update_session(session_id, title=opened.title, tags=opened.tags)
-    return {"ok": True, "title": opened.title, "tags": opened.tags}
+        now_title = str(current.get("title") or "")
+        if provisional and now_title and now_title != provisional:
+            clear_provisional(session_id)
+            return {
+                "ok": True, "title": now_title, "tags": list(current.get("tags") or []),
+                "skipped": "user_title",
+            }
+        fields: dict[str, Any] = {"tags": opened.tags}
+        if not now_title or now_title == provisional:
+            fields["title"] = opened.title
+        db.update_session(session_id, **fields)
+        clear_provisional(session_id)
+    return {"ok": True, "title": fields.get("title", now_title), "tags": opened.tags}
 
 def _run_one_tool(
     call: Any, runners: dict[str, Any], llm: Any, context: dict[str, Any],

@@ -29,6 +29,7 @@ class RunResponse(BaseModel):
     output_json: dict[str, Any] | None = None
     error_json: dict[str, Any] | None = None
     created_at: datetime
+    queued_at: datetime
     started_at: datetime | None = None
     ended_at: datetime | None = None
     cancel_requested_at: datetime | None = None
@@ -36,6 +37,7 @@ class RunResponse(BaseModel):
     lease_owner: str | None = None
     lease_expires_at: datetime | None = None
     attempts: int
+    redispatch_count: int
     parent_run_id: str | None = None
     owner_run_id: str | None = None
     trace_id: str | None = None
@@ -90,6 +92,7 @@ class AgentRun(BaseModel):
     output_json: dict[str, Any] | None = None
     error_json: dict[str, Any] | None = None
     created_at: datetime
+    queued_at: datetime
     started_at: datetime | None = None
     ended_at: datetime | None = None
     cancel_requested_at: datetime | None = None
@@ -97,6 +100,7 @@ class AgentRun(BaseModel):
     lease_owner: str | None = None
     lease_expires_at: datetime | None = None
     attempts: int
+    redispatch_count: int
     parent_run_id: str | None = None
     owner_run_id: str | None = None
     trace_id: str | None = None
@@ -305,6 +309,7 @@ class MonitorMetrics(BaseModel):
     active_runs: int
     sse_connections: int
     stuck_runs: int
+    oldest_queued_seconds: float = 0.0
     model_errors: int
     route_selected: int = 0
     route_fallback: int = 0

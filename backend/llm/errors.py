@@ -61,6 +61,10 @@ class ProviderError(Exception):
     retry_after_seconds: float | None = None
     request_id: str | None = None
     retryable: bool = False
+    # Original SDK/HTTP exception, kept so logs and model_calls.error_json can show
+    # more than the flattened "network from qwen …" message.
+    cause_type: str | None = None
+    cause: str | None = None
 
     def __post_init__(self) -> None:
         if self.kind in RETRYABLE_KINDS:
@@ -125,6 +129,11 @@ def provider_error_from_http(response: Any, *, provider: str, model: str) -> Pro
     )
 
 
+def _cause_fields(exc: BaseException) -> dict[str, str]:
+    message = str(exc).strip() or repr(exc)
+    return {"cause_type": type(exc).__name__, "cause": message[:500]}
+
+
 def translate_provider_error(exc: BaseException, *, provider: str, model: str) -> ProviderError:
     """Turn an SDK / HTTP exception into `ProviderError`. Already-wrapped errors pass through."""
     if isinstance(exc, ProviderError):
@@ -134,41 +143,55 @@ def translate_provider_error(exc: BaseException, *, provider: str, model: str) -
     retry_after = parse_retry_after(_header(headers, "Retry-After"))
     request_id = _header(headers, "X-Request-Id") or _header(headers, "x-request-id") or _request_id_of(exc)
     name = type(exc).__name__
+    cause = _cause_fields(exc)
     if status is not None:
         kind, retryable = classify_status(status)
         return ProviderError(
             provider, model, kind,
             status_code=status, retry_after_seconds=retry_after,
-            request_id=request_id, retryable=retryable,
+            request_id=request_id, retryable=retryable, **cause,
         )
     if name in _TIMEOUT_NAMES or isinstance(exc, TimeoutError):
         return ProviderError(
             provider, model, "timeout",
-            retry_after_seconds=retry_after, request_id=request_id, retryable=True,
+            retry_after_seconds=retry_after, request_id=request_id, retryable=True, **cause,
         )
     if name in _NETWORK_NAMES:
         return ProviderError(
             provider, model, "network",
-            retry_after_seconds=retry_after, request_id=request_id, retryable=True,
+            retry_after_seconds=retry_after, request_id=request_id, retryable=True, **cause,
         )
     if name in {"AuthenticationError", "PermissionDeniedError"}:
         return ProviderError(
             provider, model, "authentication",
-            status_code=status, request_id=request_id, retryable=False,
+            status_code=status, request_id=request_id, retryable=False, **cause,
         )
     if name in {"BadRequestError", "UnprocessableEntityError"}:
         return ProviderError(
             provider, model, "bad_request",
-            status_code=status, request_id=request_id, retryable=False,
+            status_code=status, request_id=request_id, retryable=False, **cause,
         )
     if name in {"RateLimitError"}:
         return ProviderError(
             provider, model, "rate_limited",
             status_code=429, retry_after_seconds=retry_after, request_id=request_id, retryable=True,
+            **cause,
         )
+    # Local stream-assembly / event-loop bugs are not vendor outages — do not retry as network.
+    if isinstance(exc, TypeError) and "async_generator" in str(exc):
+        return ProviderError(
+            provider, model, "bad_response",
+            request_id=request_id, retryable=False, **cause,
+        )
+    if isinstance(exc, RuntimeError) and "Event loop is closed" in str(exc):
+        return ProviderError(
+            provider, model, "bad_response",
+            request_id=request_id, retryable=False, **cause,
+        )
+    # Unknown SDK errors still land on network so workers retry; cause_* keeps the real type.
     return ProviderError(
         provider, model, "network",
-        retry_after_seconds=retry_after, request_id=request_id, retryable=True,
+        retry_after_seconds=retry_after, request_id=request_id, retryable=True, **cause,
     )
 
 

@@ -109,7 +109,7 @@ Redis 不作为唯一事实来源：
 
 父 Run 和子 Run 的结果信封是 `id`、`kind`、`name`、`status`（`succeeded` / `failed` / `skipped`）、`ok`、`error`、`payload`。不在 `AGENT_NAMES` 里的 agent 会被丢掉，次数记在 PLAN 步骤的 `dropped.unknown_agent` 上；留下来的任务如果还依赖这个 id，或者 `depends_on` 指向不存在的任务，或者成环，PLAN 步骤失败，错误码分别是 `plan_depends_on_unknown_agent`、`plan_unknown_dependency`、`plan_cycle`，不写 `planned` checkpoint，也不派发。`/monitor` 用 PLAN 步骤数做分母显示这些比例。报表把自己的 data 任务收进草稿时，会同时拿掉那条依赖。同一 `task_id` 的结果以第一次写入为准。checkpoint 整行丢失时，从成功的 PLAN 步骤和子 Run 的 `output_json` 恢复，不重新 PLAN。ANSWER 收到全部结果，包括失败和跳过。契约在 `tests/test_orchestrator_contract.py`。
 
-`/monitor` 的完成时间和排队时长是分桶直方图，柱上标出 P50、P95 和 P99 落在哪一桶。完成时间只统计成功的 run，失败另有计数；排队只统计已经开始的 run。SLO 是服务等级目标，就是页面上的「目标 / 阈值 / 现在」表。完成时间 P95 < 60 秒，P99 < 120 秒；排队 P95 < 10 秒，P99 < 30 秒。阶段耗时从现有时间戳计算：排队、claim、PLAN、子任务、模型、工具、ANSWER、写 history。入队时刻是 `agent_runs.created_at`，请求进到这一行之前没有单独的耗时。Prometheus 仍然是原来的 15 个名字，直方图标签只有 `le`。完成时间的桶到 300 秒，并覆盖 180 秒超时；模型调用的桶到 30 秒。
+`/monitor` 的完成时间和排队时长是分桶直方图，柱上标出 P50、P95 和 P99 落在哪一桶。完成时间只统计成功的 run，失败另有计数；排队只统计已经开始的 run。SLO 是服务等级目标，就是页面上的「目标 / 阈值 / 现在」表。完成时间 P95 < 60 秒，P99 < 120 秒；排队 P95 < 10 秒，P99 < 30 秒。阶段耗时从现有时间戳计算：排队、claim、PLAN、子任务、模型、工具、ANSWER、写 history。入队时刻是 `agent_runs.created_at`，请求进到这一行之前没有单独的耗时。Prometheus 现在是 16 个名字（新增 `agent_oldest_queued_age_seconds`，最老 queued Run 的等待秒数），直方图标签只有 `le`。完成时间的桶到 300 秒，并覆盖 180 秒超时；模型调用的桶到 30 秒。
 
 ### 当前运行标准
 
@@ -147,9 +147,11 @@ Redis 不作为唯一事实来源：
 | 副作用停在 `running` | 90s 后记 `response_lost` | sweeper |
 | 数据库语句 | 120s | `KA_ACCOUNT_STATEMENT_TIMEOUT_MS` |
 | 连接池拿连接 | 30s | `KA_ACCOUNT_POOL_TIMEOUT` |
+| Qwen 单次调用（总时长 / chunk 间静默） | 30s / 10s | `KA_ACCOUNT_QWEN_TIMEOUT_SECONDS`、`KA_ACCOUNT_QWEN_CHUNK_IDLE_SECONDS` |
 | Run 租约 | 10 分钟 | `LEASE_FOR` |
 | `waiting_for_tasks` 无在途子女 | 15 分钟后清扫 | sweeper |
-| `queued` 已投递仍未领 | 10 分钟记 `run.queue_stale` | 只记事件 |
+| `queued` 已投递仍未领 | 120 秒宽限期后、且该队列在 Redis 里为空时，按 `queued_at` 过滤并补投，10 分钟记 `run.queue_stale` | 最多补投 3 次；仍未领取则失败并死信；排队超 1 小时直接失败 |
+| 已派发 outbox | 终态 Run 保留 7 天 | sweeper 每轮分批清理，仍 queued 的行保留 |
 | `waiting_for_user` | 1 天记提醒 | 不自动确认 |
 | `max_duration_seconds` | 默认空，不封顶 | 有值时领到或清扫超时记 `COST_BUDGET_EXCEEDED` |
 | Retry-After 上限 | 300s | 厂商 429 |
@@ -158,21 +160,22 @@ Redis 不作为唯一事实来源：
 
 #### 厂商额度（对照日期 2026-11-09）
 
-问候路径会打官方 `qwen3.7-flash` 做 PLAN 和 ANSWER（短文本优先走 Qwen），结构化 JSON / 工具 / 识图走官方 `deepseek-flash`。没有校园网关路径。DeepSeek 账户并发 2500、Qwen 华北 2 的 3 万 RPM 都远高于现在的 worker 8，压测时可以忽略，不要按它们去加 worker。
+问候路径会打官方 `qwen3.7-flash` 做 PLAN 和 ANSWER（短文本优先走 Qwen），结构化 JSON / 工具 / 识图走官方 `deepseek-flash`。没有校园网关路径。DeepSeek 账户并发 2500、Qwen 华北 2 的 3 万 RPM 都远高于现在的 worker 5，压测时可以忽略，不要靠加 worker 并发掩盖排队/闸门/补投问题。
 
 | brand | 官网额度 | 对我们的含义 |
 |---|---|---|
-| `qwen`（`qwen3.7-flash`，华北 2） | 30_000 RPM，5_000_000 TPM | PLAN、ANSWER、标题、翻译等短文本。高于 worker 8，本地闸门碰不到 |
-| `deepseek`（官方 `deepseek-flash`） | 账户级并发 2500 | 结构化 JSON、工具、识图、报表。高于 worker 8，本地闸门碰不到 |
+| `qwen`（`qwen3.7-flash`，华北 2） | 30_000 RPM，5_000_000 TPM | PLAN、ANSWER、标题、翻译等短文本。高于 worker 5，本地闸门碰不到 |
+| `deepseek`（官方 `deepseek-flash`） | 账户级并发 2500 | 结构化 JSON、工具、识图、报表。高于 worker 5，本地闸门碰不到 |
 | GLM-OCR | MaaS `connection_pool_size=16`，自部署 `max_workers=16`；429/5xx/504 有限重试 | 这是他们 SDK 的连接池，不是聊天 RPM。我们 OCR 走 urllib，超时 180 秒，没有接这套池子 |
 
-`KA_ACCOUNT_GATE_MODEL` 现在所有 brand 共用一个数字 32。官方额度远高于 worker 8，暂时够用。
+`KA_ACCOUNT_GATE_MODEL` 现在所有 brand 共用一个数字 32。官方额度远高于 worker 5，暂时够用。
 
 #### 并发和限流
 
 | 闸门 | 文档目标 | 代码默认 | 环境变量 / 位置 |
 |---|---|---|---|
-| Celery worker 进程 | 8 | 8 | `compose.yaml --concurrency=8` |
+| Celery worker 进程（聊天队列 `ka_account`） | 5 | 5 | `compose.yaml --concurrency=5` |
+| Celery title-worker（`ka_account.title`） | 3 | 3 | `compose.yaml title-worker --concurrency=3`（2 时标题吞吐约 0.8 条/s，追不上约 0.95 条/s 的对话完成速度，队列会积压） |
 | 全局同时 `running` | 100 | 100 | `KA_ACCOUNT_GATE_GLOBAL` |
 | 每个 org 同时 `running` | 20 | 10 | `KA_ACCOUNT_GATE_ORG` |
 | 每个用户同时 `running` | 5 | 5 | `KA_ACCOUNT_GATE_USER` |
@@ -182,7 +185,7 @@ Redis 不作为唯一事实来源：
 | 每分钟创建 run | org 1000 / 用户 200 | 同左 | `KA_ACCOUNT_RATE_CREATE_*` |
 | 每分钟读 run | org 10000 / 用户 2000 | 同左 | `KA_ACCOUNT_RATE_READ_*` |
 
-表里「文档目标」改了而代码默认没改时，不设环境变量就不会生效。同一会话同时只跑一轮。问候路径冒烟并发可用 5，不要超过 worker 并发和 `GATE_USER`。
+表里「文档目标」改了而代码默认没改时，不设环境变量就不会生效。同一会话同时只跑一轮。冒烟并发先跟线上一致的闸门一起看，不要为了抬完成率去加 worker。`sweeper` 有 DB 探活；compose 变更后确认它与 `postgres` 仍在同一网络（`docker compose ps` 显示 healthy）。
 
 #### 限流、熔断、降级、重试（以及超时、隔离、预热）
 
@@ -265,7 +268,7 @@ Redis 不作为唯一事实来源：
 
 账本上的精确分位是 P50、P95、P99（`percentile_cont`）。没有样本时是 null，不是 0。阶段从现有时间戳计算：排队、claim、PLAN、子任务、模型、工具、ANSWER、写 history。完成时间、模型和工具的百分位只含成功样本；失败和超时另有计数。排队只含已经开始的 run。HTTP 收到请求到写入 `agent_runs` 之前仍没有单独的耗时。
 
-Prometheus 保持 15 个名字。直方图标签只有 `le`，不带 `run_id`、`session_id` 或用户 ID。完成时间的桶延伸到 300 秒，并在 1 到 180 秒之间加密。模型调用的桶到 30 秒，比端到端短。超过最大桶的值只记成大于最大桶。
+Prometheus 现在是 16 个名字（新增 `agent_oldest_queued_age_seconds`）。直方图标签只有 `le`，不带 `run_id`、`session_id` 或用户 ID。完成时间的桶延伸到 300 秒，并在 1 到 180 秒之间加密。模型调用的桶到 30 秒，比端到端短。超过最大桶的值只记成大于最大桶。
 
 压测按样本量分开报。成功样本不足 300 时只报 P50 和 P95，P99 留空：100 条压测里每一类 agent 大约二十条，这个切片上的 P99 就是最慢的那一条。300 条及以上的汇总才报 P95 和 P99。超时计入 timeouts，不进入成功样本。这两档在 `tests/test_performance_metrics.py`，不调模型。`/monitor` 是长期账本，三档都给，旁边有样本数。
 

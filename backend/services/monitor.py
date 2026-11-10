@@ -35,6 +35,7 @@ _METRIC_HELP = (
     ("agent_side_effect_duplicate_prevented_total", "counter", "Side effects blocked by an idempotency key"),
     ("agent_sse_connection_count", "gauge", "Open run event streams"),
     ("agent_stuck_runs", "gauge", "Queued over 10 minutes, or running with an expired lease"),
+    ("agent_oldest_queued_age_seconds", "gauge", "Age of the longest-waiting queued run, 0 when none"),
     ("agent_estimated_cost_cents_total", "counter", "Stored cost in cents, including estimated usage"),
 )
 
@@ -153,6 +154,7 @@ def monitor(db: Database, org_id: str) -> dict[str, Any]:
             "active_runs": facts["active_runs"],
             "sse_connections": facts["sse_connections"],
             "stuck_runs": facts["stuck_runs"],
+            "oldest_queued_seconds": facts["oldest_queued_seconds"],
             "model_errors": facts["model_errors"],
             "route_selected": facts["route_selected"],
             "route_fallback": facts["route_fallback"],
@@ -204,6 +206,7 @@ def _series(facts: dict[str, Any]) -> dict[str, Any]:
         "agent_side_effect_duplicate_prevented_total": facts["duplicates"],
         "agent_sse_connection_count": facts["sse_connections"],
         "agent_stuck_runs": facts["stuck_runs"],
+        "agent_oldest_queued_age_seconds": facts["oldest_queued_seconds"],
         "agent_estimated_cost_cents_total": facts["cost_cents"],
     }
 

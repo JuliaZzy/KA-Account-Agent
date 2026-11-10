@@ -9,16 +9,34 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import inspect
+from sqlalchemy import func, inspect, true
 
 from ...config import db_url
-from ...services.run_names import RunStatus, StepEvent
+from ...services.run_names import RunStatus, RunType, StepEvent
+from .. import orm
 
 
 def utcnow() -> datetime:
     """The one clock the tables are stamped from — always UTC-aware, so what goes into a
     `timestamptz` column carries its offset instead of inheriting the server's."""
     return datetime.now(UTC)
+
+
+def _queue_last_seen():
+    """Latest sign of life for a queued run: queue entry or the last worker retry heartbeat.
+
+    Postgres `GREATEST` skips NULL, so a run that was never heartbeated reads as `queued_at`.
+    """
+    return func.greatest(orm.AgentRun.queued_at, orm.AgentRun.queue_heartbeat_at)
+
+
+def _open_scope(open_only: bool | None):
+    """Which queue a sweeper pass is looking at: OPEN (title) runs ride their own queue."""
+    if open_only is None:
+        return true()
+    if open_only:
+        return orm.AgentRun.run_type == RunType.OPEN
+    return orm.AgentRun.run_type != RunType.OPEN
 
 
 class InvalidRunTransition(Exception):

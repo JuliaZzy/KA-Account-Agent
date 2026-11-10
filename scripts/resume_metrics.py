@@ -73,6 +73,9 @@ def ledger_metrics(db: Database, org_id: str) -> dict[str, Any]:
         "tool_errors": tool_errors,
         "tool_success_rate": ((tool_calls - tool_errors) / tool_calls * 100) if tool_calls else None,
         "duplicate_side_effects_prevented": int(facts.get("duplicates") or 0),
+        "daily_tokens": int(facts.get("daily_tokens") or 0),
+        "daily_cost_cents": int(facts.get("daily_cost_cents") or 0),
+        "total_cost_cents": int(facts.get("cost_cents") or 0),
     }
 
 
@@ -114,9 +117,10 @@ def load_test_metrics(path: Path) -> dict[str, Any]:
     )
     if observed_max is None:
         observed_max = max(durations, default=None)
-    timeouts = int(summary.get("timeouts") or sum(
+    raw_timeouts = summary.get("timeouts")
+    timeouts = int(raw_timeouts) if raw_timeouts is not None else sum(
         1 for row in (rows or []) if isinstance(row, dict) and not row.get("completed")
-    ))
+    )
     return {
         "submitted": int(summary.get("submitted") or 0),
         "completed": int(summary.get("completed") or 0),
@@ -138,6 +142,7 @@ def load_test_metrics(path: Path) -> dict[str, Any]:
         "completed_max_seconds": _number(
             summary.get("completed_max_seconds", summary.get("completion_max_seconds"))
         ) or max(completed_durations, default=None),
+        "usage": summary.get("usage") if isinstance(summary.get("usage"), dict) else None,
     }
 
 
@@ -151,6 +156,11 @@ def main() -> int:
     parser.add_argument("--load-json", type=Path, help="load_test_chat.py output")
     parser.add_argument("--org-id", help="distributor id for Postgres run metrics")
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON only")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="write the JSON report to this path (implies JSON; still prints the human summary unless --json)",
+    )
     args = parser.parse_args()
 
     report: dict[str, Any] = {}
@@ -162,6 +172,10 @@ def main() -> int:
         report["ledger"] = ledger_metrics(Database(), args.org_id)
     if not report:
         parser.error("provide --junitxml and/or --org-id")
+
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -193,6 +207,8 @@ def main() -> int:
             f"P95 {metric['completed_p95_seconds']} 秒，"
             f"P99 {metric['completed_p99_seconds']} 秒。"
         )
+    if args.output is not None:
+        print(f"结果已写入 {args.output}")
     return 0
 
 

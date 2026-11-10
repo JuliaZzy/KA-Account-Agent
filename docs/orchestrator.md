@@ -10,18 +10,19 @@
 
 ```
 用户一句话
-  ├─ OPEN（仅无标题的新会话；独立 run，后台改 tags/title，不进 tasks，不向聊天 SSE 推事件）
+  ├─ 入队时：无标题则立刻用首条消息（或附件名）截断写入 title（不调模型）
   └─ 父 run（run_type=chat，带着 session_id）
         → PLAN（官方 qwen3.7-flash）
         → tasks[]，每项 id / kind / name / input / depends_on
         → 空 depends_on 的同一波：每项一条子 run，outbox 投递
-        → 任意空闲 worker 领子 run（带 session_id + owner_run_id）
+        → 任意空闲 chat worker 领子 run（带 session_id + owner_run_id）
         → 子 run 还要再调 agent/tool：再入队，owner 指这个子 run
         → 结果按 task id 写入 Redis 回合箱
         → 这一波计数归零：把父 run 重新入队
         → 下一波，或全部结束
         → 无论是否跑过任务，材料 + 用户原话交给 ANSWER
         → save_reply，松开会话写入锁
+        → 父 run 到终态后：若仍是临时标题，再投递 OPEN 到 title 队列精修 tags/title
 ```
 
 排队的粒度是**任务**，不是 session。消息带 `session_id`、`owner_run_id`、`task_id`。Worker 认任务，不认「这个对话归我了」。
@@ -72,9 +73,14 @@ Redis 只做这一波的计数和暂存，**账本在 Postgres**：子 run 的 `
 
 ### OPEN
 
-只给还没有标题的会话打 `tags` + `title`。不是代理，PLAN 不调度它。入队聊天父 run 的同时另建一条 `run_type=open`，和 PLAN 并行。失败留空标题，不挡这一轮。事件只写在这条 OPEN run 上，不投影到父 chat run，聊天页 SSE 看不到它。
+只精修会话的 `tags` + `title`。不是代理，PLAN 不调度它。
 
-提示词仍是 `backend/orchestrator/prompt.py` 的 `OPEN`。
+1. **入队时**：无标题则立刻用首条消息截断（附件则用文件名）写入 title，列表马上有字。
+2. **父 chat 到终态后**才建 `run_type=open`，投递到独立队列 `ka_account.title`（`title-worker`，concurrency 2）。聊天 worker 只消费 `ka_account`，标题任务抢不到聊天座位。
+3. **忙闲**：running 的顶层 chat ≥ 全局闸门 80% 时，title worker 带抖动重试，最多 3 次；仍忙则保留临时标题。
+4. **覆盖规则**：若用户已改掉临时标题，跳过模型覆盖。失败同样保留临时标题。
+
+事件只写在这条 OPEN run 上，不投影到父 chat run，聊天页 SSE 看不到它。提示词仍是 `backend/orchestrator/prompt.py` 的 `OPEN`。
 
 ### PLAN
 
@@ -178,7 +184,8 @@ Redis 只做这一波的计数和暂存，**账本在 Postgres**：子 run 的 `
 | `backend/orchestrator/parent.py` | 父 run：PLAN → 按波入队 → ANSWER |
 | `backend/orchestrator/report.py` | 报表子 run：规划后入队 data，恢复后续撰写 |
 | `backend/orchestrator/turn.py` | `execute_open`；`run_tool_calls` 只串行，聊天父 run 不再走这里 |
-| `backend/services/chat_run.py` | 入队时同时建 OPEN；`execute_chat`：open / 父 PLAN / 子任务。`hold_session` 只包会话写入 |
+| `backend/services/chat_run.py` | 入队写临时标题；`execute_chat`：open / 父 PLAN / 子任务。`hold_session` 只包会话写入 |
+| `backend/services/session_title.py` | 临时标题、终态后建 OPEN、title 队列忙闲判断 |
 | `backend/services/task_run.py` | 一条子 run 调一个工具，写 `tool_calls` + step，再进回合箱 |
 | `backend/services/run_loop.py` | 留给**单条**工具内部的占座、幂等、超时。不要再在这里并行一整波 |
 | `backend/services/session_tools.py` | 工具实现。父 run 按计划名字调度它们，而不是 `tools=` 让模型点 |

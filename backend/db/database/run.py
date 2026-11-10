@@ -12,10 +12,11 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import Integer, and_, cast, func, or_, select, text
+from sqlalchemy import Integer, and_, cast, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from ...llm.pricing import sum_usage_cost_cents
 from ...services.run_names import (
     PROJECTED_CHILD_EVENTS,
     RUN_EVENT_CHANNEL,
@@ -33,6 +34,8 @@ from .support import (
     RUN_TRANSITION_EVENTS,
     ChatTurnBusy,
     InvalidRunTransition,
+    _open_scope,
+    _queue_last_seen,
     _row_dict,
     utcnow,
 )
@@ -302,6 +305,8 @@ class RunMixin:
         elif to_status == RunStatus.QUEUED:
             run.lease_owner = None
             run.lease_expires_at = None
+            run.queued_at = now
+            run.redispatch_count = 0
             if error is not None:
                 run.error_json = error
         elif to_status == RunStatus.SUCCEEDED:
@@ -361,10 +366,25 @@ class RunMixin:
 
     @staticmethod
     def _execute_payload(run: orm.AgentRun) -> dict[str, Any]:
-        payload: dict[str, Any] = {"run_id": run.id}
+        payload: dict[str, Any] = {"run_id": run.id, "run_type": run.run_type}
         if isinstance(run.trace_id, str) and run.trace_id:
             payload["trace_id"] = run.trace_id
         return payload
+
+    def count_running_chat_parents(self) -> int:
+        """Top-level chat runs currently holding the session (running or waiting on children)."""
+        with self.tx() as s:
+            return int(s.scalar(
+                select(func.count())
+                .select_from(orm.AgentRun)
+                .where(
+                    orm.AgentRun.run_type == RunType.CHAT,
+                    orm.AgentRun.owner_run_id.is_(None),
+                    orm.AgentRun.status.in_((
+                        RunStatus.RUNNING, RunStatus.WAITING_FOR_TASKS, RunStatus.WAITING_FOR_USER,
+                    )),
+                )
+            ) or 0)
 
     @staticmethod
     def _write_event(
@@ -546,6 +566,7 @@ class RunMixin:
             max_tool_calls=max_tool_calls,
             max_duration_seconds=max_duration_seconds,
             created_at=now,
+            queued_at=now,
             updated_at=now,
         )
         s.add(run)
@@ -703,37 +724,162 @@ class RunMixin:
         self._fail_over_duration(now, limit)
         self._lose_side_effects(now - tool_after, limit)
 
-    def unclaimed_dispatches(self, older_than: datetime, limit: int = 100) -> list[dict[str, Any]]:
-        """Dispatched execute rows whose run is still queued. The caller publishes again."""
+    def unclaimed_dispatches(
+        self,
+        older_than: datetime,
+        limit: int = 100,
+        *,
+        max_redispatches: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Read old queued execute payloads without changing their retry budget."""
+        dispatched = select(orm.OutboxJob.id).where(
+            orm.OutboxJob.job_type == "execute_run",
+            orm.OutboxJob.status == OutboxStatus.DISPATCHED,
+            orm.OutboxJob.payload_json["run_id"].as_string() == orm.AgentRun.id,
+            orm.OutboxJob.dispatch_at < older_than,
+        ).exists()
         with self.tx() as s:
-            rows = s.scalars(
-                select(orm.OutboxJob)
+            runs = s.scalars(
+                select(orm.AgentRun)
                 .where(
-                    orm.OutboxJob.job_type == "execute_run",
-                    orm.OutboxJob.status == OutboxStatus.DISPATCHED,
-                    orm.OutboxJob.dispatch_at < older_than,
+                    orm.AgentRun.status == RunStatus.QUEUED,
+                    orm.AgentRun.queued_at < older_than,
+                    _queue_last_seen() < older_than,
+                    orm.AgentRun.redispatch_count < max_redispatches,
+                    dispatched,
                 )
-                .order_by(orm.OutboxJob.dispatch_at)
+                .order_by(orm.AgentRun.queued_at, orm.AgentRun.id)
                 .limit(limit)
             )
             payloads: list[dict[str, Any]] = []
-            for job in rows:
-                payload = job.payload_json if isinstance(job.payload_json, dict) else {}
-                run_id = payload.get("run_id")
-                if not isinstance(run_id, str):
-                    continue
-                run = s.get(orm.AgentRun, run_id)
-                if run is not None and run.status == RunStatus.QUEUED:
+            for run in runs:
+                job = s.scalars(
+                    select(orm.OutboxJob)
+                    .where(
+                        orm.OutboxJob.job_type == "execute_run",
+                        orm.OutboxJob.status == OutboxStatus.DISPATCHED,
+                        orm.OutboxJob.payload_json["run_id"].as_string() == run.id,
+                        orm.OutboxJob.dispatch_at < older_than,
+                    )
+                    .order_by(orm.OutboxJob.dispatch_at.desc(), orm.OutboxJob.created_at.desc())
+                    .limit(1)
+                ).first()
+                payload = job.payload_json if job is not None and isinstance(job.payload_json, dict) else {}
+                if isinstance(payload.get("run_id"), str):
                     payloads.append(dict(payload))
             return payloads
+
+    def claim_unclaimed_dispatches(
+        self,
+        older_than: datetime,
+        limit: int = 100,
+        *,
+        max_redispatches: int = 3,
+        open_only: bool | None = None,
+        not_before: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """Claim old queued runs whose dispatched execute message was not consumed.
+
+        The run is the driving table so the status and age predicates happen before the
+        limit. Locking and advancing the queue timestamp in one transaction makes two
+        sweeper instances skip the same run instead of publishing it twice.
+        """
+        now = utcnow()
+        dispatched = select(orm.OutboxJob.id).where(
+            orm.OutboxJob.job_type == "execute_run",
+            orm.OutboxJob.status == OutboxStatus.DISPATCHED,
+            orm.OutboxJob.payload_json["run_id"].as_string() == orm.AgentRun.id,
+            orm.OutboxJob.dispatch_at < older_than,
+        ).exists()
+        with self.tx() as s:
+            runs = list(s.scalars(
+                select(orm.AgentRun)
+                .where(
+                    orm.AgentRun.status == RunStatus.QUEUED,
+                    orm.AgentRun.queued_at < older_than,
+                    _queue_last_seen() < older_than,
+                    _queue_last_seen() >= not_before if not_before is not None else True,
+                    orm.AgentRun.redispatch_count < max_redispatches,
+                    _open_scope(open_only),
+                    dispatched,
+                )
+                .order_by(orm.AgentRun.queued_at, orm.AgentRun.id)
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            ))
+            payloads: list[dict[str, Any]] = []
+            for run in runs:
+                job = s.scalars(
+                    select(orm.OutboxJob)
+                    .where(
+                        orm.OutboxJob.job_type == "execute_run",
+                        orm.OutboxJob.status == OutboxStatus.DISPATCHED,
+                        orm.OutboxJob.payload_json["run_id"].as_string() == run.id,
+                        orm.OutboxJob.dispatch_at < older_than,
+                    )
+                    .order_by(orm.OutboxJob.dispatch_at.desc(), orm.OutboxJob.created_at.desc())
+                    .limit(1)
+                ).first()
+                payload = job.payload_json if job is not None and isinstance(job.payload_json, dict) else {}
+                if not isinstance(payload.get("run_id"), str):
+                    continue
+                run.redispatch_count = int(run.redispatch_count) + 1
+                run.queued_at = now
+                run.updated_at = now
+                self._append_event(
+                    s,
+                    run.id,
+                    StepEvent.RUN_REQUEUED_BY_SWEEPER,
+                    {"reason": "queue_unclaimed", "redispatch_count": run.redispatch_count},
+                    now,
+                )
+                payloads.append({**payload, "_redispatch_claimed_at": now})
+            s.flush()
+            return payloads
+
+    def touch_queue_heartbeat(self, run_id: str) -> None:
+        """Mark a queued run as still held by a worker that will retry it.
+
+        Only `queue_heartbeat_at` moves: `queued_at` keeps the queue-entry time that the
+        monitor and the stale-run note read, and no event is written per retry.
+        """
+        with self.tx() as s:
+            s.execute(
+                update(orm.AgentRun)
+                .where(orm.AgentRun.id == run_id, orm.AgentRun.status == RunStatus.QUEUED)
+                .values(queue_heartbeat_at=utcnow())
+            )
+
+    def release_unclaimed_dispatch(self, run_id: str, claimed_at: datetime) -> None:
+        """Release a failed publish claim without undoing a newer worker or sweeper claim."""
+        with self.tx() as s:
+            run = s.scalars(select(orm.AgentRun).where(
+                orm.AgentRun.id == run_id,
+                orm.AgentRun.status == RunStatus.QUEUED,
+                orm.AgentRun.queued_at == claimed_at,
+            ).with_for_update()).first()
+            if run is not None:
+                run.redispatch_count = max(0, int(run.redispatch_count) - 1)
+
+    @staticmethod
+    def _oldest_queued_seconds(s: Session, org: Any, now: datetime) -> float:
+        """Age of the longest-waiting queued run; 0 when nothing is queued.
+
+        `stuck_runs` is a threshold count, this is the continuous signal: it climbs
+        smoothly while the sweeper is still inside its grace period.
+        """
+        oldest = s.scalar(
+            select(func.min(orm.AgentRun.queued_at)).where(orm.AgentRun.status == RunStatus.QUEUED, org)
+        )
+        return round(max((now - oldest).total_seconds(), 0.0), 3) if oldest is not None else 0.0
 
     def _note_stale_queued(self, cutoff: datetime, limit: int) -> None:
         now = utcnow()
         with self.tx() as s:
             runs = list(s.scalars(
                 select(orm.AgentRun)
-                .where(orm.AgentRun.status == RunStatus.QUEUED, orm.AgentRun.updated_at < cutoff)
-                .order_by(orm.AgentRun.updated_at)
+                .where(orm.AgentRun.status == RunStatus.QUEUED, orm.AgentRun.queued_at < cutoff)
+                .order_by(orm.AgentRun.queued_at)
                 .limit(limit)
             ))
             for run in runs:
@@ -848,12 +994,70 @@ class RunMixin:
                     orm.UsageRecord.org_id == org_id, orm.UsageRecord.created_at >= start,
                 )
             )
-            cost = s.scalar(
-                select(func.coalesce(func.sum(orm.UsageRecord.estimated_cost_cents), 0)).where(
+            rows = list(s.scalars(
+                select(orm.UsageRecord).where(
                     orm.UsageRecord.org_id == org_id, orm.UsageRecord.created_at >= start,
                 )
-            )
-            return {"total_tokens": int(tokens or 0), "estimated_cost_cents": int(cost or 0)}
+            ))
+            return {"total_tokens": int(tokens or 0), "estimated_cost_cents": sum_usage_cost_cents(rows)}
+
+    def session_usage_facts(self, session_ids: list[str]) -> list[dict[str, Any]]:
+        """Succeeded model calls for runs created by the given chat sessions."""
+        cleaned = [str(item).strip() for item in session_ids if str(item).strip()]
+        if not cleaned:
+            return []
+        with self.tx() as s:
+            pairs = s.execute(
+                select(orm.AgentRun, orm.ModelCall)
+                .join(orm.ModelCall, orm.ModelCall.run_id == orm.AgentRun.id)
+                .where(
+                    orm.AgentRun.input_json["session_id"].astext.in_(cleaned),
+                    orm.ModelCall.status == StepStatus.SUCCEEDED,
+                )
+                .order_by(orm.ModelCall.created_at, orm.ModelCall.id)
+            ).all()
+            return [
+                {
+                    "run_id": run.id,
+                    "run_type": run.run_type,
+                    "session_id": (run.input_json or {}).get("session_id"),
+                    "provider": call.provider,
+                    "model": call.model,
+                    "prompt_tokens": int(call.prompt_tokens or 0),
+                    "completion_tokens": int(call.completion_tokens or 0),
+                    "cache_hit_tokens": call.cache_hit_tokens,
+                    "cache_miss_tokens": call.cache_miss_tokens,
+                    "cache_creation_tokens": call.cache_creation_tokens,
+                    "created_at": call.created_at,
+                }
+                for run, call in pairs
+            ]
+
+    def session_run_facts(self, session_ids: list[str]) -> list[dict[str, Any]]:
+        """Read runs belonging to the given sessions for bounded experiment follow-up."""
+        cleaned = [str(item).strip() for item in session_ids if str(item).strip()]
+        if not cleaned:
+            return []
+        with self.tx() as s:
+            rows = s.scalars(
+                select(orm.AgentRun)
+                .where(orm.AgentRun.input_json["session_id"].astext.in_(cleaned))
+                .order_by(orm.AgentRun.created_at, orm.AgentRun.id)
+            ).all()
+            return [
+                {
+                    "run_id": run.id,
+                    "session_id": (run.input_json or {}).get("session_id"),
+                    "owner_run_id": run.owner_run_id,
+                    "run_type": run.run_type,
+                    "status": run.status,
+                    "created_at": run.created_at.isoformat() if run.created_at else None,
+                    "started_at": run.started_at.isoformat() if run.started_at else None,
+                    "ended_at": run.ended_at.isoformat() if run.ended_at else None,
+                    "error_code": (run.error_json or {}).get("code"),
+                }
+                for run in rows
+            ]
 
     def record_repair(
         self,
@@ -1110,7 +1314,7 @@ class RunMixin:
         day = now.replace(hour=0, minute=0, second=0, microsecond=0)
         stuck_queued = and_(
             orm.AgentRun.status == RunStatus.QUEUED,
-            orm.AgentRun.created_at <= now - timedelta(minutes=10),
+            orm.AgentRun.queued_at <= now - timedelta(minutes=10),
         )
         stuck_running = and_(
             orm.AgentRun.status == RunStatus.RUNNING,
@@ -1244,16 +1448,14 @@ class RunMixin:
                     s, orm.RunEvent, org, orm.RunEvent.payload_json["skipped_duplicate"].astext == "true",
                     joined=orm.RunEvent,
                 ),
-                "cost_cents": int(s.scalar(
-                    select(func.coalesce(func.sum(orm.UsageRecord.estimated_cost_cents), 0)).where(
-                        orm.UsageRecord.org_id == org_id,
-                    )
-                ) or 0),
-                "daily_cost_cents": int(s.scalar(
-                    select(func.coalesce(func.sum(orm.UsageRecord.estimated_cost_cents), 0)).where(
+                "cost_cents": sum_usage_cost_cents(s.scalars(
+                    select(orm.UsageRecord).where(orm.UsageRecord.org_id == org_id)
+                )),
+                "daily_cost_cents": sum_usage_cost_cents(s.scalars(
+                    select(orm.UsageRecord).where(
                         orm.UsageRecord.org_id == org_id, orm.UsageRecord.created_at >= day,
                     )
-                ) or 0),
+                )),
                 "daily_tokens": int(s.scalar(
                     select(func.coalesce(func.sum(orm.UsageRecord.total_tokens), 0)).where(
                         orm.UsageRecord.org_id == org_id, orm.UsageRecord.created_at >= day,
@@ -1267,6 +1469,7 @@ class RunMixin:
                     ),
                 ),
                 "stuck_runs": self._count(s, orm.AgentRun, org, or_(stuck_queued, stuck_running)),
+                "oldest_queued_seconds": self._oldest_queued_seconds(s, org, now),
                 "failed_codes": self._failed_codes(s, org_id),
             }
             facts["plan"] = self._plan_quality(s, org)

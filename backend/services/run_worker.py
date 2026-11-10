@@ -64,8 +64,48 @@ class LeaseLost(Exception):
     """This worker no longer holds the lease. Leave the run for the sweeper."""
 
 
-class SessionBusy(Exception):
+class SoftBusy(Exception):
+    """Transient congestion. Celery retries; does not spend a business attempt."""
+
+    def __init__(self, reason: str = "soft_busy", *, countdown: float | None = None):
+        super().__init__(reason)
+        self.reason = reason
+        self.countdown = countdown if countdown is not None else _soft_busy_countdown()
+
+
+class SessionBusy(SoftBusy):
     """Another run for this chat is still running. Leave this run queued."""
+
+    def __init__(self, run_id: str | None = None):
+        super().__init__("session_busy", countdown=10.0)
+        self.run_id = run_id
+
+
+class GateFull(SoftBusy):
+    """Running gate (user/org/global) has no seat. Leave the run queued."""
+
+    def __init__(self) -> None:
+        super().__init__("gate_full")
+
+
+class QueueDisabled(SoftBusy):
+    """QUEUE_ENABLED is off. Leave the run queued."""
+
+    def __init__(self) -> None:
+        super().__init__("queue_disabled", countdown=30.0)
+
+
+def _soft_busy_countdown() -> float:
+    return random.uniform(5.0, 15.0)
+
+
+def _maybe_schedule_title(db: Database, run_id: str) -> None:
+    row = find_agent_run_by_id(db, run_id)
+    if row is None or row["status"] not in RUN_TERMINAL_STATUSES:
+        return
+    from .session_title import schedule_title_refine
+
+    schedule_title_refine(db, row)
 
 
 def _finish_claimed(
@@ -82,6 +122,7 @@ def _finish_claimed(
             "code": "COST_BUDGET_EXCEEDED",
             "message": "run duration exceeded",
         })
+        _maybe_schedule_title(db, run_id)
         return True
     try:
         output = execute(run)
@@ -135,10 +176,12 @@ def _finish_claimed(
     if row is None or row["status"] in RUN_TERMINAL_STATUSES or row["status"] in (
         RunStatus.WAITING_FOR_USER, RunStatus.WAITING_FOR_TASKS,
     ):
+        _maybe_schedule_title(db, run_id)
         return True
     finished = complete_run(db, run_id, output)
     if finished is None:
         cancel_run(db, run_id)
+    _maybe_schedule_title(db, run_id)
     return True
 
 
@@ -148,11 +191,13 @@ def work_once(
     execute: Callable[[dict[str, Any]], dict[str, Any]],
     retry_after: tuple[timedelta, ...] = RETRY_AFTER,
     run_id: str | None = None,
+    *,
+    take_run_gate: bool = True,
 ) -> bool:
     """Run one claimed id. False when no `run_id` was given.
 
-    A terminal run is skipped. The queue switch leaves a queued run where it is.
-    The running gates are taken for this claim and given back when the call returns.
+    A terminal run is skipped. Queue off or a full running gate raises SoftBusy so
+    Celery can retry without ack. Title OPEN runs pass ``take_run_gate=False``.
     """
     if not run_id:
         return False
@@ -162,12 +207,12 @@ def work_once(
     if existing["status"] in RUN_TERMINAL_STATUSES:
         return True
     if not queue_enabled():
-        return False
+        raise QueueDisabled()
     org_id = str(existing.get("org_id") or "")
     user_id = str(existing.get("user_id") or "")
-    lease = acquire_run(org_id, user_id)
-    if lease is None:
-        return False
+    lease = acquire_run(org_id, user_id) if take_run_gate else None
+    if take_run_gate and lease is None:
+        raise GateFull()
     try:
         try:
             run = claim_chat_turn(db, run_id, worker_id, _lease_deadline())
@@ -177,7 +222,8 @@ def work_once(
             return find_agent_run_by_id(db, run_id) is not None
         return _finish_claimed(db, run, execute, retry_after, run_lease=lease)
     finally:
-        lease.release()
+        if lease is not None:
+            lease.release()
 
 
 def serve_worker(
@@ -187,8 +233,11 @@ def serve_worker(
 ) -> None:
     """Unused by compose. Delivery is `execute_run.delay`, which passes `run_id`."""
     while True:
-        if not work_once(db, worker_id, execute):
-            time.sleep(0.5)
+        try:
+            if not work_once(db, worker_id, execute):
+                time.sleep(0.5)
+        except SoftBusy as exc:
+            time.sleep(exc.countdown)
 
 
 def _settle(
@@ -211,6 +260,8 @@ def _settle(
     )
     if outcome == "dead_letter":
         log.error("dead letter run_id=%s error=%s", run_id, error.get("message"))
+    if permanent or outcome == "dead_letter":
+        _maybe_schedule_title(db, run_id)
     return True
 
 

@@ -60,15 +60,29 @@ def test_closing_the_stream_leaves_the_run_queued(db):
     assert run["status"] == "succeeded"
 
 
-def test_enqueue_writes_open_run_budget(db):
+def test_enqueue_sets_provisional_title_without_open_run(db):
     db.upsert_user("u-a", "dist-1", "Ada")
     session = new_session(db, "ps-1", "u-a")
-    run = enqueue_chat_run(db, session, "hello")
+    run = enqueue_chat_run(db, session, "hello from the first message")
+    assert db.session(session["id"])["title"] == "hello from the first message"
+    assert [row for row in db.find_runs_by_owner(run["id"]) if row["run_type"] == "open"] == []
+
+
+def test_open_refine_runs_after_chat_terminal(db):
+    llm = FakeLLM(json_replies=[{"tags": ["po"], "title": "refined title"}], text_reply="Got it.")
+    db.upsert_user("u-a", "dist-1", "Ada")
+    session = new_session(db, "ps-1", "u-a")
+    run = enqueue_chat_run(db, session, "hello from the first message")
+    assert db.session(session["id"])["title"] == "hello from the first message"
+    assert work_chat(db, llm, run["id"]) is True
     opened = [row for row in db.find_runs_by_owner(run["id"]) if row["run_type"] == "open"]
     budget = run_budget_for("open")
-    assert opened
+    assert len(opened) == 1
+    assert opened[0]["status"] == "succeeded"
     assert opened[0]["max_model_calls"] == budget.max_model_calls
     assert opened[0]["max_tokens"] == budget.max_tokens
+    assert db.session(session["id"])["title"] == "refined title"
+    assert db.session(session["id"])["tags"] == ["po"]
 
 
 def test_a_model_error_fails_the_run_on_the_worker(db):

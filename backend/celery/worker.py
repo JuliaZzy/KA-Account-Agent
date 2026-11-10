@@ -22,6 +22,7 @@ celery = Celery("ka_account", broker=celery_broker_url(), backend=celery_result_
 celery.conf.update(
     include=["backend.celery.tasks"],
     task_default_queue="ka_account",
+    # OPEN refine is published to ka_account.title by the dispatcher.
     # One reserved task per child. A long model call should not sit on a prefetch.
     worker_prefetch_multiplier=1,
     task_acks_late=True,

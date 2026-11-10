@@ -39,7 +39,9 @@ worker / Run       读 Retry-After，释放 model lease 和 run lease
 outbox dispatcher  到期的 outbox 交给 Celery
 ```
 
-Celery 任务 `execute_run` 的 `max_retries=None` 只用于队列关闭和 `SessionBusy`，不负责厂商错误或 worker 丢失。worker 丢失导致的 broker 重投由执行 outbox 在 PostgreSQL 中单独计数，超过上限后进入现有死信流程；偶发丢失仍会重新执行。厂商错误由 worker 写回 outbox，再投一次。
+`execute_run` 遇到 Postgres 拒绝连接（`OperationalError`，如 `too many clients`）时，在任务内按 2–6 秒起、线性增长的 jitter 重试，最多 5 次，用完再抛，由 sweeper 补投兜底；否则消息被 ack 而 Run 停在 `queued`。
+
+Celery 任务 `execute_run` 的 `max_retries=None` 用于队列关闭和各类 `SoftBusy`（`SessionBusy`、`GateFull`、`QueueDisabled`，以及 title 高峰软降级），不负责厂商错误或 worker 丢失。worker 丢失导致的 broker 重投由执行 outbox 在 PostgreSQL 中单独计数，超过上限后进入现有死信流程；偶发丢失仍会重新执行。厂商错误由 worker 写回 outbox，再投一次。
 
 以前会叠在一起：SDK 重试 × 客户端循环 × worker 再试。现在客户端一次失败就抛，由 worker 统一等。
 
@@ -59,6 +61,16 @@ worker 决定等待时间：
 2. 没有这个头：full jitter 指数退避。厂商错误从 1 秒起（1、2、4、8、16…，封顶 60 秒）；本地槽满从 5 秒起。每次在 `[0, backoff]` 里随机取。
 
 `schedule_retry(..., spend_attempt=False)` 把等待写在 outbox 的 `next_attempt_at` 上。
+
+### queued Run 的安全补投
+
+Celery 消息已经标成 `dispatched` 但 worker 没有把 Run 从 `queued` 领走时，sweeper 每 15 秒扫一轮，宽限期默认 120 秒（`KA_ACCOUNT_REDISPATCH_AFTER_SECONDS`）。宽限期取长是因为排队很深时 Run 只是在等，每补投一次就少一次机会；查询从 `agent_runs` 出发，先筛选 `status='queued'`、`queued_at` 已超过宽限期、存在老的 `dispatched execute_run`，再按 `queued_at` 限制 100 条；`idx_agent_runs_queued_at` 是只包含 queued 行的 PostgreSQL 部分索引。补投前用 `FOR UPDATE SKIP LOCKED` 锁住 Run，在同一事务中递增 `redispatch_count` 并刷新 `queued_at`，多个 sweeper 不会拿到同一条。
+
+每次只领取一条并立即发布；发布抛错时，仅在 Run 仍处于同一次 queued 领取状态下回退次数，后续 Run 不消耗预算。发布结果不确定时仍可能重复投递，worker 的 queued→running 领取保证只有一个执行者。清理 outbox 时也在数据库里先排除仍活跃的 Run，再限制批量，避免旧的活跃行挡住后续可清理行。
+
+**补投之前先看队列深度。** 聊天 Run 看 `ka_account`，标题（OPEN）Run 看 `ka_account.title`，各队列分别判断：Redis 里该队列还有消息，就说明 Run 只是在排队而不是丢了，不补投也不判耗尽；读不到 Redis 也跳过。否则一个积压的队列会被补出更多重复消息而更深（A3 r2：标题队列积压 p50 244 秒，补投事件 3083 次，24 个健康 Run 被误判 `STUCK_REDISPATCH_EXHAUSTED`）。真丢消息的 Run 由「超龄关闭」兜底。
+
+一条 Run 最多补投 3 次。仍没有 worker 领取时，sweeper 将它转为 `failed`，错误码为 `STUCK_REDISPATCH_EXHAUSTED`，同时写入死信，避免无限重复投递。排队超过 `KA_ACCOUNT_QUEUED_MAX_AGE_SECONDS`（默认 1 小时）的 Run 保持 queued，停止自动补投并等待人工核对。补投耗尽时状态机经过 `running` 再进入 `failed`。清理任务每轮最多删除 1000 条超过保留期、且对应 Run 已终态的 `dispatched` outbox；默认保留 7 天。仍 queued 的 outbox 不会被清掉，以免丢失补投依据。
 
 ## 重试顺序是不是 FIFO？
 

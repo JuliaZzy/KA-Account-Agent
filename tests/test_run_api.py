@@ -1946,6 +1946,11 @@ def test_planned_side_effect_is_claimed_before_the_handler_and_reused(make_db, m
     ))
     db.upsert_user("u-1", "org-1", "User")
     session = db.create_session("planned-side-session", "ps-1", "u-1")
+    parent, _ = db.create_agent_run(
+        "org-1", "u-1", "chat", "chat:planned-side-session:parent",
+        {"session_id": session["id"], "message": "send quote"},
+    )
+    parent_id = parent["id"]
     calls: list[dict] = []
 
     def send(args, **_kwargs):
@@ -1958,22 +1963,29 @@ def test_planned_side_effect_is_claimed_before_the_handler_and_reused(make_db, m
     )])
     monkeypatch.setattr("backend.services.task_run.turn_tools", lambda *args, **kwargs: registry)
     payload = {
-        "session_id": session["id"], "owner_run_id": "parent-1", "task_id": "mail-1",
+        "session_id": session["id"], "owner_run_id": parent_id, "task_id": "mail-1",
         "kind": "tool", "name": "send_email", "tool_name": "send_email",
         "input": {"to": "buyer@example.com", "subject": "Quote", "body": "10 cases"},
         "wave_id": "wave-1",
     }
+    from backend.redis_store import begin_turn
+
+    assert db.claim_chat_turn(parent_id, "test-worker", utcnow() + timedelta(minutes=5)) is not None
+    assert db.mark_waiting_for_tasks(parent_id, {"wave_id": "wave-1"}) is not None
+    begin_turn(session["id"], "wave-1", ["mail-1"])
     run, _ = db.create_agent_run(
-        "org-1", "u-1", "tool", "chat:planned-side-session:parent-1:mail-1", payload,
-        owner_run_id="parent-1",
+        "org-1", "u-1", "tool", f"chat:planned-side-session:{parent_id}:mail-1", payload,
+        owner_run_id=parent_id,
     )
+    assert db.claim_chat_turn(run["id"], "test-worker", utcnow() + timedelta(minutes=5)) is not None
 
     first = execute_task(db, None, run)
     second = execute_task(db, None, run)
     replay, _ = db.create_agent_run(
-        "org-1", "u-1", "tool", "chat:planned-side-session:parent-1:mail-1:replay", payload,
-        owner_run_id="parent-1",
+        "org-1", "u-1", "tool", f"chat:planned-side-session:{parent_id}:mail-1:replay", payload,
+        owner_run_id=parent_id,
     )
+    assert db.claim_chat_turn(replay["id"], "test-worker", utcnow() + timedelta(minutes=5)) is not None
     third = execute_task(db, None, replay)
 
     assert first["ok"] is True
@@ -1983,7 +1995,7 @@ def test_planned_side_effect_is_claimed_before_the_handler_and_reused(make_db, m
     rows = db.list_tool_calls(run["id"])
     assert len(rows) == 1
     assert rows[0]["status"] == ToolCallStatus.SUCCEEDED
-    assert rows[0]["idempotency_key"] == "send_email:parent-1:mail-1"
+    assert rows[0]["idempotency_key"] == f"send_email:{parent_id}:mail-1"
 
 
 def test_planned_side_effect_with_lost_response_is_not_retried(make_db, monkeypatch):
@@ -1997,6 +2009,11 @@ def test_planned_side_effect_with_lost_response_is_not_retried(make_db, monkeypa
     ))
     db.upsert_user("u-1", "org-1", "User")
     session = db.create_session("lost-response-session", "ps-1", "u-1")
+    parent, _ = db.create_agent_run(
+        "org-1", "u-1", "chat", "chat:lost-response-session:parent",
+        {"session_id": session["id"], "message": "send quote"},
+    )
+    parent_id = parent["id"]
     calls: list[dict] = []
 
     def send(args, **_kwargs):
@@ -2009,15 +2026,21 @@ def test_planned_side_effect_with_lost_response_is_not_retried(make_db, monkeypa
     )])
     monkeypatch.setattr("backend.services.task_run.turn_tools", lambda *args, **kwargs: registry)
     payload = {
-        "session_id": session["id"], "owner_run_id": "parent-2", "task_id": "mail-2",
+        "session_id": session["id"], "owner_run_id": parent_id, "task_id": "mail-2",
         "kind": "tool", "name": "send_email", "tool_name": "send_email",
         "input": {"to": "buyer@example.com", "subject": "Quote", "body": "10 cases"},
         "wave_id": "wave-2",
     }
+    from backend.redis_store import begin_turn
+
+    assert db.claim_chat_turn(parent_id, "test-worker", utcnow() + timedelta(minutes=5)) is not None
+    assert db.mark_waiting_for_tasks(parent_id, {"wave_id": "wave-2"}) is not None
+    begin_turn(session["id"], "wave-2", ["mail-2"])
     run, _ = db.create_agent_run(
-        "org-1", "u-1", "tool", "chat:lost-response-session:parent-2:mail-2", payload,
-        owner_run_id="parent-2",
+        "org-1", "u-1", "tool", f"chat:lost-response-session:{parent_id}:mail-2", payload,
+        owner_run_id=parent_id,
     )
+    assert db.claim_chat_turn(run["id"], "test-worker", utcnow() + timedelta(minutes=5)) is not None
 
     with pytest.raises(KeyboardInterrupt):
         execute_task(db, None, run)
@@ -2094,7 +2117,9 @@ def test_a_run_past_its_duration_fails_without_the_model(make_db):
 
 
 def test_the_queue_switch_does_not_claim(make_db, monkeypatch):
-    from backend.services.run_worker import work_once
+    import pytest
+
+    from backend.services.run_worker import QueueDisabled, work_once
 
     monkeypatch.setenv("QUEUE_ENABLED", "0")
 
@@ -2104,7 +2129,29 @@ def test_the_queue_switch_does_not_claim(make_db, monkeypatch):
     db = _db(make_db, "queue-off")
     client = TestClient(create_app(db))
     run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
-    assert work_once(db, "worker-a", execute, run_id=run_id) is False
+    with pytest.raises(QueueDisabled):
+        work_once(db, "worker-a", execute, run_id=run_id)
+    assert client.get(f"/runs/{run_id}", headers=HEADERS).json()["status"] == "queued"
+
+
+def test_a_full_run_gate_raises_soft_busy(make_db, monkeypatch):
+    import pytest
+
+    from backend.services.run_worker import GateFull, work_once
+
+    monkeypatch.setattr(
+        "backend.services.run_worker.acquire_run",
+        lambda org_id, user_id: None,
+    )
+
+    def execute(run):
+        raise AssertionError("execute must not run")
+
+    db = _db(make_db, "gate-full")
+    client = TestClient(create_app(db))
+    run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
+    with pytest.raises(GateFull):
+        work_once(db, "worker-a", execute, run_id=run_id)
     assert client.get(f"/runs/{run_id}", headers=HEADERS).json()["status"] == "queued"
 
 
@@ -2217,6 +2264,7 @@ _METRIC_NAMES = (
     "agent_side_effect_duplicate_prevented_total",
     "agent_sse_connection_count",
     "agent_stuck_runs",
+    "agent_oldest_queued_age_seconds",
     "agent_estimated_cost_cents_total",
 )
 

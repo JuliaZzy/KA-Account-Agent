@@ -23,7 +23,7 @@ x-python: &python
   env_file:
     - path: .env
       required: false
-  environment:
+  environment: &python-env
     # Compose wins over a leftover .env that still points at 127.0.0.1.
     KA_ACCOUNT_DB_URL: postgresql+psycopg://ka_account:ka_account@postgres:5432/ka_account
     KA_ACCOUNT_TEST_DB_URL: postgresql+psycopg://ka_account:ka_account@postgres:5432/postgres
@@ -128,6 +128,14 @@ services:
 
   worker:
     <<: *python
+    # YAML merge is shallow: a service-level `environment` replaces the anchor's, so the
+    # shared keys are re-merged. Pool sizes follow the connection budget in
+    # docs/performance/performance-test-plan.md: a child runs one task at a time, but a
+    # task also has a lease heartbeat and up to 5 tool threads.
+    environment:
+      <<: *python-env
+      KA_ACCOUNT_POOL_SIZE: "6"
+      KA_ACCOUNT_MAX_OVERFLOW: "2"
     depends_on:
       postgres:
         condition: service_healthy
@@ -140,8 +148,50 @@ services:
       - -A
       - backend.celery.worker:celery
       - worker
+      - -Q
+      - ka_account
       - --loglevel=INFO
-      - --concurrency=8
+      - --concurrency=5
+    stop_grace_period: 30s
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "celery",
+          "-A",
+          "backend.celery.worker:celery",
+          "inspect",
+          "ping",
+          "--timeout",
+          "10",
+        ]
+      interval: 15s
+      timeout: 15s
+      retries: 8
+      start_period: 25s
+
+  # Session title refine only. Never shares the chat queue, so OPEN cannot
+  # steal chat worker slots. Soft-busy retries live in execute_run.
+  title-worker:
+    <<: *python
+    environment:
+      <<: *python-env
+      KA_ACCOUNT_POOL_SIZE: "3"
+      KA_ACCOUNT_MAX_OVERFLOW: "1"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command:
+      - celery
+      - -A
+      - backend.celery.worker:celery
+      - worker
+      - -Q
+      - ka_account.title
+      - --loglevel=INFO
+      - --concurrency=3
     stop_grace_period: 30s
     healthcheck:
       test:
@@ -162,6 +212,10 @@ services:
 
   sweeper:
     <<: *python
+    environment:
+      <<: *python-env
+      KA_ACCOUNT_POOL_SIZE: "2"
+      KA_ACCOUNT_MAX_OVERFLOW: "1"
     depends_on:
       postgres:
         condition: service_healthy
@@ -172,6 +226,20 @@ services:
       - -m
       - backend.services.sweeper
     restart: unless-stopped
+    # Without a healthcheck, a container can stay "Up" while DNS to postgres is broken
+    # and republish_unclaimed never runs. Probe the same DB URL the app uses.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "from sqlalchemy import create_engine, text; from backend.config import env; create_engine(env('KA_ACCOUNT_DB_URL')).connect().execute(text('select 1'))",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
 
   frontend:
     build:

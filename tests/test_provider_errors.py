@@ -58,6 +58,43 @@ def test_timeout_exception_is_retryable():
     )
     assert err.kind == "timeout"
     assert err.retryable is True
+    assert err.cause_type == "TimeoutError"
+    assert "read timed out" in (err.cause or "")
+
+
+def test_unknown_sdk_error_keeps_cause_under_network():
+    err = translate_provider_error(
+        RuntimeError("stream closed mid-chunk"),
+        provider="qwen",
+        model="qwen3.7-flash",
+    )
+    assert err.kind == "network"
+    assert err.cause_type == "RuntimeError"
+    assert "stream closed mid-chunk" in (err.cause or "")
+
+
+def test_async_generator_typeerror_is_bad_response_not_network():
+    err = translate_provider_error(
+        TypeError("'async_generator' object is not iterable"),
+        provider="qwen",
+        model="qwen3.7-flash",
+    )
+    assert err.kind == "bad_response"
+    assert err.retryable is False
+    assert err.code == "PROVIDER_BAD_RESPONSE"
+    assert err.cause_type == "TypeError"
+    assert "async_generator" in (err.cause or "")
+
+
+def test_closed_event_loop_is_bad_response_not_network():
+    err = translate_provider_error(
+        RuntimeError("Event loop is closed"),
+        provider="qwen",
+        model="qwen3.7-flash",
+    )
+    assert err.kind == "bad_response"
+    assert err.retryable is False
+    assert err.cause_type == "RuntimeError"
 
 
 def test_openai_compatible_clients_disable_sdk_retries(monkeypatch):

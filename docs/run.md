@@ -218,7 +218,7 @@ org 日预算看当天 `usage_records` 的 token 和费用。`KA_ACCOUNT_ORG_DAI
 
 没有 checkpoint 时，才从这条 run 的用户消息开始。
 
-清扫是 Compose 服务 `sweeper`，同一镜像，命令 `python -m backend.services.sweeper`，默认 15 秒一轮。它不跑循环，不调模型，不执行工具。
+清扫是 Compose 服务 `sweeper`，同一镜像，命令 `python -m backend.services.sweeper`，默认 15 秒一轮。它不跑循环，不调模型，不执行工具。`agent_runs.queued_at` 记录最近一次进入队列的时间，`redispatch_count` 记录安全补投次数。
 
 | 扫到 | 做什么 |
 |---|---|
@@ -231,7 +231,10 @@ org 日预算看当天 `usage_records` 的 token 和费用。`KA_ACCOUNT_ORG_DAI
 | `running` 且超过 `max_duration_seconds` | `failed`；若已请求取消则 `cancelled` |
 | 副作用 `tool_calls` 停在 `running` 超过 90 秒 | `response_lost`，并写 `tool.manual_review` |
 | outbox 仍是 `pending` | `dispatch_pending` |
-| 已送出但 run 还在 `queued` 超过 30 秒 | 再投一次 |
+| 已送出但 run 还在 `queued` 超过宽限期（默认 120 秒，`KA_ACCOUNT_REDISPATCH_AFTER_SECONDS`），**且它所在的队列在 Redis 里是空的** | 从 queued Run 主表先过滤，再按 `queued_at` 取最多 100 条；`FOR UPDATE SKIP LOCKED` 锁住后递增 `redispatch_count`，最多补投 3 次。队列非空（Run 只是在排队）或读不到队列深度时不补投 |
+| 补投次数已满且仍 queued | 标记 `failed`，错误码 `STUCK_REDISPATCH_EXHAUSTED`，并写入 `dead_letter_jobs` |
+| 排队超过 `KA_ACCOUNT_QUEUED_MAX_AGE_SECONDS`（默认 1 小时） | 保持 queued、停止自动补投，人工核对后处理 |
+| 已派发且对应 Run 已终态、超过保留期 | 按批删除；默认保留 7 天，可用 `KA_ACCOUNT_OUTBOX_RETENTION_DAYS` 和 `KA_ACCOUNT_OUTBOX_CLEANUP_BATCH` 调整 |
 
 ## 回放、重试、重跑、修复
 

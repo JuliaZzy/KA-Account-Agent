@@ -149,12 +149,18 @@ def begin_turn(session_id: str, turn_id: str, task_ids: list[str]) -> None:
 
 
 def store_result(session_id: str, turn_id: str, task_id: str, result: dict[str, Any]) -> int:
-    """Write one task's result. Returns how many tasks are still out."""
+    """Write one task's result. Returns how many tasks are still out.
+
+    ``-1`` when the wave counter was never started (``begin_turn`` missing) or Redis
+    returned nothing — callers treat that like a soft miss and keep the Postgres ledger.
+    """
     raw = json.dumps(result, ensure_ascii=False, default=str)
     left = client().eval(
         _STORE, 2, _turn_key(session_id, turn_id), _left_key(session_id, turn_id),
         task_id, raw, str(TURN_TTL_S),
     )
+    if left is None:
+        return -1
     return int(left)
 
 

@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import timedelta
 
 from ..config import env
-from ..db import Database
+from ..db import Database, utcnow
 from .dispatcher import dispatch_pending, republish_unclaimed
 from .run_worker import sweep_expired_leases, sweep_waiting_for_tasks
 
@@ -24,6 +25,10 @@ def sweep(db: Database) -> None:
     db.sweep_attention()
     republish_unclaimed(db)
     dispatch_pending(db)
+    db.purge_dispatched_outbox(
+        utcnow() - timedelta(days=_retention_days()),
+        limit=_cleanup_batch(),
+    )
 
 
 def main() -> None:
@@ -43,6 +48,22 @@ def _seconds() -> float:
         return max(float(raw), 1.0)
     except ValueError:
         return 15.0
+
+
+def _retention_days() -> int:
+    raw = env("KA_ACCOUNT_OUTBOX_RETENTION_DAYS", "7")
+    try:
+        return max(int(raw), 1)
+    except ValueError:
+        return 7
+
+
+def _cleanup_batch() -> int:
+    raw = env("KA_ACCOUNT_OUTBOX_CLEANUP_BATCH", "1000")
+    try:
+        return max(int(raw), 1)
+    except ValueError:
+        return 1000
 
 
 if __name__ == "__main__":

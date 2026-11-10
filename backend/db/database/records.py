@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
+from ...llm.pricing import estimate_cost_cents
 from ...services.run_names import RunStatus, StepEvent, StepStatus, StepType, ToolCallStatus
 from .. import orm
 from .support import _row_dict, utcnow
@@ -250,6 +251,20 @@ class RecordMixin:
                 error_json = error or {},
                 created_at = now,
             )
+            cost_cents = (
+                estimate_cost_cents(
+                    provider,
+                    model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    cache_hit_tokens=cache_hit_tokens,
+                    cache_miss_tokens=cache_miss_tokens,
+                    cache_creation_tokens=cache_creation_tokens,
+                    created_at=now,
+                )
+                if status == StepStatus.SUCCEEDED
+                else 0
+            )
             s.add(orm.UsageRecord(
                 id=f"usage_{uuid.uuid4().hex}",
                 run_id=run_id,
@@ -263,7 +278,7 @@ class RecordMixin:
                 cache_miss_tokens=cache_miss_tokens,
                 cache_creation_tokens=cache_creation_tokens,
                 total_tokens=prompt_tokens + completion_tokens,
-                estimated_cost_cents=0,
+                estimated_cost_cents=cost_cents,
                 usage_source=usage_source,
                 created_at=now,
             ))

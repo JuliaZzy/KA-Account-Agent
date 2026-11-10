@@ -38,7 +38,8 @@ def test_full_flow(db):
     assert [event["type"] for event in ev if event["type"] == "session"] == []
     run_id = _of(ev, "run")["run_id"]
     assert db.find_agent_run("dist-1", run_id)["status"] == "queued"
-    assert any(row["run_type"] == "open" and row["status"] == "queued" for row in db.find_runs_by_owner(run_id))
+    assert db.session(sid)["title"] == "10 cases of fish oil, no discount"
+    assert [row for row in db.find_runs_by_owner(run_id) if row["run_type"] == "open"] == []
     assert work_chat(db, llm, run_id) is True
     assert db.session(sid)["title"] == "10 cases fish oil"
     assert db.session(sid)["tags"] == ["po"]
@@ -72,9 +73,11 @@ def test_empty_plan_answers_directly(db):
     ev = events(c.post(f"/api/sessions/{sid}/message", json={"message": "happy new year!"}))
     assert [event["type"] for event in ev if event["type"] == "session"] == []
     run_id = _of(ev, "run")["run_id"]
-    assert any(row["run_type"] == "open" for row in db.find_runs_by_owner(run_id))
+    assert db.session(sid)["title"] == "happy new year!"
+    assert [row for row in db.find_runs_by_owner(run_id) if row["run_type"] == "open"] == []
     assert work_chat(db, llm, run_id) is True
     assert db.session(sid)["title"] == "hello"
+    assert any(row["run_type"] == "open" for row in db.find_runs_by_owner(run_id))
     assert "Happy to help" in db.session(sid)["history"][-1]["content"]
 
 

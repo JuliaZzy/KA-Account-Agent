@@ -27,6 +27,7 @@ from ..repositories.run_repository import (
 from .dispatcher import dispatch_pending
 from .run_names import RunType, ToolCallStatus
 from .run_worker import PermanentRunError, sweep_expired_leases, work_once
+from .session_title import apply_provisional_title
 
 
 def enqueue_chat_run(
@@ -39,7 +40,11 @@ def enqueue_chat_run(
     model: str | None = None,
     attachments: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Create through the outbox and dispatch. Do not claim the run."""
+    """Create through the outbox and dispatch. Do not claim the run.
+
+    A missing session title is filled from the first message immediately. The
+    OPEN refine run is created only after this chat reaches a terminal status.
+    """
     # 鉴权
     user_id = str(session.get("user_id") or "")
     if not user_id:
@@ -56,6 +61,7 @@ def enqueue_chat_run(
         if name and data
     ]
     attachments = [name for name in (attachments or []) if isinstance(name, str)]
+    apply_provisional_title(db, session, message, attachments)
 
     # 创建 run
     chat_budget = run_budget_for(RunType.CHAT)
@@ -71,19 +77,6 @@ def enqueue_chat_run(
         max_model_calls=chat_budget.max_model_calls,
         max_tokens=chat_budget.max_tokens,
     )
-    if not session.get("title"):
-        open_budget = run_budget_for(RunType.OPEN)
-        create_agent_run(
-            db, partnership.distributor_id, user_id, RunType.OPEN,
-            f"open:{session['id']}:{run['id']}", {
-                "session_id": session["id"],
-                "message": (message or "")[:4000],
-                "attachments": attachments,
-            },
-            owner_run_id=run["id"],
-            max_model_calls=open_budget.max_model_calls,
-            max_tokens=open_budget.max_tokens,
-        )
     dispatch_pending(db)
     return run
 

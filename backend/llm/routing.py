@@ -210,7 +210,6 @@ def quality_check(policy: RoutePolicy, body: Any) -> tuple[bool, str]:
         ):
             return False, "invalid_task_id"
         known = set(ids)
-        graph: dict[str, list[str]] = {}
         for item in items:
             if not isinstance(item, dict) or item.get("kind") not in {"agent", "tool"}:
                 return False, "invalid_task_kind"
@@ -222,24 +221,9 @@ def quality_check(policy: RoutePolicy, body: Any) -> tuple[bool, str]:
             dependency_ids = [str(dep) for dep in dependencies]
             if any(dep not in known for dep in dependency_ids):
                 return False, "unknown_dependency"
-            graph[str(item["id"])] = dependency_ids
-
-        indegree = {node: len(dependencies) for node, dependencies in graph.items()}
-        dependents = {node: [] for node in graph}
-        for node, dependencies in graph.items():
-            for dependency in dependencies:
-                dependents[dependency].append(node)
-        ready = [node for node, degree in indegree.items() if degree == 0]
-        visited = 0
-        while ready:
-            node = ready.pop()
-            visited += 1
-            for dependent in dependents[node]:
-                indegree[dependent] -= 1
-                if indegree[dependent] == 0:
-                    ready.append(dependent)
-        if visited != len(graph):
-            return False, "cyclic_dependency"
+        # Cycles stay for make_plan.reject_plan → InvalidPlan(plan_cycle).
+        # Rejecting them here would fall back to another model (often an empty
+        # plan in tests) and the run would succeed without a plan_cycle failure.
         return True, "valid_task_plan"
     if policy.quality_gate == "valid_po_slots":
         if not isinstance(body, dict) or not isinstance(body.get("line_items"), list):

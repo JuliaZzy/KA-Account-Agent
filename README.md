@@ -84,8 +84,10 @@ API 文档：<http://127.0.0.1:8000/docs>
 | `BOCHA_API_KEY` | 网页搜索 |
 | `SOCIALCRAWL_API_KEY` | 可选 SocialCrawl MCP |
 | `SMTP_*`、`EMAIL_DRY_RUN` | 邮件发送配置及 dry run |
+| `KA_ACCOUNT_OUTBOX_RETENTION_DAYS`、`KA_ACCOUNT_OUTBOX_CLEANUP_BATCH` | sweeper 保留已派发 outbox 的天数（默认 7）及每轮清理批量（默认 1000） |
+| `KA_ACCOUNT_REDISPATCH_AFTER_SECONDS`、`KA_ACCOUNT_QUEUED_MAX_AGE_SECONDS` | queued 的 Run 超过多久才补投（默认 120 秒），以及排队超过多久停止自动补投、转人工核对（默认 3600 秒） |
 
-聊天下拉选项的 endpoint 和调用名由 `backend/llm_config.py` 管理。数据库连接池可通过 `KA_ACCOUNT_POOL_SIZE`、`KA_ACCOUNT_MAX_OVERFLOW`、`KA_ACCOUNT_POOL_TIMEOUT` 调整。不要提交 `.env`，也不要在日志或文档中暴露密钥。
+聊天下拉选项的 endpoint 和调用名由 `backend/llm_config.py` 管理。数据库连接池可通过 `KA_ACCOUNT_POOL_SIZE`、`KA_ACCOUNT_MAX_OVERFLOW`、`KA_ACCOUNT_POOL_TIMEOUT` 调整；Compose 里 worker / title-worker / sweeper 各自设了较小的池（总和要小于 Postgres 的 `max_connections` 减 3，算法见 A3 实验记录「连接预算」）。Qwen 单次调用的超时用 `KA_ACCOUNT_QWEN_TIMEOUT_SECONDS`（总时长，默认 30）和 `KA_ACCOUNT_QWEN_CHUNK_IDLE_SECONDS`（相邻 chunk 最长静默，默认 10）；超时走 `PROVIDER_TIMEOUT` 并 fallback。不要提交 `.env`，也不要在日志或文档中暴露密钥。
 
 ## 架构
 
@@ -98,6 +100,8 @@ Vite/React ──HTTP──> FastAPI ──> PostgreSQL
 ```
 
 聊天请求由 API 创建 queued run 和出站任务，并返回 `run_id`；Celery worker 执行模型和工具，前端轮询轨迹。关闭页面或停止轮询不会取消任务，只有显式点击停止才会取消。需用户确认的工具会暂停在 `waiting_for_user`，确认后继续执行。
+
+补投以 `agent_runs.status='queued'` 为主表，先按 `queued_at`、宽限期和补投次数过滤，再限量并使用 `FOR UPDATE SKIP LOCKED`，避免历史终态 outbox 挤掉真正卡住的 Run。宽限期默认 120 秒；只有当该 Run 所在的 Celery 队列在 Redis 里已经是空的时才补投或判「耗尽」：队列里还有消息，说明 Run 只是在排队，再补一份只会加深积压（A3 r2 里标题队列积压约 4 分钟，旧逻辑补出约 1.5 条重复消息/Run，并误杀了 24 个健康 Run）。Redis 读不到时同样跳过。每条 Run 最多补投 3 次；仍未被领取会以 `STUCK_REDISPATCH_EXHAUSTED` 失败并进入死信；排队超过 1 小时的 Run 保持 queued 并停止自动补投，需人工核对。已派发且对应 Run 已终态的 outbox 默认保留 7 天后分批删除，仍 queued 的证据不会被清理。
 
 主要目录：
 

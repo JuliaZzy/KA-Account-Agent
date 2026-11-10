@@ -14,9 +14,11 @@ labeled `estimated`. OCR stays in `documents`.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -208,9 +210,22 @@ def _json_format(schema: dict[str, Any] | None) -> dict[str, Any]:
     return {"format": {"type": "json_object"}}
 
 
+# Celery workers are sync. Qwen's AsyncOpenAI needs one long-lived loop so the
+# create coroutine and any async stream drain share the same loop (asyncio.run
+# closes the loop and later yields "Event loop is closed").
+_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _background_loop() -> asyncio.AbstractEventLoop:
+    global _loop
+    if _loop is None or _loop.is_closed():
+        _loop = asyncio.new_event_loop()
+    return _loop
+
+
 def _await(result: Any) -> Any:
     if inspect.iscoroutine(result):
-        return asyncio.run(result)
+        return _background_loop().run_until_complete(result)
     return result
 
 
@@ -278,38 +293,103 @@ def _qwen_schema(schema: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
+def qwen_total_timeout_seconds() -> float:
+    """Ceiling for one Qwen call, first byte to last chunk. Normal calls take 2-6s."""
+    return _env_seconds("KA_ACCOUNT_QWEN_TIMEOUT_SECONDS", 30.0)
+
+
+def qwen_chunk_idle_seconds() -> float:
+    """Longest silence tolerated between two stream chunks once the stream has started."""
+    return _env_seconds("KA_ACCOUNT_QWEN_CHUNK_IDLE_SECONDS", 10.0)
+
+
+def _env_seconds(name: str, default: float) -> float:
+    try:
+        value = float(os.environ.get(name, default))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+async def _with_idle_timeout(stream: Any, idle_seconds: float) -> Any:
+    """Yield stream items, raising TimeoutError when the next one takes too long."""
+    iterator = stream.__aiter__()
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(iterator.__anext__(), timeout=idle_seconds)
+            except StopAsyncIteration:
+                return
+            yield item
+    finally:
+        close = getattr(iterator, "aclose", None)
+        if close is not None:
+            # Best effort: the error that ended the stream matters more than a failed close.
+            with contextlib.suppress(Exception):
+                await close()
+
+
 def _call_qwen(
     client: Any, *, kind: Kind, model: str, system: str, messages: list[dict[str, Any]],
     stream: bool, temperature: float | None, tools: list[dict[str, Any]] | None,
     tool_choice: str | None, reasoning_effort: str | None,
     schema: dict[str, Any] | None = None,
+    on_text: Callable[..., None] | None = None,
 ) -> Any:
     thinking = None
     if reasoning_effort == "none":
         thinking = {"enable_thinking": False}
     elif reasoning_effort:
         thinking = {"enable_thinking": True}
-    if kind == "response":
-        return _await(client.response(
-            model=model, input=[{"role": "system", "content": system}, *messages],
-            stream=stream, tools=tools, tool_choice=tool_choice,
-            reasoning_effort=reasoning_effort, extra_body=thinking,
-        ))
-    kwargs: dict[str, Any] = {
-        "model": model, "messages": [{"role": "system", "content": system}, *messages],
-    }
-    if stream:
-        kwargs["stream"] = True
-    if tools:
-        kwargs["tools"] = tools
-        kwargs["tool_choice"] = tool_choice or "auto"
-    fmt = _qwen_schema(schema)
-    if fmt is not None:
-        kwargs["response_format"] = fmt
-    if thinking:
-        kwargs["extra_body"] = thinking
+
+    async def _run() -> Any:
+        if kind == "response":
+            resp = client.response(
+                model=model, input=[{"role": "system", "content": system}, *messages],
+                stream=stream, tools=tools, tool_choice=tool_choice,
+                reasoning_effort=reasoning_effort, extra_body=thinking,
+            )
+        else:
+            kwargs: dict[str, Any] = {
+                "model": model, "messages": [{"role": "system", "content": system}, *messages],
+            }
+            if stream:
+                kwargs["stream"] = True
+            if tools:
+                kwargs["tools"] = tools
+                kwargs["tool_choice"] = tool_choice or "auto"
+            fmt = _qwen_schema(schema)
+            if fmt is not None:
+                kwargs["response_format"] = fmt
+            if thinking:
+                kwargs["extra_body"] = thinking
+            resp = client.chat_completion(**kwargs)
+        # Real QwenClient methods are async; sync test doubles return the body directly.
+        if inspect.isawaitable(resp):
+            resp = await resp
+        # The stream must be consumed on the loop that created it: a later asyncio.run
+        # would close that loop and make the generator unusable. Chunks are fed to the
+        # assembler as they arrive so `on_text` (live reply_updated) fires during the
+        # stream, not after it ends.
+        if stream and (
+            inspect.isasyncgen(resp)
+            or (hasattr(resp, "__aiter__") and not hasattr(resp, "__iter__"))
+        ):
+            assembler = _StreamAssembler(on_text) if on_text is not None else None
+            chunks: list[Any] = []
+            async for item in _with_idle_timeout(resp, qwen_chunk_idle_seconds()):
+                if assembler is not None:
+                    assembler.feed(item)
+                else:
+                    chunks.append(item)
+            return _Assembled(assembler.result()) if assembler is not None else chunks
+        return resp
+
     del temperature
-    return _await(client.chat_completion(**kwargs))
+    # The SDK client's own timeout is 7200s, so without this a stalled call can run for
+    # over a minute (A3 saw 71s) before the fallback model gets a chance. TimeoutError
+    # is classified as a retryable `timeout` ProviderError, which routing falls back on.
+    return _await(asyncio.wait_for(_run(), timeout=qwen_total_timeout_seconds()))
 
 
 def _call_double(
@@ -352,27 +432,65 @@ def _call_double(
     return _await(chat(**kwargs))
 
 
-def _assemble_stream(chunks: Any, on_text: Callable[..., None]) -> Any:
-    parts: list[str] = []
-    reasoning_parts: list[str] = []
-    calls: dict[int, dict[str, str]] = {}
-    for chunk in chunks:
+def _iter_stream_chunks(chunks: Any) -> Iterator[Any]:
+    """Normalize vendor streams to a sync iterator.
+
+    Qwen normally buffers async streams inside `_call_qwen`. This path remains for
+    any async iterator that still reaches `_assemble_stream`, and must reuse the
+    same background loop the generator was created on.
+    """
+    if inspect.isasyncgen(chunks) or (
+        hasattr(chunks, "__aiter__") and not hasattr(chunks, "__iter__")
+    ):
+        async def _drain() -> list[Any]:
+            return [item async for item in chunks]
+
+        return iter(_background_loop().run_until_complete(_drain()))
+    return iter(chunks)
+
+
+class _Assembled:
+    """A stream already folded into one response while its event loop was still open."""
+
+    def __init__(self, response: Any) -> None:
+        self.response = response
+
+
+class _StreamAssembler:
+    """Folds chat-completion chunks into one message and reports text as it grows."""
+
+    def __init__(self, on_text: Callable[..., None]) -> None:
+        self._on_text = on_text
+        self._parts: list[str] = []
+        self._reasoning: list[str] = []
+        self._calls: dict[int, dict[str, str]] = {}
+
+    def feed(self, chunk: Any) -> None:
         delta = _choice_delta(chunk)
         piece = _delta_text(delta)
         thought = _delta_reasoning(delta)
         if thought:
-            reasoning_parts.append(thought)
+            self._reasoning.append(thought)
         if piece:
-            parts.append(piece)
+            self._parts.append(piece)
         if piece or thought:
-            on_text("".join(parts), reasoning="".join(reasoning_parts))
-        _take_tool_delta(calls, delta)
-    message = SimpleNamespace(
-        content="".join(parts) or None,
-        reasoning_content="".join(reasoning_parts) or None,
-        tool_calls=[_tool_namespace(calls[index]) for index in sorted(calls)] or None,
-    )
-    return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+            self._on_text("".join(self._parts), reasoning="".join(self._reasoning))
+        _take_tool_delta(self._calls, delta)
+
+    def result(self) -> Any:
+        message = SimpleNamespace(
+            content="".join(self._parts) or None,
+            reasoning_content="".join(self._reasoning) or None,
+            tool_calls=[_tool_namespace(self._calls[index]) for index in sorted(self._calls)] or None,
+        )
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+
+def _assemble_stream(chunks: Any, on_text: Callable[..., None]) -> Any:
+    assembler = _StreamAssembler(on_text)
+    for chunk in _iter_stream_chunks(chunks):
+        assembler.feed(chunk)
+    return assembler.result()
 
 
 def _choice_delta(chunk: Any) -> Any:
@@ -567,10 +685,12 @@ def _invoke(
                 client, kind=kind, model=model_name, system=system, messages=messages,
                 stream=stream, temperature=temperature, tools=tools,
                 tool_choice=tool_choice, reasoning_effort=reasoning_effort,
-                schema=schema,
+                schema=schema, on_text=on_text if stream else None,
             )
         else:
             raise ValueError(f"unknown model brand {brand}")
+    if isinstance(response, _Assembled):
+        return _Transport(response=response.response, client=client, tool_alias=alias)
     if stream:
         return _Transport(response=_assemble_stream(response, on_text), client=client, tool_alias=alias)
     return _Transport(response=response, client=client, tool_alias=alias)
@@ -714,6 +834,10 @@ def _save(
                 error_json["retry_after_seconds"] = error.retry_after_seconds
             if error.request_id is not None:
                 error_json["request_id"] = error.request_id
+            if error.cause_type:
+                error_json["cause_type"] = error.cause_type
+            if error.cause:
+                error_json["cause"] = error.cause
     row = ledger.db.insert_model_call(
         ledger.run_id, ledger.step_id,
         provider=provider,
@@ -749,6 +873,7 @@ def _fail(
     started: float,
     error: Exception,
     purpose: str | None,
+    cause: BaseException | None = None,
 ) -> None:
     if ledger is None:
         return
@@ -783,12 +908,24 @@ def _fail(
     if isinstance(error, ProviderError):
         payload["retryable"] = error.retryable
         payload["kind"] = error.kind
+        if error.cause_type:
+            payload["cause_type"] = error.cause_type
+        if error.cause:
+            payload["cause"] = error.cause
     if call_id:
         payload["model_call_id"] = call_id
     _note(ledger, StepEvent.MODEL_FAILED, payload)
-    log.info(
-        "model.failed trace_id=%s run_id=%s model=%s",
-        ledger.trace_id, ledger.run_id, model_name,
+    # Keep the flattened ProviderError on the ledger; log the original SDK exception
+    # (or the ProviderError itself) so the next smoke can show a real stack.
+    log.error(
+        "model.failed trace_id=%s run_id=%s model=%s error=%s cause_type=%s cause=%s",
+        ledger.trace_id,
+        ledger.run_id,
+        model_name,
+        error,
+        getattr(error, "cause_type", None) or type(cause or error).__name__,
+        getattr(error, "cause", None) or (str(cause) if cause is not None else None),
+        exc_info=cause or error,
     )
 
 
@@ -913,6 +1050,7 @@ def _call_model_once(
         _fail(
             ledger, brand=brand, model_name=model_name, system=system, messages=messages,
             schema=schema, tools=tools, client=used, started=started, error=error, purpose=purpose,
+            cause=exc,
         )
         raise error from exc
     finally:
@@ -937,7 +1075,7 @@ def _call_model_once(
         _fail(
             ledger, brand=_ledger_brand(brand, carried.client), model_name=model_name,
             system=system, messages=messages, schema=schema, tools=tools, client=carried.client,
-            started=started, error=exc, purpose=purpose,
+            started=started, error=exc, purpose=purpose, cause=exc,
         )
         raise
     streamed = kind == "chat_completion" and on_text is not None

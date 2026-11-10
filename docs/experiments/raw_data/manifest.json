@@ -1,0 +1,75 @@
+{
+  "fixture": "seed_v1",
+  "source": "live ka_account database after scripts/seed_demo.py (including --accounts)",
+  "exported_at": "2026-11-10T02:04:02+00:00",
+  "scope": "Demo business rows only. Sessions, agent runs, model calls, and tool logs are not included. Text2SQL answers one partnership at a time; order and sell-out rows carry partnership_id.",
+  "coverage": {
+    "distributor_with_orders": "dist-liancai / 联采贸易, 15 partnerships, 33 months",
+    "order_and_sellout_months": "2024-01 through 2026-09",
+    "intentionally_empty": "2026-10 has no purchase orders and no sales reports",
+    "distributor_without_orders": "dist-haina / 海纳分销 has 5 partnerships and 3 users, zero orders"
+  },
+  "handoff_columns": {
+    "note": "Category lives on products, not on purchase_order_items. A pie of category amount needs products.category plus purchase_order_items.line_total (or report_facts.numeric_value where metric_key = 'revenue'). order_lines.csv and sellout_facts.csv already join those columns.",
+    "purchase_amount": [
+      "category",
+      "line_total",
+      "submitted_month",
+      "partnership_id"
+    ],
+    "sellout_revenue": [
+      "category",
+      "metric_key",
+      "channel",
+      "numeric_value",
+      "reporting_period"
+    ]
+  },
+  "not_in_database": {
+    "contracts": "contracts and every contract_* child table are empty. The demo agreement is a file, fixtures/demo/联采贸易-经销协议.md, and has not been uploaded.",
+    "commercial_rules": "empty",
+    "memories": "empty",
+    "brand_documents": "empty",
+    "po_events": "empty",
+    "po_rule_evaluations": "empty"
+  },
+  "empty_tables": [
+    "commercial_rules",
+    "brand_agent_settings",
+    "contracts",
+    "contract_extractions",
+    "contract_discount_rules",
+    "contract_discount_tiers",
+    "contract_moqs",
+    "contract_price_list",
+    "contract_territories",
+    "contract_evidence",
+    "contract_chunks",
+    "po_rule_evaluations",
+    "po_events",
+    "memories",
+    "brand_documents",
+    "brand_document_pages"
+  ],
+  "row_counts": {
+    "distributors": 2,
+    "users": 6,
+    "brands": 18,
+    "partnerships": 20,
+    "products": 142,
+    "purchase_orders": 495,
+    "purchase_order_items": 1485,
+    "sales_reports": 495,
+    "report_extractions": 495,
+    "report_facts": 10395,
+    "order_lines": 1485,
+    "sellout_facts": 10395,
+    "schema": 270
+  },
+  "files": {
+    "schema.csv": "columns of the text-to-SQL business tables, including the empty contract tables",
+    "order_lines.csv": "one row per purchase order line, with brand, category, month, and money",
+    "sellout_facts.csv": "one row per report fact, with brand, category, period, and channel",
+    "rollups.json": "2026-09 category and channel totals, plus status by month; 2026-10 counts are zero"
+  }
+}

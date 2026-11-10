@@ -16,12 +16,12 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, false, or_, select
 from sqlalchemy.orm import Session
 
 from ...services.run_names import OutboxStatus, RunStatus, StepEvent
 from .. import orm
-from .support import _row_dict, utcnow
+from .support import _open_scope, _queue_last_seen, _row_dict, utcnow
 
 # How many times `work_once` may enter a run before a transient error is dead-lettered.
 EXECUTION_MAX_ATTEMPTS = 3
@@ -31,6 +31,122 @@ WORKER_LOST_MAX_REDELIVERIES = 3
 
 
 class QueueMixin:
+    def purge_dispatched_outbox(self, older_than: datetime, limit: int = 1000) -> int:
+        """Delete old dispatched rows after their run reached a terminal state.
+
+        The batch is selected with `SKIP LOCKED` so cleanup cannot block dispatch or
+        accidentally remove the only evidence for a still-queued run.
+        """
+        terminal = {
+            RunStatus.SUCCEEDED,
+            RunStatus.FAILED,
+            RunStatus.CANCELLED,
+        }
+        active_run = select(orm.AgentRun.id).where(
+            orm.AgentRun.id == orm.OutboxJob.payload_json["run_id"].as_string(),
+            orm.AgentRun.status.not_in(terminal),
+        ).exists()
+        with self.tx() as s:
+            jobs = list(s.scalars(
+                select(orm.OutboxJob)
+                .where(
+                    orm.OutboxJob.status == OutboxStatus.DISPATCHED,
+                    orm.OutboxJob.dispatch_at < older_than,
+                    ~active_run,
+                )
+                .order_by(orm.OutboxJob.dispatch_at, orm.OutboxJob.id)
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            ))
+            removed = 0
+            for job in jobs:
+                if job.job_type == "execute_run":
+                    payload = job.payload_json if isinstance(job.payload_json, dict) else {}
+                    run_id = payload.get("run_id")
+                    run = s.get(orm.AgentRun, run_id) if isinstance(run_id, str) else None
+                    if run is not None and run.status not in terminal:
+                        continue
+                s.delete(job)
+                removed += 1
+            s.flush()
+            return removed
+
+    def fail_unclaimed_exhausted(
+        self,
+        older_than: datetime,
+        limit: int = 100,
+        *,
+        max_redispatches: int | None = 3,
+        max_age: timedelta | None = None,
+        open_only: bool | None = None,
+        not_before: datetime | None = None,
+    ) -> int:
+        """Fail queued runs that sweeper redispatch can no longer help.
+
+        Two cases, both terminal because re-running would only produce a stale reply:
+
+        - exhausted: still unclaimed after `max_redispatches` redispatches. Pass `None` to
+          switch this case off, and `open_only` to restrict it to one queue. The caller
+          must only enable it for a queue it has seen empty: a run waiting behind a deep
+          backlog is slow, not lost.
+        - expired: no sign of life for `max_age`. Sign of life is the later of `queued_at`
+          (entry or redispatch) and `queue_heartbeat_at` (a worker retrying a SoftBusy run),
+          so a run that is merely waiting for capacity never expires, while one orphaned
+          before the redispatch columns existed, or during a sweeper outage, does. It is
+          never restricted by queue: Redis cannot say anything about a message that was lost.
+        """
+        now = utcnow()
+        dispatched = select(orm.OutboxJob.id).where(
+            orm.OutboxJob.job_type == "execute_run",
+            orm.OutboxJob.status == OutboxStatus.DISPATCHED,
+            orm.OutboxJob.payload_json["run_id"].as_string() == orm.AgentRun.id,
+            orm.OutboxJob.dispatch_at < older_than,
+        ).exists()
+        exhausted = (
+            and_(orm.AgentRun.redispatch_count >= max_redispatches, _open_scope(open_only), dispatched)
+            if max_redispatches is not None
+            else false()
+        )
+        expired = _queue_last_seen() < now - max_age if max_age is not None else false()
+        with self.tx() as s:
+            runs = list(s.scalars(
+                select(orm.AgentRun)
+                .where(
+                    orm.AgentRun.status == RunStatus.QUEUED,
+                    orm.AgentRun.queued_at < older_than,
+                    _queue_last_seen() < older_than,
+                    _queue_last_seen() >= not_before if not_before is not None else True,
+                    or_(exhausted, expired),
+                )
+                .order_by(orm.AgentRun.queued_at, orm.AgentRun.id)
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            ))
+            for run in runs:
+                last_seen = max(t for t in (run.queued_at, run.queue_heartbeat_at) if t is not None)
+                is_expired = max_age is not None and last_seen < now - max_age
+                code = "STUCK_QUEUE_EXPIRED" if is_expired else "STUCK_REDISPATCH_EXHAUSTED"
+                reason = code.lower()
+                error = {
+                    "kind": "permanent",
+                    "code": code,
+                    "message": (
+                        "run stayed queued past the maximum queue age"
+                        if is_expired
+                        else "run stayed queued after the maximum sweeper redispatches"
+                    ),
+                }
+                # QUEUED has no edge to FAILED in the state machine; the run passes through
+                # RUNNING (which bumps `attempts`) so the transition table stays unchanged.
+                self._transition(
+                    s, run, RunStatus.RUNNING, {"reason": reason}, now,
+                    actor_type="sweeper", actor_id="queue-sweep",
+                )
+                self._fail_locked_run(s, run, error, reason, now)
+                self._dead_letter(s, run, error, now, attempts=int(run.attempts))
+            s.flush()
+            return len(runs)
+
     def record_worker_loss_redelivery(
         self, run_id: str, *, max_attempts: int = WORKER_LOST_MAX_REDELIVERIES,
     ) -> str:

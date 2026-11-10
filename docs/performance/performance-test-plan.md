@@ -52,9 +52,8 @@
 
 ### 2.3 模型、工具和容量控制
 
-- `tests/test_llm.py::test_vendor_usage_is_actual_and_a_missing_usage_is_estimated`：区分厂商实际 Token 和本地估算；
+- `tests/test_llm.py::test_vendor_usage_is_actual_and_a_missing_usage_is_estimated`：区分厂商实际 Token 和本地估算，同时验证缓存字段写入 model call 和 usage record；
 - `tests/test_llm.py::test_usage_keeps_deepseek_and_qwen_cache_fields`：保留 DeepSeek/Qwen 的缓存命中字段，并规范成统一的缓存 usage 字段；
-- `tests/test_llm.py::test_vendor_usage_is_actual_and_a_missing_usage_is_estimated`：同时验证缓存字段会写入 model call 和 usage record；
 - `tests/test_llm.py::test_a_run_over_its_model_budget_does_not_call`：Run 达到调用预算后不再请求模型；
 - `tests/test_llm.py::test_an_org_over_its_daily_tokens_does_not_call`：组织每日 Token 预算拦截；
 - `tests/test_run_api.py::test_model_capacity_requeues_without_spending_execution_attempt`：本地模型容量不足回队列且不消耗业务执行次数；
@@ -78,10 +77,10 @@ DeepSeek 的 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` 和 Qwen 的
 - `tests/test_model_routing.py::test_unknown_purpose_keeps_the_requested_model`：验证没有单独配置的 purpose 仍用调用方原来的模型作为首选；
 - `tests/test_model_routing.py::test_blank_purpose_does_not_select_a_route`：验证未传 purpose 时不进入路由；
 - `tests/test_model_routing.py::test_named_purposes_receive_a_compatible_route`：验证带 purpose 的领域调用都进入兼容路由；
-- `tests/test_model_routing.py::test_plan_provider_error_uses_the_configured_fallback`：验证首选模型发生 ProviderError 时切换到备用模型。
+- `tests/test_model_routing.py::test_plan_provider_error_uses_the_configured_fallback`：验证首选模型发生 ProviderError 时切换到备用模型；
 - `tests/test_model_routing.py::test_route_events_are_written_to_the_existing_trace`：验证路由选择事件写入已有 Run trace，包含 trace_id 和选中的模型；
-- `tests/test_model_routing.py::test_quality_gate_failure_falls_back_and_is_visible_in_trace`：验证 PLAN 质量门槛失败后触发 fallback，并记录质量失败和降级事件。
-- `tests/test_model_routing.py::test_quality_gate_failure_falls_back_after_model_completed`：验证真实 `model.completed` 记账后，质量门槛失败仍能降级，不把失败调用算进 `max_model_calls`。
+- `tests/test_model_routing.py::test_quality_gate_failure_falls_back_and_is_visible_in_trace`：验证 PLAN 质量门槛失败后触发 fallback，并记录质量失败和降级事件；
+- `tests/test_model_routing.py::test_quality_gate_failure_falls_back_after_model_completed`：验证真实 `model.completed` 记账后，质量门槛失败仍能降级，不把失败调用算进 `max_model_calls`；
 - `tests/test_chat_run.py::test_enqueue_writes_open_run_budget`：验证建 OPEN Run 时写入安全网预算。
 
 这组测试不直接测吞吐或 P95，但属于固定版本回归的一部分。错误的模型路由会改变每个请求的 Token、成本、延迟和质量，因此在性能实验前必须先通过。当前 trace 测试使用轻量账本替身验证事件结构；接入完整数据库 Fixture 后，再增加 HTTP `/api/runs/{run_id}/trace` 的端到端断言。
@@ -93,32 +92,73 @@ DeepSeek 的 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` 和 Qwen 的
 - `tests/test_run_api.py::test_the_monitor_lists_one_org_and_reads_the_ledger`：监控只能读取当前组织，并从运行账本生成指标；
 - `tests/test_run_api.py` 中 `/metrics` 相关测试：Prometheus 文本和敏感字段过滤；
 - `tests/test_performance_metrics.py`：压测 JSON 的百分位算法。20 条成功加 1 条 180 秒超时 → 报 P50 和 P95，P99 留空，成功 P95 不被超时抬高。300 条成功加 1 条超时 → 报 P95 和 P99，P99 不是最慢的那一条。耗时是写进 JSON 的假数字；
+- `tests/test_load_test_chat.py::test_timeout_preserves_run_id_and_server_status`：验证超时保留 Run ID 和当时服务端状态；
+- `tests/test_load_test_chat.py::test_enqueue_errors_are_not_counted_as_client_timeouts`：验证入队错误不归类为客户端超时；
+- `tests/test_load_test_chat.py::test_follow_up_is_bounded_and_does_not_reclassify_a_client_timeout`：验证追踪有界且保留客户端超时结果；
+- `tests/test_load_test_chat.py::test_follow_up_records_later_failure_and_related_runs`：验证后续服务端失败和关联 Run 状态分别记录；
+- `tests/test_load_test_chat.py::test_session_run_facts_are_scoped_to_experiment_sessions`：验证数据库查询只包含指定实验会话；
+- `tests/test_load_test_chat.py::test_open_loop_reports_generator_drops_separately`：验证开环生成器丢弃不算服务端失败；
+- `tests/test_performance_metrics.py::test_zero_timeouts_are_not_replaced_by_other_failures`：验证汇总不会把零超时覆盖为其他失败数；
 - `tests/test_monitor_metrics.py`：空样本百分位是 `null`；P50 ≤ P95 ≤ P99；完成时间只含成功 run；失败和仍在排队的 run 不进完成时间样本；直方图有 180s 和 300s 桶，模型桶更短；`/metrics` 文本没有 `run_id` / `session_id` / `user_id`；
 - `backend/services/monitor.py`：账本上的 P50/P95/P99、阶段耗时、PLAN 错误率和 SLO 告警。
 
-运行监控给出 P50、P95 和 P99，空样本是 `null`。压测里成功样本不足 300 只报 P50 和 P95；300 条及以上才报三档。失败和超时不进入成功样本的百分位。阶段耗时从已有时间戳读：排队 = `started_at - created_at`，模型 / 工具来自各自的 `latency_ms`，完成时间 = `ended_at - started_at`。没有单独的 `tests/test_runtime_timing.py`。
+运行监控给出 P50、P95 和 P99，空样本是 `null`。压测里成功样本不足 300 只报 P50 和 P95；300 条及以上才报三档，这是报告门槛，不保证百分位稳定。失败和超时不进入成功样本的百分位。`started_at - created_at` 是**首次排队**，不包含重试或等待子任务后的再次排队；`ended_at - started_at` 是首次启动到终态的墙上时间，可能包含重排队和等待，不是纯执行时间。模型 / 工具来自各自的 `latency_ms`。累计排队时间暂未实现，不能把首次排队冒充总排队。
 
 超时、并发、租约和 SLO 的默认值在 [`../architecture/architecture.md`](../architecture/architecture.md) 的「当前运行标准」。
 
 ## 3. 实验怎么跑
 
+本阶段每组实验只跑一次，暂不执行交替 A/B；单轮结果仅描述当次环境，不能单独证明版本造成的性能提升。历史实验保留原始结果和原有口径，新脚本结果单独记录，不覆盖历史文件。
+
+脚本现在保存每个请求的 `run_id` 和客户端 `outcome`：`completed`、`client_timeout`、`enqueue_error`、`poll_error`；开环发不出去的请求记 `generator_dropped`。客户端超时不会取消服务端任务。发完后按本次 session 范围追踪 chat、OPEN 和相关 Run，默认在 30 秒内停止追加轮询（`--settle-timeout`，可设 0 立即取快照；单次数据库连接或查询本身的耗时不受此参数约束），记录追踪结束时的状态和仍未完成数。队列为空不代表任务已结束；不要自动取消或等待整个共享环境排空。
+
+`timeouts` 只数客户端 completion timeout；失败和生成器丢弃分别报告。成功 P50/P95/P99 只包含客户端期限内收到回复的请求，超时是截尾样本，其真实完成时间不能当作超时阈值。费用在追踪快照后汇总，当前只包括账本中成功的模型调用；仍有 Run 未终态或存在未记录 usage 的失败调用时可能低估，见 `snapshot_incomplete` 和 `scope_note`。
+
 单测锁住算法和契约。第一次实验记录来自下面的压测，调真实模型。顺序固定：
 
 1. 对照官网把各模型 RPM/TPM 填进架构文档「当前运行标准」，再决定 worker 和 `--concurrency`，不要先写成 5 或 10；
-2. `./dev lint` 和 `./dev test`；
+2. `./dev lint` 和 `./dev test`（**不调真实模型**，见下）；
 3. 用固定消息模板跑第一轮压测，保存 JSON、提交号、worker 并发和模型配置；
 4. 把数字填进第 7 节模板，标成「第 1 次」；
 5. 按第 6 节的调查顺序看未完成和过慢的请求；
-6. 改一处明确瓶颈后再跑第二轮，模板、并发、timeout 不变，标成「第 2 次」。
+6. 改一处明确瓶颈后再跑第二轮，模板、并发、timeout、**租户分布**不变，标成「第 2 次」。
 
-不要把单测里的 20 / 300 当成已经测过的系统耗时。
+### `./dev test` 测什么
 
-「先 50 条冒烟，再 100 条基线」是更早一版的说法，和现在的 20 / 300 是同一件事的两个阶段：
+`./dev test` = Compose 容器里跑 `pytest`（见仓库根 `dev`）。连的是 compose 里的 Postgres 一次性库，模型一律 `FakeLLM` / Fixture，**不联网、不花 token**。覆盖计划 §2.1–2.5：商业规则、编排/并发、闸门、路由、指标算法等。它**不是**端到端冒烟，也不是实验 A 的延迟基线。
 
-- **冒烟**：条数少，只确认入队、worker、模型、回写这条链能跑通，少花 token。原来写 50，现在用 20，因为 20 条成功已经够报 P50 和 P95。
-- **基线**：固定样本量，记下改代码之前的数字，给第 2 次对比。原来写 100，100 条的 P95 比较稳，P99 仍是倒数第 2 条，所以要报 P99 时把成功样本凑到 300。
+前端单测另走 `./dev test-web`。汇总 JUnit 用 `scripts/resume_metrics.py`：
 
-问候路径 PLAN/ANSWER 都走官方 Qwen（`qwen3.7-flash`）。冒烟并发默认 5，不要超过 worker 和 `GATE_USER`。
+```bash
+./dev test --junitxml=.resume-eval.xml 2>&1 | tee docs/experiments/exports/pytest-full.log
+./dev py scripts/resume_metrics.py --junitxml .resume-eval.xml \
+  --output docs/experiments/exports/resume-metrics.json \
+  2>&1 | tee docs/experiments/exports/resume-metrics.log
+```
+
+### 样本量阶梯（问候路径）
+
+不要把单测里的假耗时当成系统实测。压测成功样本不足 **300** 时脚本**不报 P99**（只报成功 P50/P95）；超时不进成功百分位。
+
+| 阶段 | 条数 | 目的 | 租户 |
+|---|---|---|---|
+| 冒烟 S1 | 10 | 链通（入队 → worker → 模型 → assistant） | 单用户 |
+| 冒烟 S2 | 20 | 打到 `GATE_USER` 之外：同 org 多用户 | 单 org、多用户 |
+| 冒烟 S3 | 50 | 打到 `GATE_ORG` / 全局：多 org | 多 org、多用户 |
+| 冒烟 S4 | 30 × 3 轮 | 首批冷启动：worker 重启后，单用户 vs 三用户（总条数相同），并看前缀缓存冷热 | 单用户 / 单 org 三用户 |
+| 实验 A1 | 50 | 正式基线，报成功 P50/P95 | **固定一种**租户分布（见下） |
+| 实验 A2 | 500 | 同一分布，成功 ≥300 后报 P99 | 与 A1 相同 |
+| 实验 A3 | 2000 | 同一分布，增加 P99 尾部样本；成本最高 | 与 A1 相同 |
+
+设计取舍：
+
+- **冒烟用租户阶梯，实验 A 用样本量阶梯**。冒烟要暴露闸门/隔离问题；基线要可比，所以 A1/A2/A3 只改条数，不改模板、并发、timeout、租户分布。
+- 单用户压测**不够真实**：第 1 次 10 条冒烟卡在同一 `GATE_USER` 上就是例子。S2/S3 是必要的，不是锦上添花。
+- A 的默认租户建议用 **S2（单 org 多用户）**：比单用户更接近真实，又比多 org 便宜、好解释。若主要怕 org 闸门，再单开一组「多 org」对照，不要和 A 的 50/500/2000 混在一张表里比。
+- 50 → 500 → 2000：50 看 P50/P95；500 过 P99 报告门槛（成功 ≥300）并留超时余量；2000 增加尾部样本，不保证跨轮稳定。中间不再插 100。
+- `load_test_chat.py` 支持 `--user-ids`（同 org 多用户）和配对的 `--partnership-ids` + `--user-ids`（多 org）。种子：联采 `user-liancai-*` / `ps-liancai-*`，海纳 `user-haina-*` / `ps-haina-*`。
+
+问候路径 PLAN/ANSWER 都走官方 Qwen（`qwen3.7-flash`）。压测并发默认 5，不要超过 `min(worker, GATE_ORG, GATE_USER, GATE_MODEL, 官网 RPM)`。
 
 ### 缓存观测（实验 C 用）
 
@@ -135,8 +175,20 @@ Qwen 对支持的模型自动尝试隐式 Context Cache。两者都只保证前�
 
 官方计费和限制会变化，实验记录应保存对应日期的文档版本：
 
-- [DeepSeek Context Caching](https://api-docs.deepseek.com/guides/kv_cache/) 和 [DeepSeek Pricing](https://api-docs.deepseek.com/quick_start/pricing/)；
-- [Qwen Context Cache](https://help.aliyun.com/en/model-studio/context-cache)。
+- [DeepSeek Context Caching](https://api-docs.deepseek.com/guides/kv_cache/) 和 [DeepSeek Pricing](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/)；
+- [Qwen 模型价格](https://help.aliyun.com/zh/model-studio/model-pricing) 和 [Qwen Context Cache](https://help.aliyun.com/zh/model-studio/context-cache)。
+
+### 当前模型单价表（核对日期：2026-11-09，人民币 / 百万 Tokens）
+
+代码实现见 `backend/llm/pricing.py`，入库与监控汇总在 `backend/db/database/records.py` 与 `backend/db/database/run.py`：
+
+| 模型 | 供应商 / 地域 | 计费时段 / 阶梯 | 输入（缓存未命中） | 输入（缓存命中） | 显式缓存创建 | 输出（含思维链） |
+|---|---|---|---|---|---|---|
+| `qwen3.7-flash` | 阿里云百炼（华北2北京） | `0 < prompt ≤ 32K` | **¥0.20** | **¥0.04**（隐式 20%）/ **¥0.02**（显式 10%） | **¥0.25**（125%） | **¥0.80** |
+| `qwen3.7-flash` | 阿里云百炼（华北2北京） | `32K < prompt ≤ 256K` | ¥0.60 | ¥0.12（隐式 20%）/ ¥0.06（显式 10%） | ¥0.75（125%） | ¥2.40 |
+| `qwen3.7-flash` | 阿里云百炼（华北2北京） | `256K < prompt ≤ 1M` | ¥1.20 | ¥0.24（隐式 20%）/ ¥0.12（显式 10%） | ¥1.50（125%） | ¥4.80 |
+| `deepseek-flash` | DeepSeek 官方（`V4.1-Flash-1017`） | **空闲时段**（工作日其余时间 + 周末/节假日全天） | **¥1.00** | **¥0.02** | — | **¥4.00** |
+| `deepseek-flash` | DeepSeek 官方（`V4.1-Flash-1017`） | **高峰时段**（北京时间周一至周五 09:00–12:00、14:00–18:00） | **¥2.00** | **¥0.04** | — | **¥8.00** |
 
 隐式缓存通常不需要应用侧配置；显式缓存需要稳定且足够长的前缀，并有创建成本和有效期。
 在没有命中数据之前，不把显式缓存写进通用调用层，也不把固定 system prompt 默认标记为可缓存。
@@ -146,30 +198,44 @@ Qwen 对支持的模型自动尝试隐式 Context Cache。两者都只保证前�
 每次版本更新按以下顺序执行：
 
 1. `./dev lint`；
-2. `./dev test`，确认代码和领域回归；
-3. 生成 JUnit XML，汇总关键回归通过率；
-4. 执行模型路由、降级和指标计算回归测试；
-5. 使用脱敏 Fixture 执行离线性能指标测试；
-6. 启动 Compose API、worker 和依赖，执行小规模端到端冒烟；
-7. 按固定场景、请求数和并发执行压测；
-8. 读取 Run ledger 和 `/monitor`，核对 Token、成本、队列、模型和工具指标；
-9. 把原始 JSON、提交号、配置和结论写入实验记录。
+2. `./dev test`（FakeLLM，不调真实模型），确认代码和领域回归；
+3. 生成 JUnit XML，用 `resume_metrics.py --junitxml ... --output ...` 汇总执行用例的通过率；
+4. 模型路由、降级和离线百分位算法已含在全量 pytest 里，不必单独再跑一遍，除非本轮只改了那一块；
+5. 启动 Compose（api / worker / title-worker / sweeper healthy）；
+6. **端到端冒烟租户阶梯** S1 → S2 → S3（真实模型；任一步完成率明显掉再停，先查闸门/会话锁/sweeper）；
+7. **实验 A** 固定租户分布后跑 50 → 500 → 2000；
+8. 读 Run ledger 和 `/monitor`，核对 Token、成本、队列、模型指标；
+9. 原始 JSON + 控制台 log 进 `docs/experiments/exports/`，结论进 `docs/experiments/records/NN-*.md`（NN 是实验顺序，见 [`experiments/README.md`](../experiments/README.md)）。
 
-命令入口：
+产物路径：
+
+| 产物 | 位置 |
+|---|---|
+| 压测 JSON | `docs/experiments/exports/<name>.json`（`--output`，勿写仓库根） |
+| 控制台 log | 同名 `.log`（`2>&1 \| tee`） |
+| 实验说明 | `docs/experiments/records/<NN>-<id>-<name>.md`，NN 接着上一份往后编（01、02……），同一实验复测加 `-r2`、`-r3` 但仍占新的序号 |
+| JUnit / 回归汇总 | `.resume-eval.xml` → `docs/experiments/exports/resume-metrics.json` |
+
+命令入口（单用户冒烟 S1；S2/S3 待脚本支持多用户后换用户列表）：
 
 ```bash
-./dev test --junitxml=.resume-eval.xml
-./dev py scripts/resume_metrics.py --junitxml .resume-eval.xml
+./dev lint 2>&1 | tee docs/experiments/exports/lint.log
+./dev test --junitxml=.resume-eval.xml 2>&1 | tee docs/experiments/exports/pytest-full.log
+./dev py scripts/resume_metrics.py --junitxml .resume-eval.xml \
+  --output docs/experiments/exports/resume-metrics.json \
+  2>&1 | tee docs/experiments/exports/resume-metrics.log
+
+OUT=docs/experiments/exports/load-test-smoke-s1-10
 ./dev py scripts/load_test_chat.py \
   --base-url http://api:8000 \
   --partnership-id ps-liancai-01 \
   --user-id user-liancai-chen \
   --requests 10 \
   --concurrency 5 \
-  --output docs/experiments/exports/load-test-smoke.json
+  --output ${OUT}.json 2>&1 | tee ${OUT}.log
 ```
 
-10 条冒烟确认链通；20 条成功样本再看一条路径的 P50 和 P95。要报 P99，把同一路径的成功样本凑到 300。不要按 agent 把 100 条拆开各算一个 P99。优化前后使用相同请求模板、相同并发和相同 completion timeout。不同业务路径分开跑。并发不超过架构文档里 `min(worker, GATE_ORG, GATE_USER, GATE_MODEL, 官网 RPM)`。
+实验 A 把 `--requests` 换成 50 / 500 / 2000，`--output` 换成 `load-test-greeting-a1-50` 等；模板、并发、timeout、租户分布保持不变。不同业务路径（实验 B）分开跑，不要把多条路径的样本拼成一个 P99。
 
 ## 5. 第 8 条实验计划
 
@@ -177,10 +243,11 @@ Qwen 对支持的模型自动尝试隐式 Context Cache。两者都只保证前�
 
 目的：测量 API、outbox、Redis、Celery、Postgres、Worker 和 SSE/API 周边的基础耗时。
 
-- 输入：空计划或简单问候模板；
-- 请求数：先 20 条看 P50 和 P95；要 P99 时把成功样本凑到 300；
-- 并发：先用现在的 worker 8；对照官网 RPM 之后再加，不要先试 20；
-- 指标：完成率、超时数、成功 P50/P95（样本够再加 P99）、队列等待、模型调用、Token 和成本。
+- 输入：简单问候模板（与冒烟相同）；
+- 请求数：**50 → 500 → 2000**（A1 报 P50/P95；A2 起可报 P99；A3 增加尾部样本）；
+- 租户：冒烟 S1–S3 通过后，A 默认固定为 **单 org 多用户**；需要 org 闸门数据时另开对照，不塞进同一条样本量曲线；
+- 并发：worker 5；不要靠加并发抬完成率，先查 soft-busy ACK、会话锁和 sweeper 补投；
+- 指标：完成率、超时数、成功 P50/P95（够样本再加 P99）、队列等待、模型调用、Token 和成本。
 
 ### 实验 B：领域路径基线
 
@@ -209,6 +276,8 @@ Qwen 对支持的模型自动尝试隐式 Context Cache。两者都只保证前�
 - 使用 3、5、10 个 Worker 并发配置做独立实验；
 - 关注模型 provider 并发上限，不能只增加 Worker 数量。
 
+现有 `--concurrency` 是闭环并发：一个请求完成或客户端超时后才放行下一个，适合测固定并发下的表现。研究固定到达率时另用开环模式，例如 `--arrival-rate 30 --max-pending 20` 表示计划每分钟到达 30 条，生成器内在途和等待总数最多 20。记录计划到达时间、实际发送时间、生成器延迟、offered、submitted、generator_dropped、完成速率和服务端队列状态。`open_loop_send_rate_per_minute` 按首末实际发送间隔计算；完成速率按从调度开始到所有已发送请求返回的时间计算。生成器丢弃不算服务端失败；请求耗时从实际发送开始，需同时观察生成器延迟。先从低速小样本开始，不与闭环基线直接混算。
+
 ### 实验 E：限流和故障恢复
 
 验证模型 429、超时、Worker 中断、过期 Lease、stale outbox 和 response_lost 的行为。
@@ -231,19 +300,28 @@ Qwen 对支持的模型自动尝试隐式 Context Cache。两者都只保证前�
 4. 查看 `queue_lag`、`model_calls.latency_ms`、`tool_calls.latency_ms`、429、超时和 `retry_after_seconds`；
 5. 查看 Worker 日志和 `pending_jobs`、`active_runs`、`stuck_runs`；
 6. 检查是否在同一会话中提交了多条消息、是否受到会话锁或 provider 并发限制；
-7. 修复一个明确瓶颈后，用相同模板和相同并发复测。先看 P50/P95；要写 P99 再用 300 条成功样本。
+7. 修复一个明确瓶颈后，用相同模板、相同并发、相同租户分布复测。先看 P50/P95；要写 P99 用 A2/A3（500 / 2000，成功 ≥300）。
 
 可能原因包括模型 provider 限流、模型槽位不足、Worker 并发与 provider 限额不匹配、队列等待、Run 重试、会话锁、SSE 轮询观察误差或 completion timeout 偏短。必须通过 trace 和日志确认，不能凭完成率猜测。
 
 ## 7. 实验结果记录模板
 
-正式实验写在 [`docs/experiments/`](../experiments/)，一份实验一个 Markdown。下面是字段清单；填完后不要只留在聊天里。
+正式实验写在 [`docs/experiments/records/`](../experiments/records/)，一份实验一个 Markdown，文件名前缀是实验顺序号（索引见 [`experiments/README.md`](../experiments/README.md)）。下面是字段清单；填完后不要只留在聊天里。
 
 ```text
 实验名称：
 第几次：第 1 次 / 第 2 次
 代码提交：
+工作区是否有未提交改动：
+实验开始/结束时间及所在时区：
+机器 CPU / 内存 / 操作系统 / Docker Desktop：
+Provider 区域、端点类型和模型快照：
+预热请求数、是否剔除预热数据：
+并发运行的其他工作及实验前后相关 Run 状态：
+缓存预热情况：
 数据集/消息模板：
+负载模式：闭环 / 开环；计划及实际发送速率：
+生成器最大待处理数及丢弃数：
 请求数 / 成功数 / 超时数：
 压测并发：
 Worker `--concurrency`：
@@ -272,15 +350,37 @@ Cache Hit Ratio（仅统计有缓存字段的样本）：
 原始文件：
 ```
 
-已记录：[`2026-11-09-qwen-smoke-concurrency-5.md`](../experiments/2026-11-09-qwen-smoke-concurrency-5.md)（官方 Qwen 问候、并发 5、8/10）。
+已记录：
+
+- [`01-s1-smoke-concurrency-5.md`](../experiments/records/01-s1-smoke-concurrency-5.md)（S1 单用户 10，第 1 次 8/10）
+- [`02-s1-r2-smoke-concurrency-5.md`](../experiments/records/02-s1-r2-smoke-concurrency-5.md)（同模板修复后 10/10）
+- [`03-s2-multiuser-20.md`](../experiments/records/03-s2-multiuser-20.md)（S2 单 org 多用户 20，20/20）
+- [`04-s3-multiorg-50.md`](../experiments/records/04-s3-multiorg-50.md)（S3 多 org 50，50/50；P95 有 3 条长尾）
+- [`05-s3-r2-multiorg-50.md`](../experiments/records/05-s3-r2-multiorg-50.md)（S3 r2：抓到 `TypeError: async_generator`；P95 11.3s）
+- [`06-s3-r3-multiorg-50.md`](../experiments/records/06-s3-r3-multiorg-50.md)（S3 r3：修 async stream；P95 8.8s）
+- [`07-a1-greeting-50.md`](../experiments/records/07-a1-greeting-50.md)（A1 第 1 次：出站抖动污染 P95 76s）
+- [`08-a1-r2-greeting-50.md`](../experiments/records/08-a1-r2-greeting-50.md)（A1 基线：P50 4.9s / P95 11.8s）
+
+- [`09-a2-greeting-500.md`](../experiments/records/09-a2-greeting-500.md)（A2：500/500；P50 4.9s / P95 6.5s / P99 7.2s；账本零失败）
+- [`10-s4-cold-start-30.md`](../experiments/records/10-s4-cold-start-30.md)（S4：worker 冷启动第一波约 +3.5s，与用户数、前缀缓存冷热无关；缓存冷只多花约 15%）
+
+- [`11-a3-greeting-2000.md`](../experiments/records/11-a3-greeting-2000.md)（A3：1998/2000；P50 4.6s / P95 6.0s / P99 7.4s；2 条因瞬时 DB 连接尖峰永久 queued；总花费 ¥0.574）
+
+- [`12-a3-r2-greeting-2000.md`](../experiments/records/12-a3-r2-greeting-2000.md)（A3 r2：修复后复测，对话 2000/2000、最长 19s、连接泄漏 27→5；但暴露补投把「在排队」当成「丢了」：标题队列积压触发 3083 次补投、误杀 24 个 Run）
+- [`13-a3-r3-greeting-2000.md`](../experiments/records/13-a3-r3-greeting-2000.md)（A3 r3：补投先看队列深度 + title-worker 并发 3；4000 个 Run 全成功、补投 0 次、死信 0；P50 5.0s / P95 7.6s / P99 9.7s，比 r1 慢约 8% 原因未区分；单条 ¥0.000303）
+
+下一步：进入实验 B。A3 里 DB 重试与 Qwen 超时只有单测、没被真实压测触发，不要说成已在压测中验证。
 
 ## 8. 当前缺口
 
-- 第 1 次正式实验还没跑。20 / 300 只存在于 `tests/test_performance_metrics.py` 的假耗时。
-- 压测脚本在成功样本不足 300 时不输出 P99。`/monitor` 长期账本同时给 P50、P95、P99，并带样本数。
-- 当前压测结果没有把每个请求的 `run_id` 写入结果 JSON，调查未完成请求时要对会话再查一次。
-- DeepSeek / Qwen / GLM 的官方 RPM、TPM 还没按账户拆进 `KA_ACCOUNT_GATE_MODEL`；当前共用 32，worker 8 远低于官网额度。
-- 当前成本记录有 Token 和估算成本字段，真实金额还要确认每个 provider/model 的价格配置和版本。
-- 当前已记录 DeepSeek/Qwen 的缓存 usage 字段，但尚未有真实供应商压测样本，因此还不能判断哪些 prompt 值得显式缓存。
-- 当前没有统一的固定消息模板目录；后续应新增 `tests/performance/messages/` 或 `eval/datasets/`，避免每次临时输入不同。
+- 实验 A 三档（50 / 500 / 2000）已跑完，基线数字见各记录；A3 的问题已修并在 r3 复测通过（见 A3 r1/r2/r3 记录）；DB 重试与 Qwen 超时尚未被真实压测触发。单测里的百分位仍是假耗时。
+- `load_test_chat.py` 已支持 `--user-ids` / `--partnership-ids`；S3 用联采 + 海纳两套 distributor。
+- 品牌 RAG 暂无真实品牌资料，golden set 未覆盖；其代码级测试见 §2.1，质量评测待有资料后补充。
+
+- 压测成功样本不足 300 时不输出 P99。`/monitor` 长期账本三档都给，并带样本数。
+- 新压测 JSON 会保存每个请求的 `run_id`；历史 JSON 仍需通过会话关联 Run。
+- DeepSeek / Qwen / GLM 的官方 RPM、TPM 还没按账户拆进 `KA_ACCOUNT_GATE_MODEL`；当前共用 32，worker 5 远低于官网额度。
+- `qwen3.7-flash` 与 `deepseek-flash` 官方价格已接入 `backend/llm/pricing.py`、`load_test_chat.py` 及各轮实验报告（核对日期 2026-11-09）。
+- 已记录 S1–S3、A1–A2 的 Qwen/DeepSeek 隐式缓存命中率与实际节省比例；实验 C 再评估是否对长 prompt 开启显式缓存。
+- 还没有统一消息模板目录；后续加 `docs/experiments/messages/` 或 `eval/datasets/`，避免每次临时改模板。
 

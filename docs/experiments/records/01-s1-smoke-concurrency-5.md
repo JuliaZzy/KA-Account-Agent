@@ -3,19 +3,8 @@
 - **第几次**：第 1 次（去掉 SJTU 之后的官方路由冒烟）
 - **日期**：2026-11-09
 - **代码**：工作树未提交；对照提交 `04e1800`（`main`），本轮含 SJTU 清理、worker 并发 8、`GATE_USER` 默认 5
-- **原始文件**：[`exports/load-test-smoke-10.json`](exports/load-test-smoke-10.json)
+- **原始文件**：[`exports/load-test-smoke-10.json`](../exports/load-test-smoke-10.json)
 
-## `GATE_USER` 是什么
-
-`KA_ACCOUNT_GATE_USER` 是 Redis 上的**用户级 running 闸门**：同一 `(org_id, user_id)` 同时处于可占座状态的 run 数上限。
-
-- 代码：`backend/services/entry_guard.py` 的 `acquire_run()` → 钥匙 `gate:running:user:{org}:{user}`
-- 默认：现在是 **5**（本轮从 3 调到 5，与架构文档目标对齐）
-- 领取时机：worker `work_once` 在 claim 之前先 `acquire_run`；拿不到座位就**不 claim**，直接返回
-- 和什么不同：
-  - `GATE_ORG` / `GATE_GLOBAL`：经销商 / 全局同时 running 上限
-  - `GATE_MODEL`：每个模型 brand 同时调用上限
-  - 会话锁（`ChatTurnBusy` / `SessionBusy`）：同一会话同时只跑一条 **chat**；这是 Postgres 行锁，不是 Redis 闸门
 
 本轮冒烟 10 条请求共用同一个 `user-liancai-chen`。每条新会话还会额外建一条 `open`（标题）run，所以峰值大约是「HTTP 并发 × 2」条 run 去抢同一用户的 `GATE_USER` 座位。
 
@@ -26,7 +15,7 @@
 | 命令 | `./dev py scripts/load_test_chat.py --base-url http://api:8000 --partnership-id ps-liancai-01 --user-id user-liancai-chen --requests 10 --concurrency 5 --output docs/experiments/exports/load-test-smoke-10.json` |
 | 消息模板 | `你好，这是第 {i} 条合成压测消息，请回复一句确认。` |
 | PLAN / ANSWER | 官方 `qwen3.7-flash` |
-| Worker `--concurrency` | 8 |
+| Worker `--concurrency` | 当时 8（事后已改回 5；不以加并发为目标） |
 | `KA_ACCOUNT_GATE_USER` | 5（代码默认） |
 | `KA_ACCOUNT_GATE_MODEL` | 32 |
 | HTTP / completion timeout | 30s / 180s |
@@ -53,6 +42,17 @@
 | open | 4 | 6 |
 
 冒烟只看会话里有没有 assistant 回写，所以 `open` 卡住不会单独记进压测失败；chat 卡住才会超时。
+
+### 本轮 10 条会话（含事后补跑）的 Token 与花费（按 2026-11-09 官方价格，北京时间 07:39–08:35 空闲时段）
+
+| Run 类型 | 模型 | 成功调用 | Prompt Tokens | Cache Hit（命中率） | Cache Miss | Completion Tokens | 实际花费 | 无缓存原价 |
+|---|---|---|---|---|---|---|---|---|
+| `chat` | `deepseek-flash`（空闲） | 10 | 2,640 | 0（0.0%） | 2,640 | 131 | ¥0.003164 | ¥0.003164 |
+| `chat` | `qwen3.7-flash` | 10 | 24,561 | 15,232（62.0%） | 9,329 | 62 | ¥0.002525 | ¥0.004962 |
+| `open` | `qwen3.7-flash` | 6 | 2,425 | 512（21.1%） | 1,913 | 99 | ¥0.000482 | ¥0.000564 |
+| **合计** | — | **26** | **29,626** | **15,744（53.1%）** | **13,882** | **292** | **¥0.006171（0.62 分）** | **¥0.008690（省 29.0%）** |
+
+- **单请求平均成本**：**¥0.000617 / 条**（`chat` ¥0.000569 + `open` ¥0.000048）。
 
 ## 超时的两条
 
@@ -103,8 +103,14 @@ Worker 日志里对卡住的 chat run 有 `succeeded in 0.03s` 一类记录，�
 
 1. **成功路径已经便宜且稳**：官方 Qwen 问候在并发 5 下，成功样本 P50/P95 约 9～11s。
 2. **完成率缺口不是模型慢**，是入口闸门与 Celery ack 语义不匹配，再加上 sweeper 当时失联。
-3. 建议修复（尚未做）：
-   - `acquire_run` 失败时不要 ack：像 `SessionBusy` 一样短 countdown retry，或重新把 outbox 标回 `pending`
+3. **建议修复（当时未做）**：
+   - `acquire_run` 失败不要 ack：像 `SessionBusy` 一样短 countdown retry，或把 outbox 标回 `pending`
    - 冒烟/压测用多用户，或把 `open` 标题 run 排除出 `GATE_USER` / 会话高峰
-   - compose 变更后确认 `sweeper` 与 `postgres` 在同一网络；监控 sweeper 异常
-4. 下一轮：修完 ack 语义后再用相同模板、并发 5 做第 2 次，对比完成率。
+   - compose 改后确认 sweeper 与 postgres 同网；盯 sweeper 异常
+4. **下一轮**：修好 ack 语义后，用相同模板 concurrency 5 再跑一轮，对比完成率
+
+### 已修复
+
+- **标题隔离**（`session_title.py` / `title-worker`）：入队写临时标题；chat 终态后再投 OPEN 到 `ka_account.title`；title-worker concurrency 2；忙（running chat ≥ 全局闸门 80%）则 jitter 重试最多 3 次
+- **sweeper Postgres 探活**：`depends_on: postgres healthy`，并加 healthcheck 用 `KA_ACCOUNT_DB_URL` 执行 `select 1`，避免容器 Up 但 DNS/连库已断仍假装健康
+- **soft-busy + Celery retry**：`work_once` 在队列关闭 / `acquire_run` 失败时 raise `QueueDisabled` / `GateFull`（`SoftBusy`）；`execute_run` 对 `SoftBusy` 统一 `self.retry`，不再 ACK 丢掉补跑机会
