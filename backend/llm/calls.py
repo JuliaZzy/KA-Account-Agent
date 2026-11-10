@@ -1,16 +1,14 @@
 """One place that picks a model and calls it.
 
-Campus `deepseek-chat` is the small text model. Campus `deepseek-reasoner` is the
-same model with thinking on, for report planning and prose. Campus `qwen` reads
-an order photo. Official `qwen3.7-flash` plans a turn. Official `deepseek-flash`
-writes strict JSON, Python, and tool calls, with thinking off. None of these
-calls set `max_tokens`.
+Official `qwen3.7-flash` is the cheap short-text model (answers, titles, translate).
+Official `deepseek-flash` writes strict JSON, tools, vision, and report prose, with
+thinking off. None of these calls set `max_tokens`. There is no campus gateway path.
 
 `call_model` is the only entry. It opens the vendor client from `brand` when the
-caller did not pass a test double. The four wrappers keep the shapes callers
-already expect. Vendors usually send token counts on the final response. A stream,
-or a gateway that drops usage, leaves both counts at 0. Those calls are estimated
-and labeled `estimated`. OCR stays in `documents`.
+caller did not pass a test double. The wrappers keep the shapes callers already
+expect. Vendors usually send token counts on the final response. A stream, or a
+gateway that drops usage, leaves both counts at 0. Those calls are estimated and
+labeled `estimated`. OCR stays in `documents`.
 """
 
 from __future__ import annotations
@@ -33,20 +31,29 @@ from . import breaker
 from .client import VENDORS, client_for
 from .errors import BREAKER_KINDS, ModelCapacityExceeded, ProviderError, translate_provider_error
 from .parse import parse_json_loose
+from .routing import (
+    ROUTING_POLICY_VERSION,
+    RouteDecision,
+    RouteReason,
+    policy_for,
+    quality_check,
+    route_payload,
+)
 from .types import AssistantTurn, ToolCall
 
 log = logging.getLogger(__name__)
 
-SCHOOL_CHAT = "deepseek-chat"
-SCHOOL_REASONER = "deepseek-reasoner"
-SCHOOL_PLAN = "minimax"
-SCHOOL_VISION = "qwen"
+# Legacy aliases kept so older call sites and tests keep compiling.
+SCHOOL_CHAT = "qwen3.7-flash"
+SCHOOL_REASONER = "deepseek-flash"
+SCHOOL_PLAN = "qwen3.7-flash"
+SCHOOL_VISION = "deepseek-flash"
 DEEPSEEK_FLASH = "deepseek-flash"
 QWEN_PLAN = "qwen3.7-flash"
 
 Kind = Literal["chat_completion", "response"]
 Expect = Literal["json", "text", "tools"]
-Brand = Literal["sjtu", "deepseek", "glm", "qwen", "fake"]
+Brand = Literal["deepseek", "glm", "qwen", "fake"]
 # Official OpenAI-compatible APIs reject dots. Internal names keep them (`po.draft`).
 _VENDOR_TOOL_NAME = re.compile(r"^[a-zA-Z0-9_-]+$")
 
@@ -168,13 +175,13 @@ def _tokens(
     )
 
 
-def _school_text(resp: Any) -> str:
+def _message_text(resp: Any) -> str:
     try:
         if isinstance(resp, dict):
             return str(resp["choices"][0]["message"]["content"] or "")
         return str(resp.choices[0].message.content or "")
     except (KeyError, IndexError, TypeError, AttributeError) as err:
-        raise ValueError("Campus model did not return a message.") from err
+        raise ValueError("Model did not return a message.") from err
 
 
 def _flash_input(messages: list[dict[str, Any]]) -> str | list[dict[str, Any]]:
@@ -205,22 +212,6 @@ def _await(result: Any) -> Any:
     if inspect.iscoroutine(result):
         return asyncio.run(result)
     return result
-
-
-def _call_sjtu(
-    client: Any, *, model: str, messages: list[dict[str, Any]], stream: bool,
-    temperature: float | None, top_p: float | None,
-    tools: list[dict[str, Any]] | None, tool_choice: str | None,
-) -> Any:
-    kwargs: dict[str, Any] = {"model": model, "messages": messages, "stream": stream}
-    if temperature is not None:
-        kwargs["temperature"] = temperature
-    if top_p is not None:
-        kwargs["top_p"] = top_p
-    if tools:
-        kwargs["tools"] = tools
-        kwargs["tool_choice"] = tool_choice or "auto"
-    return client.chat_completion(**kwargs)
 
 
 def _call_deepseek(
@@ -559,14 +550,7 @@ def _invoke(
     else:
         tools, alias = _tools_for_vendor(tools)
         messages = _messages_for_vendor(messages, alias)
-        if brand == "sjtu":
-            response = _call_sjtu(
-                client, model=model_name,
-                messages=[{"role": "system", "content": system}, *messages],
-                stream=stream, temperature=temperature, top_p=top_p,
-                tools=tools, tool_choice=tool_choice,
-            )
-        elif brand == "deepseek":
+        if brand == "deepseek":
             response = _call_deepseek(
                 client, kind=kind, model=model_name, system=system, messages=messages,
                 stream=stream, temperature=temperature, top_p=top_p, schema=schema,
@@ -632,13 +616,13 @@ def _interpret(expect: Expect, raw: Any, alias: dict[str, str] | None = None) ->
         if hasattr(raw, "__iter__") and not isinstance(raw, (dict, list, tuple)):
             text = "".join(str(part) for part in raw).strip()
             return text, text
-        text = _school_text(raw).strip()
+        text = _message_text(raw).strip()
         return text, text
 
     # 结构化 JSON：直接返回
     if isinstance(raw, dict) and "choices" not in raw and not hasattr(raw, "output_text"): # 没有 `choices` 键、也没有 `output_text` 属性：说明调用方直接拿到了已解析的对象，不用再解析
         return raw, json.dumps(raw, ensure_ascii=False)
-    text = str(raw.output_text or "") if hasattr(raw, "output_text") else _school_text(raw)
+    text = str(raw.output_text or "") if hasattr(raw, "output_text") else _message_text(raw)
     parsed = parse_json_loose(text)
     if not isinstance(parsed, dict):
         raise ValueError("model did not return a JSON object")
@@ -832,7 +816,7 @@ def _capacity_failed(
     _note(ledger, StepEvent.MODEL_FAILED, payload)
 
 
-def call_model(
+def _call_model_once(
     model_name: str,
     *,
     brand: Brand,
@@ -1013,6 +997,138 @@ def call_model(
     )
 
 
+def _route_event(db: Any | None, run_id: str | None, event_type: str, payload: dict[str, Any]) -> None:
+    """Write routing metadata through the existing run trace when available."""
+    if db is None or not run_id:
+        return
+    spend = db.model_budget(run_id)
+    if spend is None:
+        return
+    db.append_run_event(spend["org_id"], run_id, event_type, {
+        **payload,
+        "trace_id": spend["trace_id"],
+        "routing_policy_version": ROUTING_POLICY_VERSION,
+    })
+
+
+def _route_budget_exceeded(db: Any | None, run_id: str | None, policy: Any) -> bool:
+    """Enforce route-local caps. Quality-gate failures are not accepted calls."""
+    if db is None or not run_id:
+        return False
+    spend = db.model_budget(run_id)
+    if spend is None:
+        return False
+    trace = db.run_trace(spend["org_id"], run_id) or {}
+    completed: list[dict[str, Any]] = []
+    rejected = 0
+    for event in trace.get("events") or []:
+        payload = event.get("payload_json") or {}
+        event_type = event.get("event_type")
+        if event_type == StepEvent.MODEL_COMPLETED and payload.get("purpose") == policy.task:
+            completed.append(payload)
+        elif (
+            event_type == StepEvent.MODEL_QUALITY_GATE_FAILED
+            and payload.get("route_task") == policy.task
+        ):
+            rejected += 1
+    accepted = max(0, len(completed) - rejected)
+    if policy.max_model_calls is not None and accepted >= policy.max_model_calls:
+        return True
+    if policy.max_tokens is not None:
+        used = sum(int(item.get("completion_tokens") or 0) for item in completed)
+        if used >= policy.max_tokens:
+            return True
+    return False
+
+
+def call_model(*args: Any, **kwargs: Any) -> ModelResult:
+    """Select a versioned route, record it in the trace, and fall back on transient errors."""
+    requested_model = str(args[0] if args else kwargs.get("model_name") or "")
+    purpose = kwargs.get("purpose")
+    policy = policy_for(
+        purpose,
+        requested_model=requested_model,
+        requested_provider=str(kwargs.get("brand") or ""),
+    )
+    if policy is None:
+        return _call_model_once(*args, **kwargs)
+
+    db = kwargs.get("db")
+    run_id = kwargs.get("run_id")
+    candidates = policy.candidates
+    fallback_reason: tuple[RouteReason, str | None] = (RouteReason.PREVIOUS_CANDIDATE_FAILED, None)
+    for index, candidate in enumerate(candidates):
+        call_args = list(args)
+        if call_args:
+            call_args[0] = candidate.model
+        else:
+            kwargs["model_name"] = candidate.model
+        call_kwargs = dict(kwargs)
+        call_kwargs["brand"] = candidate.provider
+        decision = RouteDecision.PRIMARY if index == 0 else RouteDecision.FALLBACK
+        fallback_from = candidates[index - 1].model if index else None
+        if _route_budget_exceeded(db, run_id, policy):
+            return ModelResult(
+                brand=candidate.provider,
+                model=candidate.model,
+                body=None,
+                prompt_tokens=0,
+                completion_tokens=0,
+                usage_source="estimated",
+                error=EntryErrorCode.COST_BUDGET_EXCEEDED,
+            )
+        _route_event(
+            db, run_id,
+            "model.route_selected" if index == 0 else "model.route_fallback",
+            route_payload(
+                policy, candidate, index=index, decision=decision,
+                reason=(RouteReason.POLICY_PRIMARY if index == 0 else fallback_reason[0]),
+                reason_detail=None if index == 0 else fallback_reason[1],
+                fallback_from=fallback_from,
+            ),
+        )
+        try:
+            result = _call_model_once(*call_args, **call_kwargs)
+            if result.error is None:
+                passed, quality_reason = quality_check(policy, result.body)
+                if not passed:
+                    _route_event(db, run_id, StepEvent.MODEL_QUALITY_GATE_FAILED, {
+                        **route_payload(
+                            policy, candidate, index=index, decision=decision,
+                            reason=RouteReason.QUALITY_GATE_FAILED,
+                            reason_detail=quality_reason, fallback_from=fallback_from,
+                        ),
+                        "quality_result": "failed",
+                    })
+                    raise ValueError(f"route quality gate failed: {quality_reason}")
+            return result
+        except (ProviderError, ModelCapacityExceeded, ValueError) as exc:
+            if isinstance(exc, ProviderError):
+                failure_kind = "provider_error"
+            elif isinstance(exc, ModelCapacityExceeded):
+                failure_kind = "model_capacity"
+            else:
+                failure_kind = (
+                    "quality_gate_failed"
+                    if "route quality gate failed" in str(exc)
+                    else "invalid_json"
+                )
+            if index + 1 >= len(candidates) or failure_kind not in policy.fallback_on:
+                raise
+            reason_map = {
+                "provider_error": RouteReason.PROVIDER_ERROR,
+                "model_capacity": RouteReason.MODEL_CAPACITY,
+                "quality_gate_failed": RouteReason.QUALITY_GATE_FAILED,
+                "invalid_json": RouteReason.INVALID_JSON,
+            }
+            fallback_reason = (
+                reason_map[failure_kind],
+                getattr(exc, "kind", None) or str(exc),
+            )
+            continue
+    raise RuntimeError(f"no model route available for {purpose or requested_model}")
+
+
 def _unwrap(result: ModelResult) -> Any:
     if result.error == EntryErrorCode.COST_BUDGET_EXCEEDED:
         raise ModelBudgetExceeded()
@@ -1054,31 +1170,32 @@ def _record_breaker(brand: str, error: Exception) -> None:
 
 
 def school_json(
-    model: str, *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
+    model: str = QWEN_PLAN, *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
     schema: dict[str, Any] | None = None, temperature: float = 0,
     db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
     purpose: str | None = None,
 ) -> dict[str, Any]:
-    """Campus chat. The gateway has no JSON schema; the reply text is the object."""
-    # Thinking is on for this model name, so leave temperature at the gateway default.
+    """Cheap official text JSON. Prefer ``qwen3.7-flash``; report callers may pass flash."""
+    del model
     return _unwrap(call_model(
-        model, brand="sjtu", kind="chat_completion", expect="json",
-        temperature=None if model == SCHOOL_REASONER else temperature,
+        QWEN_PLAN, brand="qwen", kind="chat_completion", expect="json",
+        temperature=temperature, reasoning_effort="none",
         system=system, messages=messages, schema=schema, client=client,
         db=db, run_id=run_id, step_id=step_id, purpose=purpose,
     ))
 
 
 def school_text(
-    model: str, *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
+    model: str = QWEN_PLAN, *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
     temperature: float = 0, on_text: Callable[..., None] | None = None,
     db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
     purpose: str | None = None,
 ) -> Iterator[str]:
-    """Campus chat, one chunk. The desk still renders it as reply tokens."""
+    """Cheap official text. The desk still renders it as reply tokens."""
+    del model
     text = _unwrap(call_model(
-        model, brand="sjtu", kind="chat_completion", expect="text", temperature=temperature,
-        system=system, messages=messages, client=client, on_text=on_text,
+        QWEN_PLAN, brand="qwen", kind="chat_completion", expect="text", temperature=temperature,
+        reasoning_effort="none", system=system, messages=messages, client=client, on_text=on_text,
         db=db, run_id=run_id, step_id=step_id, purpose=purpose,
     ))
     if text:

@@ -76,13 +76,14 @@ def _call_json(
         ledger = {
             "db": trace.db, "run_id": trace.run_id, "step_id": trace.step_id, "purpose": "report",
         }
-    if flash:
+    # Report prose used to hit the campus reasoner. Official flash is enough and cheaper to operate.
+    if flash or model in {model_calls.DEEPSEEK_FLASH, model_calls.SCHOOL_REASONER}:
         return model_calls.flash_json(
             system=system, messages=messages, schema=schema, temperature=temperature,
             client=llm, **ledger,
         )
     return model_calls.school_json(
-        model=model, system=system, messages=messages, schema=schema, temperature=temperature,
+        system=system, messages=messages, schema=schema, temperature=temperature,
         client=llm, **ledger,
     )
 

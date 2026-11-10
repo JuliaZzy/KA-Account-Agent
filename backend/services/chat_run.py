@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any
 
 from ..db import Database
+from ..llm.routing import run_budget_for
 from ..repositories.run_repository import (
     RunStatus,
     create_agent_run,
@@ -25,7 +26,7 @@ from ..repositories.run_repository import (
 )
 from .dispatcher import dispatch_pending
 from .run_names import RunType, ToolCallStatus
-from .run_worker import work_once
+from .run_worker import PermanentRunError, sweep_expired_leases, work_once
 
 
 def enqueue_chat_run(
@@ -57,6 +58,7 @@ def enqueue_chat_run(
     attachments = [name for name in (attachments or []) if isinstance(name, str)]
 
     # 创建 run
+    chat_budget = run_budget_for(RunType.CHAT)
     run, _created = create_agent_run(
         db, partnership.distributor_id, user_id, RunType.CHAT, key, {
             "session_id": session["id"],
@@ -66,8 +68,11 @@ def enqueue_chat_run(
             "model": (model or "").strip() or None,
             "attachments": attachments,
         },
+        max_model_calls=chat_budget.max_model_calls,
+        max_tokens=chat_budget.max_tokens,
     )
     if not session.get("title"):
+        open_budget = run_budget_for(RunType.OPEN)
         create_agent_run(
             db, partnership.distributor_id, user_id, RunType.OPEN,
             f"open:{session['id']}:{run['id']}", {
@@ -76,6 +81,8 @@ def enqueue_chat_run(
                 "attachments": attachments,
             },
             owner_run_id=run["id"],
+            max_model_calls=open_budget.max_model_calls,
+            max_tokens=open_budget.max_tokens,
         )
     dispatch_pending(db)
     return run
@@ -84,7 +91,10 @@ def enqueue_chat_run(
 def work_chat(db: Database, llm: Any, run_id: str | None = None) -> bool:
     """Drain one chat turn for tests: parent, then children, then the parent again.
 
-    Compose delivers each `run_id` to `work_once` separately.
+    Compose delivers each `run_id` to `work_once` separately. A `running` row whose
+    lease has already expired is handed to the same sweeper the worker uses, then
+    drained again, so a lost worker resumes through that requeue instead of stopping
+    on `running`.
     """
     if not run_id:
         return False
@@ -97,6 +107,8 @@ def work_chat(db: Database, llm: Any, run_id: str | None = None) -> bool:
         if status in (RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED, RunStatus.WAITING_FOR_USER):
             children = _queued_descendants(db, run_id)
             if not children:
+                if _release_expired(db):
+                    continue
                 return True
             stuck = False
             for child in children:
@@ -116,12 +128,28 @@ def work_chat(db: Database, llm: Any, run_id: str | None = None) -> bool:
         if status == RunStatus.WAITING_FOR_TASKS:
             children = _queued_descendants(db, run_id)
             if not children:
+                if _release_expired(db):
+                    continue
                 return True
             for child in children:
                 work_once(db, "test-worker", execute, run_id=child["id"])
             continue
+        if status == RunStatus.RUNNING and _release_expired(db):
+            continue
         return True
     return True
+
+
+def _release_expired(db: Database) -> bool:
+    """Requeue expired leases and dispatch the outbox the sweeper just wrote.
+
+    `sweeper.sweep` does both. Skipping the dispatch leaves `run.enqueued` until a
+    later turn, so a drain resume would not match a Celery redelivery.
+    """
+    released = sweep_expired_leases(db)
+    if released:
+        dispatch_pending(db)
+    return released > 0
 
 
 def _queued_descendants(db: Database, root_id: str) -> list[dict[str, Any]]:
@@ -173,7 +201,12 @@ def execute_chat(db: Database, llm: Any | None = None) -> Callable[[dict[str, An
             raise ValueError("chat run has no session")
         text = str(payload.get("message") or "")
         ## 主管线
-        output = execute_parent(db, llm, run, session)
+        from ..orchestrator.plan import InvalidPlan
+
+        try:
+            output = execute_parent(db, llm, run, session)
+        except InvalidPlan as exc:
+            raise PermanentRunError(str(exc)) from exc
 
         ## 判断是否需要写回复
         row = find_agent_run_by_id(db, run["id"]) # 重查数据库状态，而不是直接使用 output 的 status

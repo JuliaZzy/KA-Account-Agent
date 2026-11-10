@@ -52,6 +52,7 @@ def resolve_references(llm: Any, references: list[str], products: list[dict[str,
         system=build_resolver_prompt(references, products),
         messages=[{"role": "user", "content": "请解析上面的说法。"}],
         temperature=0,
+        purpose="po.resolve",
     )
     out: dict[str, list[str]] = {}
     for ref in references:

@@ -1,6 +1,7 @@
-"""Campus model ids the call sites pass by name.
+"""Official model ids shown in the desk dropdown.
 
-The url and the key stay in the environment.
+Chat steps pick their own model; this list is display-only. Base URLs stay in the
+environment and are not used by the chat path.
 """
 
 from __future__ import annotations
@@ -20,24 +21,13 @@ class LLMConfig:
 
 LLM_CONFIGS: tuple[LLMConfig, ...] = (
     LLMConfig(
-        id="deepseek-chat",
-        base_url=env("SJTU_BASE_URL"),
-        model="deepseek-chat",
+        id="qwen3.7-flash",
+        base_url=env("QWEN_BASE_URL"),
+        model="qwen3.7-flash",
     ),
     LLMConfig(
-        id="deepseek-reasoner",
-        base_url=env("SJTU_BASE_URL"),
-        model="deepseek-reasoner",
-        thinking=True,
-    ),
-    LLMConfig(
-        id="minimax",
-        base_url=env("SJTU_BASE_URL"),
-        model="minimax",
-    ),
-    LLMConfig(
-        id="qwen",
-        base_url=env("SJTU_BASE_URL"),
-        model="qwen",
+        id="deepseek-flash",
+        base_url=env("DEEPSEEK_BASE_URL"),
+        model="deepseek-flash",
     ),
 )

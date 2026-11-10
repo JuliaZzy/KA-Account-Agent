@@ -18,63 +18,8 @@ from backend.llm.calls import (
     qwen_json,
     school_json,
 )
-from backend.llm.client import DeepSeekClient, SJTUClient, _remember_usage
+from backend.llm.client import DeepSeekClient, _remember_usage
 from backend.services.run_names import EntryErrorCode
-
-
-class _Posted:
-    def __init__(self) -> None:
-        self.url = ""
-        self.headers: dict[str, str] = {}
-        self.stream = False
-
-    def __call__(self, url, headers, json, timeout, stream=False):
-        del json, timeout
-        self.url = url
-        self.headers = headers
-        self.stream = stream
-        return _CampusResponse()
-
-
-class _CampusResponse:
-    status_code = 200
-    text = ""
-
-    def json(self):
-        return {"choices": [{"message": {"content": "ok"}}], "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
-
-    def iter_lines(self, decode_unicode=False):
-        del decode_unicode
-        return iter(())
-
-    def close(self):
-        return None
-
-
-def test_campus_client_posts_to_sjtu_base_url(monkeypatch):
-    monkeypatch.setenv("SJTU_BASE_URL", "https://campus.example/api/v1/")
-    monkeypatch.setenv("SJTU_API_KEY", "campus-key")
-    posted = _Posted()
-    monkeypatch.setattr("backend.llm.client.requests.post", posted)
-    client = SJTUClient()
-    client.chat_completion("deepseek-chat", [{"role": "user", "content": "hi"}])
-    assert posted.url == "https://campus.example/api/v1/chat/completions"
-    assert posted.headers["Authorization"] == "Bearer campus-key"
-    assert posted.stream is False
-    list(client.chat_completion("deepseek-chat", [{"role": "user", "content": "hi"}], stream=True))
-    assert posted.url == "https://campus.example/api/v1/chat/completions"
-    assert posted.stream is True
-
-
-def test_campus_client_requires_sjtu_env(monkeypatch):
-    monkeypatch.setenv("SJTU_BASE_URL", "https://campus.example/api/v1")
-    monkeypatch.delenv("SJTU_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="SJTU_API_KEY"):
-        SJTUClient()
-    monkeypatch.setenv("SJTU_API_KEY", "campus-key")
-    monkeypatch.delenv("SJTU_BASE_URL", raising=False)
-    with pytest.raises(RuntimeError, match="SJTU_BASE_URL"):
-        SJTUClient()
 
 
 def test_usage_keeps_deepseek_and_qwen_cache_fields():
@@ -140,10 +85,10 @@ def test_vendor_posts_dotted_tool_names_without_dots(monkeypatch):
 
 
 def test_named_models():
-    assert SCHOOL_CHAT == "deepseek-chat"
-    assert SCHOOL_REASONER == "deepseek-reasoner"
-    assert SCHOOL_PLAN == "minimax"
-    assert SCHOOL_VISION == "qwen"
+    assert SCHOOL_CHAT == "qwen3.7-flash"
+    assert SCHOOL_REASONER == "deepseek-flash"
+    assert SCHOOL_PLAN == "qwen3.7-flash"
+    assert SCHOOL_VISION == "deepseek-flash"
     assert DEEPSEEK_FLASH == "deepseek-flash"
     assert QWEN_PLAN == "qwen3.7-flash"
 
@@ -183,7 +128,7 @@ def test_model_capacity_is_an_explicit_retryable_error(monkeypatch):
         qwen_json(
             system="plan", messages=[{"role": "user", "content": "hi"}],
             schema={"name": "plan", "strict": True, "schema": {"type": "object"}},
-            client=_Campus(),
+            client=_VendorStub(),
         )
     assert raised.value.brand == "qwen"
     assert raised.value.model == QWEN_PLAN
@@ -191,21 +136,21 @@ def test_model_capacity_is_an_explicit_retryable_error(monkeypatch):
 
 
 def test_client_for_replaces_the_wrong_vendor(monkeypatch):
-    from backend.llm.client import DeepSeekClient, SJTUClient, client_for, open_client
+    from backend.llm.client import DeepSeekClient, QwenClient, client_for, open_client
 
-    monkeypatch.setenv("SJTU_BASE_URL", "https://campus.example/api/v1")
-    monkeypatch.setenv("SJTU_API_KEY", "campus-key")
+    monkeypatch.setenv("QWEN_BASE_URL", "https://qwen.example/v1")
+    monkeypatch.setenv("QWEN_API_KEY", "qwen-key")
     monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-key")
-    campus = open_client("sjtu")
-    assert isinstance(campus, SJTUClient)
-    assert isinstance(client_for("sjtu", campus), SJTUClient)
-    assert isinstance(client_for("deepseek", campus), DeepSeekClient)
-    assert client_for("sjtu", object()) is not campus
+    qwen = open_client("qwen")
+    assert isinstance(qwen, QwenClient)
+    assert isinstance(client_for("qwen", qwen), QwenClient)
+    assert isinstance(client_for("deepseek", qwen), DeepSeekClient)
+    assert client_for("qwen", object()) is not qwen
 
 
-class _Campus:
-    """A campus-shaped client with no FakeLLM methods, so the real transport runs."""
+class _VendorStub:
+    """A chat-completion shaped client with no FakeLLM methods, so the real transport runs."""
 
     def __init__(self, usage: dict[str, int] | None = None) -> None:
         self.usage = usage
@@ -229,7 +174,7 @@ def _open(db, key: str, **caps):
 
 def test_vendor_usage_is_actual_and_a_missing_usage_is_estimated(db):
     run, step = _open(db, "usage-source")
-    metered = _Campus({
+    metered = _VendorStub({
         "prompt_tokens": 11, "completion_tokens": 7,
         "cache_hit_tokens": 8, "cache_miss_tokens": 3, "cache_creation_tokens": 0,
     })
@@ -237,7 +182,7 @@ def test_vendor_usage_is_actual_and_a_missing_usage_is_estimated(db):
         SCHOOL_CHAT, system="count these", messages=[{"role": "user", "content": "hi"}],
         client=metered, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
     )
-    bare = _Campus()
+    bare = _VendorStub()
     school_json(
         SCHOOL_CHAT, system="汉字汉字汉字汉字", messages=[{"role": "user", "content": "abcd"}],
         client=bare, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
@@ -249,7 +194,7 @@ def test_vendor_usage_is_actual_and_a_missing_usage_is_estimated(db):
     usage = db.list_usage_records(run["id"])
     assert {row["usage_source"] for row in usage} == {"actual", "estimated"}
     actual = next(row for row in usage if row["usage_source"] == "actual")
-    assert actual["provider"] == "sjtu" and actual["model"] == SCHOOL_CHAT
+    assert actual["provider"] == "qwen" and actual["model"] == SCHOOL_CHAT
     assert actual["cache_hit_tokens"] == 8
     assert actual["cache_miss_tokens"] == 3
     assert actual["cache_creation_tokens"] == 0
@@ -266,7 +211,7 @@ def test_vendor_usage_is_actual_and_a_missing_usage_is_estimated(db):
 
 def test_a_run_over_its_model_budget_does_not_call(db):
     run, step = _open(db, "over-calls", max_model_calls=1)
-    client = _Campus({"prompt_tokens": 4, "completion_tokens": 1})
+    client = _VendorStub({"prompt_tokens": 4, "completion_tokens": 1})
     school_json(
         SCHOOL_CHAT, system="once", messages=[{"role": "user", "content": "hi"}],
         client=client, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
@@ -289,7 +234,7 @@ def test_a_run_over_its_model_budget_does_not_call(db):
 
 def test_an_org_over_its_daily_tokens_does_not_call(db, monkeypatch):
     run, step = _open(db, "org-daily")
-    client = _Campus({"prompt_tokens": 4, "completion_tokens": 1})
+    client = _VendorStub({"prompt_tokens": 4, "completion_tokens": 1})
     school_json(
         SCHOOL_CHAT, system="once", messages=[{"role": "user", "content": "hi"}],
         client=client, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
@@ -305,7 +250,7 @@ def test_an_org_over_its_daily_tokens_does_not_call(db, monkeypatch):
 
 def test_a_run_over_its_token_budget_does_not_call(db):
     run, step = _open(db, "over-tokens", max_tokens=5)
-    client = _Campus({"prompt_tokens": 4, "completion_tokens": 1})
+    client = _VendorStub({"prompt_tokens": 4, "completion_tokens": 1})
     school_json(
         SCHOOL_CHAT, system="once", messages=[{"role": "user", "content": "hi"}],
         client=client, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",

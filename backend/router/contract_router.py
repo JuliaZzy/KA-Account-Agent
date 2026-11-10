@@ -11,7 +11,7 @@ from ..contract import contract_discount_for_next_order, ingest_extraction, read
 from ..contract.chunks import nest_chunk_rows
 from ..db import Database
 from ..deps import get_db
-from ..llm import campus_client, deepseek_client
+from ..llm import deepseek_client
 from ..schemas import Partnership
 from ._common import dump, partnership_or_404, read_upload
 
@@ -70,7 +70,7 @@ async def import_contract(
             )
         else:
             rec = read_and_ingest(
-                db, deepseek_client(), campus_client(),
+                db, deepseek_client(),
                 brand_id=p.brand_id, partnership_id=p.id, file_name=name, data=data, title=label,
             )
     except HTTPException:

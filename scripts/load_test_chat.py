@@ -18,6 +18,10 @@ from typing import Any
 
 import httpx
 
+# A 100-request run leaves about 20 rows in one agent class. P99 there is the slowest point.
+# Publish P99 only for a pooled sample of at least 300. Smaller slices report P50 and P95.
+P99_MIN_SAMPLES = 300
+
 
 def _percentile(values: list[float], percentile: float) -> float | None:
     if not values:
@@ -25,6 +29,20 @@ def _percentile(values: list[float], percentile: float) -> float | None:
     ordered = sorted(values)
     index = max(0, min(len(ordered) - 1, math.ceil(percentile * len(ordered)) - 1))
     return ordered[index]
+
+
+def _latency(values: list[float]) -> dict[str, float | None]:
+    return {
+        "p50": _percentile(values, 0.50),
+        "p95": _percentile(values, 0.95),
+        "p99": _percentile(values, 0.99) if len(values) >= P99_MIN_SAMPLES else None,
+    }
+
+
+def _seconds(value: float | None, *, tail: bool = False) -> str:
+    if value is None:
+        return f"未报（不足 {P99_MIN_SAMPLES} 条）" if tail else "没有样本"
+    return f"{value} 秒"
 
 
 def _message(template: str, index: int) -> str:
@@ -117,6 +135,8 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     completed = [row for row in results if row.get("completed")]
     completed_durations = [float(row["total_ms"]) / 1000 for row in completed]
     observed_durations = [float(row["total_ms"]) / 1000 for row in results]
+    observed = _latency(observed_durations)
+    done = _latency(completed_durations)
     return {
         "workload": {
             "base_url": base_url,
@@ -131,11 +151,13 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             "completed": len(completed),
             "timeouts": len(results) - len(completed),
             "completion_rate": len(completed) / len(results) * 100 if results else None,
-            "observed_p50_seconds": _percentile(observed_durations, 0.50),
-            "observed_p95_seconds": _percentile(observed_durations, 0.95),
+            "observed_p50_seconds": observed["p50"],
+            "observed_p95_seconds": observed["p95"],
+            "observed_p99_seconds": observed["p99"],
             "observed_max_seconds": max(observed_durations, default=None),
-            "completed_p50_seconds": _percentile(completed_durations, 0.50),
-            "completed_p95_seconds": _percentile(completed_durations, 0.95),
+            "completed_p50_seconds": done["p50"],
+            "completed_p95_seconds": done["p95"],
+            "completed_p99_seconds": done["p99"],
             "completed_max_seconds": max(completed_durations, default=None),
         },
         "results": results,
@@ -156,19 +178,25 @@ def main() -> int:
         default="你好，这是第 {i} 条合成压测消息，请回复一句确认。",
     )
     parser.add_argument("--messages-file", type=Path, help="one message template per line; cycles across requests")
-    parser.add_argument("--output", type=Path, default=Path(".load-test-result.json"))
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("docs/experiments/exports/load-test-result.json"),
+    )
     args = parser.parse_args()
     if args.requests < 1 or args.concurrency < 1 or args.concurrency > args.requests:
         parser.error("requests must be >= 1 and concurrency must be between 1 and requests")
 
     report = asyncio.run(run(args))
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     summary = report["summary"]
     print(
         f"合成压测：{summary['completed']}/{summary['submitted']} 完成 "
         f"({summary['completion_rate']:.1f}%)；"
-        f"观测 P95 {summary['observed_p95_seconds']} 秒；"
-        f"成功请求 P95 {summary['completed_p95_seconds']} 秒；"
+        f"成功 P50 {_seconds(summary['completed_p50_seconds'])}，"
+        f"P95 {_seconds(summary['completed_p95_seconds'])}，"
+        f"P99 {_seconds(summary['completed_p99_seconds'], tail=True)}；"
         f"结果已写入 {args.output}"
     )
     return 0

@@ -49,7 +49,7 @@ def test_full_flow(db):
         row for row in trace["model_calls"]
         if (row.get("request_json") or {}).get("schema", {}).get("name") == "session_open"
     )
-    assert named["model"] == "deepseek-chat" and named["status"] == "succeeded"
+    assert named["model"] == "qwen3.7-flash" and named["status"] == "succeeded"
     step = next(step for step in trace["steps"] if step["id"] == named["step_id"])
     assert (step["step_type"], step["name"], step["status"]) == ("model", "model", "succeeded")
     parent_trace = db.run_trace("dist-1", run_id)
@@ -97,7 +97,7 @@ def test_model_failure_leaves_the_stream_open_and_fails_on_the_worker(db):
     sid = c.post("/api/sessions", json={"user_id": "u-a"}).json()["id"]
     db.update_session(sid, title="Hello", tags=[])
     resp = c.post(f"/api/sessions/{sid}/message", json={"message": "hello"})
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     ev = events(resp)
     run_id = _of(ev, "run")["run_id"]
     assert all(e.get("type") != "error" for e in ev)
@@ -129,7 +129,7 @@ def test_a_long_chat_folds_after_the_worker_saves(db, monkeypatch):
     db.update_session(sid, history=[{"role": "user", "content": "Q" * 8000}], title="already open", tags=["chat"])
 
     resp = c.post(f"/api/sessions/{sid}/message", json={"message": "and one more"})
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     run_id = _of(events(resp), "run")["run_id"]
     assert work_chat(db, llm, run_id) is True
     assert ran == [1]

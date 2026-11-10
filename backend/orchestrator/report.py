@@ -20,7 +20,7 @@ from ..report.turn import (
 )
 from ..repositories.run_repository import latest_checkpoint
 from ..services.run_names import StepStatus, StepType, ToolCallStatus, step_name
-from .gather import collect_wave, dispatch_wave, finish_child, load_state
+from .gather import checkpoint_state, collect_wave, dispatch_wave, finish_child, load_state
 from .plan import PlanTask
 
 REPORT_KEY = "report"
@@ -39,6 +39,14 @@ def execute_report(
     report = (state or {}).get(REPORT_KEY) if isinstance(state, dict) else None
     step_id = str((report or {}).get("step_id") or "") or _open_step(db, run, payload)
     phase = str((report or {}).get("phase") or "")
+    if phase == "done" and isinstance((report or {}).get("result"), dict):
+        result = report["result"]
+        finish_child(db, run, result)
+        return result
+    if phase == "planned":
+        return _resume_decision(db, llm, run, session, payload, asked_text, step_id, report or {}, "await_query")
+    if phase == "risks_planned":
+        return _resume_decision(db, llm, run, session, payload, asked_text, step_id, report or {}, "await_risks")
     if not phase:
         return _start(
             db, llm, run, session, payload, asked_text, step_id,
@@ -55,6 +63,40 @@ def execute_report(
     return _fail(db, run, payload, "unknown report phase", step_id)
 
 
+def _resume_decision(
+    db: Database, llm: Any, run: dict[str, Any], session: dict[str, Any],
+    payload: dict[str, Any], text: str, step_id: str, report: dict[str, Any], next_phase: str,
+) -> dict[str, Any] | None:
+    """Dispatch the decision already stored. Do not call the planner again."""
+    from ..report.turn import SectionPlan
+
+    tasks: list[PlanTask] = []
+    for item in report.get("planned") or []:
+        if not isinstance(item, dict):
+            continue
+        tasks.append(PlanTask(
+            id=str(item.get("id") or ""),
+            kind=str(item.get("kind") or "agent"),
+            name=str(item.get("name") or "data"),
+            input=item.get("input") if isinstance(item.get("input"), dict) else {},
+            depends_on=[str(dep) for dep in (item.get("depends_on") or []) if dep],
+        ))
+    if tasks:
+        parked = dispatch_wave(db, run, session, tasks, [], {}, payload, extra={
+            REPORT_KEY: {**report, "phase": next_phase},
+        })
+        if parked is not None:
+            return None
+        if next_phase == "await_risks":
+            return _fail(db, run, payload, "could not enqueue risk queries", step_id)
+    planned = [SectionPlan(**item) for item in report.get("sections") or [] if isinstance(item, dict)]
+    empty = {section.id: [] for section in planned}
+    return _consume(
+        db, llm, run, session, payload, text, step_id, planned,
+        str(report.get("title") or ""), [], empty, [], park_extra=True,
+    )
+
+
 def _start(
     db: Database, llm: Any, run: dict[str, Any], session: dict[str, Any],
     payload: dict[str, Any], text: str, step_id: str,
@@ -67,23 +109,23 @@ def _start(
         trace=_trace(db, run["id"], step_id),
     )
     questions = planned_questions(planned)
+    tasks = _data_tasks(questions) if questions else []
+    decision = {
+        "phase": "planned",
+        "step_id": step_id,
+        "title": title,
+        "planned": [task.as_dict() for task in tasks],
+        "sections": [section.__dict__ for section in planned],
+        "questions": [[task.id, task.input.get("question")] for task in tasks],
+    }
+    _close_decision(db, run["id"], "report.plan", decision, tasks)
     if not questions:
         empty = {section.id: [] for section in planned}
         return _consume(
             db, llm, run, session, payload, text, step_id, planned, title, [], empty, [],
             park_extra=True,
         )
-    tasks = _data_tasks(questions)
-    extra = {
-        REPORT_KEY: {
-            "phase": "await_query",
-            "step_id": step_id,
-            "title": title,
-            "planned": [task.as_dict() for task in tasks],
-            "sections": [section.__dict__ for section in planned],
-            "questions": [[task.id, task.input.get("question")] for task in tasks],
-        },
-    }
+    extra = {REPORT_KEY: {**decision, "phase": "await_query"}}
     parked = dispatch_wave(db, run, session, tasks, [], {}, payload, extra=extra)
     if parked is not None:
         return None
@@ -181,14 +223,15 @@ def _park_extra(
 ) -> dict[str, Any] | None:
     start = len(need.snapshot.get("asked") or []) + 1
     tasks = _data_tasks(need.questions, start=start)
-    extra = {
-        REPORT_KEY: {
-            "phase": "await_risks",
-            "step_id": step_id,
-            "snapshot": need.snapshot,
-            "questions": [[task.id, task.input.get("question")] for task in tasks],
-        },
+    decision = {
+        "phase": "risks_planned",
+        "step_id": step_id,
+        "snapshot": need.snapshot,
+        "planned": [task.as_dict() for task in tasks],
+        "questions": [[task.id, task.input.get("question")] for task in tasks],
     }
+    _close_decision(db, run["id"], "report.risks", decision, tasks)
+    extra = {REPORT_KEY: {**decision, "phase": "await_risks"}}
     parked = dispatch_wave(db, run, session, tasks, [], {}, payload, extra=extra)
     if parked is None:
         return _fail(db, run, payload, "could not enqueue risk queries", step_id)
@@ -211,8 +254,6 @@ def _done(
         "report_pending_id": f"rp_{uuid.uuid4().hex[:12]}",
         "data_query": draft.data_query,
     }
-    if step_id:
-        _close_report_step(db, run, step_id, payload, raw, None)
     result = {
         "id": payload.get("task_id"),
         "kind": payload.get("kind"),
@@ -221,6 +262,10 @@ def _done(
         "error": None,
         "payload": raw,
     }
+    if step_id:
+        _close_report_step(db, run, step_id, payload, raw, None, checkpoint_state([], [], {}, extra={
+            REPORT_KEY: {"phase": "done", "step_id": step_id, "result": result},
+        }))
     finish_child(db, run, result)
     return result
 
@@ -242,9 +287,23 @@ def _fail(
     return result
 
 
+def _close_decision(
+    db: Database, run_id: str, purpose: str, decision: dict[str, Any], tasks: list[PlanTask],
+) -> None:
+    """Close a decision step and store its checkpoint in that same transaction."""
+    step = db.insert_step(run_id, StepType.MODEL, step_name(StepType.MODEL, None), {"purpose": purpose})
+    if step is None:
+        return
+    db.finish_step(
+        step["id"], StepStatus.SUCCEEDED, decision,
+        None, checkpoint_state(tasks, [], {}, extra={REPORT_KEY: decision}),
+    )
+
+
 def _close_report_step(
     db: Database, run: dict[str, Any], step_id: str,
     payload: dict[str, Any], output: dict[str, Any] | None, error: dict[str, Any] | None,
+    checkpoint: dict[str, Any] | None = None,
 ) -> None:
     ok = error is None
     saved = db.insert_tool_call(
@@ -256,12 +315,13 @@ def _close_report_step(
         latency_ms=0, error=error,
         step_status=StepStatus.SUCCEEDED if ok else StepStatus.FAILED,
         step_output=output, step_error=error,
+        checkpoint=checkpoint,
     )
     if saved is None:
         db.finish_step(
             step_id,
             StepStatus.SUCCEEDED if ok else StepStatus.FAILED,
-            output, error,
+            output, error, checkpoint,
         )
 
 

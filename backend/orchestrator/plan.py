@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -26,6 +27,11 @@ AGENT_RUN_TYPES = {
     "data": "data",
     "brand": "brand",
 }
+RESULT_STATUSES = frozenset({"succeeded", "failed", "skipped"})
+
+
+class InvalidPlan(ValueError):
+    """The PLAN graph cannot be dispatched. Retrying the model will not fix it."""
 
 
 @dataclass
@@ -76,28 +82,57 @@ def run_type_for(task: PlanTask) -> str:
 
 
 def parse_tasks(raw: Any) -> list[PlanTask]:
+    tasks, _dropped, _unknown_ids = _accept(raw)
+    return tasks
+
+
+def _accept(raw: Any) -> tuple[list[PlanTask], dict[str, int], set[str]]:
+    """Keep the runnable tasks and count what the model emitted that we refused.
+
+    `unknown_agent` is a name outside the registry. A later task that still
+    depends on that id fails the whole plan; the count is how often the model
+    does it, including calls that still succeed because nothing depended on it.
+    """
     items = raw.get("tasks") if isinstance(raw, dict) else None
+    dropped = {"unknown_agent": 0, "duplicate_id": 0, "incomplete": 0, "extra_po": 0}
+    unknown_ids: set[str] = set()
     if not isinstance(items, list):
-        return []
+        return [], dropped, unknown_ids
     out: list[PlanTask] = []
     seen: set[str] = set()
     for item in items:
         if not isinstance(item, dict):
+            dropped["incomplete"] += 1
             continue
         task_id = str(item.get("id") or "").strip()
         kind = str(item.get("kind") or "").strip()
         name = str(item.get("name") or "").strip()
-        if not task_id or task_id in seen:
+        if not task_id:
+            dropped["incomplete"] += 1
+            continue
+        if task_id in seen:
+            dropped["duplicate_id"] += 1
             continue
         if kind not in ("agent", "tool") or not name:
+            dropped["incomplete"] += 1
             continue
         if kind == "agent" and name not in AGENT_NAMES:
+            dropped["unknown_agent"] += 1
+            unknown_ids.add(task_id)
             continue
         payload = item.get("input") if isinstance(item.get("input"), dict) else {}
         deps = [str(dep) for dep in (item.get("depends_on") or []) if isinstance(dep, str) and dep]
         seen.add(task_id)
         out.append(PlanTask(id=task_id, kind=kind, name=name, input=dict(payload), depends_on=deps))
-    return _one_po(out)
+    before = len(out)
+    out = _one_po(out)
+    dropped["extra_po"] += before - len(out)
+    return out, dropped, unknown_ids
+
+
+def _present_drops(dropped: dict[str, int]) -> dict[str, int] | None:
+    kept = {key: value for key, value in dropped.items() if value}
+    return kept or None
 
 
 def _one_po(tasks: list[PlanTask]) -> list[PlanTask]:
@@ -111,28 +146,87 @@ def _one_po(tasks: list[PlanTask]) -> list[PlanTask]:
         kept.append(task)
     return kept
 
-## report, contract, po 直接排在第一位，前面没有任何的 agents 或 tools 依赖。
-### 从这里开始修改
 def scheduled(tasks: list[PlanTask]) -> list[PlanTask]:
-    """Drop a data task a report lists as its own input. The draft queries itself."""
+    """Drop a data task a report lists as its own input. The draft queries itself.
+
+    The dropped id is removed from `depends_on` too. Leaving it would look like
+    a dependency on a task that is no longer in the plan.
+    """
     hinted = {dep for task in tasks if task.kind == "agent" and task.name == "report" for dep in task.depends_on}
     if not hinted:
         return list(tasks)
-    return [
-        task for task in tasks
-        if not (task.kind == "agent" and task.name == "data" and task.id in hinted)
+    dropped = {
+        task.id for task in tasks
+        if task.kind == "agent" and task.name == "data" and task.id in hinted
+    }
+    kept: list[PlanTask] = []
+    for task in tasks:
+        if task.id in dropped:
+            continue
+        deps = [dep for dep in task.depends_on if dep not in dropped]
+        if deps != task.depends_on:
+            task = PlanTask(
+                id=task.id, kind=task.kind, name=task.name,
+                input=dict(task.input), depends_on=deps,
+            )
+        kept.append(task)
+    return kept
+
+
+def graph_error(tasks: list[PlanTask]) -> str | None:
+    """A dependency must name a task in this plan, and the edges must be acyclic."""
+    known = {task.id for task in tasks}
+    missing = [
+        f"{task.id} -> {dep}"
+        for task in tasks
+        for dep in task.depends_on
+        if dep not in known
     ]
+    if missing:
+        return "depends_on points at an unknown task: " + ", ".join(missing)
+    by_id = {task.id: task for task in tasks}
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def walk(task_id: str) -> bool:
+        if task_id in visiting:
+            return True
+        if task_id in visited:
+            return False
+        visiting.add(task_id)
+        for dep in by_id[task_id].depends_on:
+            if walk(dep):
+                return True
+        visiting.remove(task_id)
+        visited.add(task_id)
+        return False
+
+    for task_id in by_id:
+        if walk(task_id):
+            return "depends_on contains a cycle"
+    return None
+
+
+def reject_plan(tasks: list[PlanTask], unknown_ids: set[str]) -> tuple[str, str] | None:
+    """Message and a stable code. None when the graph can be dispatched."""
+    message = graph_error(tasks)
+    if message is None:
+        return None
+    if "cycle" in message:
+        return message, "plan_cycle"
+    known = {task.id for task in tasks}
+    missing = {dep for task in tasks for dep in task.depends_on if dep not in known}
+    if missing & unknown_ids:
+        return message, "plan_depends_on_unknown_agent"
+    return message, "plan_unknown_dependency"
 
 
 def ready_wave(tasks: list[PlanTask], finished: set[str]) -> list[PlanTask]:
-    pending = [task for task in tasks if task.id not in finished]
-    known = {task.id for task in tasks}
-    ready = [
-        task for task in pending
-        if all(dep not in known or dep in finished for dep in task.depends_on)
+    """Tasks whose dependencies are all finished. An unknown dependency is not finished."""
+    return [
+        task for task in tasks
+        if task.id not in finished and all(dep in finished for dep in task.depends_on)
     ]
-    return ready
-### 到这里修改停止
 
 def make_plan(
     llm: Any,
@@ -145,6 +239,7 @@ def make_plan(
     db: Database | None = None,
     run_id: str | None = None,
     memory: str | None = None,
+    checkpoint: Callable[[list[PlanTask]], dict[str, Any]] | None = None,
 ) -> list[PlanTask]:
     """Ask official qwen3.7-flash for this turn's tasks. An empty list means ANSWER only."""
     user = (
@@ -172,16 +267,33 @@ def make_plan(
             caught = ValueError("model did not return a JSON object")
     except Exception as err:
         caught = err
+    tasks: list[PlanTask] = []
+    dropped: dict[str, int] | None = None
+    code: str | None = None
+    if caught is None:
+        tasks, notes, unknown_ids = _accept(raw)
+        tasks = scheduled(tasks)
+        dropped = _present_drops(notes)
+        rejected = reject_plan(tasks, unknown_ids)
+        if rejected is not None:
+            problem, code = rejected
+            caught = InvalidPlan(problem)
     if db is not None and run_id and step_id:
+        body = {"tasks": [task.as_dict() for task in tasks]}
+        if dropped:
+            body["dropped"] = dropped
         db.finish_step(
             step_id,
             StepStatus.FAILED if caught is not None else StepStatus.SUCCEEDED,
-            None if caught is not None else {"tasks": [task.as_dict() for task in parse_tasks(raw)]},
-            {"message": str(caught)} if caught is not None else None,
+            None if caught is not None else body,
+            None if caught is None else {
+                "message": str(caught), **({} if code is None else {"code": code}), **body,
+            },
+            None if caught is not None or checkpoint is None else checkpoint(tasks),
         )
     if caught is not None:
         raise caught
-    return scheduled(parse_tasks(raw))
+    return tasks
 
 
 def _history_block(history: list[dict[str, Any]], folded_through: int = 0) -> str:

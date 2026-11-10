@@ -79,12 +79,13 @@ def resolve_text(arguments: dict[str, Any], context: dict[str, Any] | None) -> s
 
 
 def translate(*, text: str, target_language: str) -> str:
-    """One campus chat call. The reply text is the translation."""
+    """One cheap official chat call. The reply text is the translation."""
     out = "".join(model_calls.school_text(
         model_calls.SCHOOL_CHAT,
         system=SYSTEM,
         messages=[{"role": "user", "content": f"目标语言：{target_language}\n\n原文：\n{text}"}],
         temperature=0.3,
+        purpose="translate",
     )).strip()
     if not out:
         raise ValueError("empty translation")

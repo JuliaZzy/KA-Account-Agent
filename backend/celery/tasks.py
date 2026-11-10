@@ -37,7 +37,7 @@ def execute_run(self, run_id: str, trace_id: str | None = None) -> str:
     """
     del trace_id
     from ..db import Database
-    from ..services.chat_run import client_for_chat, execute_chat
+    from ..services.chat_run import execute_chat
     from ..services.entry_guard import queue_enabled
     from ..services.run_worker import SessionBusy, work_once
 
@@ -63,7 +63,7 @@ def execute_run(self, run_id: str, trace_id: str | None = None) -> str:
 
     # 领租约保证幂等，再跑 execute_chat
     try:
-        work_once(db, worker_id, execute_chat(db, client_for_chat()), run_id=run_id)
+        work_once(db, worker_id, execute_chat(db), run_id=run_id)
 
     # 若会话繁忙，则 2 秒后重试
     except SessionBusy as e:

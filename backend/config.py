@@ -36,7 +36,6 @@ class VendorEndpoint:
 
 
 _VENDOR_ENV = {
-    "sjtu": ("SJTU_BASE_URL", "SJTU_API_KEY"),
     "deepseek": ("DEEPSEEK_BASE_URL", "DEEPSEEK_API_KEY"),
     "glm": ("GLM_BASE_URL", "GLM_API_KEY"),
     "qwen": ("QWEN_BASE_URL", "QWEN_API_KEY"),

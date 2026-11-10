@@ -31,7 +31,7 @@ HTTP 对外码不改：前端已经认入口的 `RATE_LIMITED`。本地槽满和
 
 ```
 client adapter     识别 HTTP / SDK 异常 → ProviderError
-                   OpenAI SDK max_retries=0；校园网关一次 POST，不 sleep
+                   OpenAI SDK max_retries=0；一次失败就抛，不 sleep
 call_model         查熔断器 → acquire_model → 调厂商 → 记账
                    不 sleep、不重试
 worker / Run       读 Retry-After，释放 model lease 和 run lease
@@ -41,7 +41,7 @@ outbox dispatcher  到期的 outbox 交给 Celery
 
 Celery 任务 `execute_run` 的 `max_retries=None` 只用于队列关闭和 `SessionBusy`，不负责厂商错误或 worker 丢失。worker 丢失导致的 broker 重投由执行 outbox 在 PostgreSQL 中单独计数，超过上限后进入现有死信流程；偶发丢失仍会重新执行。厂商错误由 worker 写回 outbox，再投一次。
 
-以前会叠在一起：SDK 重试 3 次 × 校园客户端循环 5 次 × worker 再试 3 次。现在客户端一次失败就抛，由 worker 统一等。
+以前会叠在一起：SDK 重试 × 客户端循环 × worker 再试。现在客户端一次失败就抛，由 worker 统一等。
 
 ## Retry-After 和退避
 
@@ -55,7 +55,7 @@ Retry-After: 12
 
 worker 决定等待时间：
 
-1. 有 `Retry-After`：用它，加 0.9–1.1 的扰动，上限 **300 秒**。校园网关一分钟大约 10 次，等几十秒是正常的。
+1. 有 `Retry-After`：用它，加 0.9–1.1 的扰动，上限 **300 秒**。
 2. 没有这个头：full jitter 指数退避。厂商错误从 1 秒起（1、2、4、8、16…，封顶 60 秒）；本地槽满从 5 秒起。每次在 `[0, backoff]` 里随机取。
 
 `schedule_retry(..., spend_attempt=False)` 把等待写在 outbox 的 `next_attempt_at` 上。
@@ -73,15 +73,15 @@ worker 决定等待时间：
 
 ## `spend_attempt=False` 不会死信
 
-业务重试（普通 `Exception`、模型输出解析失败）走 outbox 的执行次数，默认 3 次，超过进入 `dead_letter_jobs`，Run 失败。间隔是 1 分钟、5 分钟、15 分钟。
+业务重试（普通 `Exception`、模型输出解析失败）走 outbox 的执行次数，默认 3 次，超过进入 `dead_letter_jobs`，Run 失败。间隔现在是 1 分钟、5 分钟、15 分钟。对话场景用户还在等 SSE，5 分钟这一档过长；短重试应是 5 秒、30 秒，长退避只留给没有人盯着的后台。厂商 429 不走这三档，见上一节。
 
 基础设施重试（本地槽满、厂商可重试错误、数据库 `OperationalError`）**不增加** outbox `attempts`，因此 **不会因为重试次数进死信**。现在的收场条件是 Run 的 `max_duration_seconds`：领到时已经超时，或 sweeper 扫到超时，记 `failed` / `COST_BUDGET_EXCEEDED`。
 
-校园模型一分钟大约 10 次请求，高峰时一条 Run 可能要排队等好几轮 429。如果按次数死信，会在厂商恢复前把对话判死。次数上限以后再说；现在靠时长封顶。
+高峰时一条 Run 可能要排队等好几轮 429。如果按次数死信，会在厂商恢复前把对话判死。次数上限以后再说；现在靠时长封顶。
 
 ## 熔断器
 
-按 **brand**（`sjtu` / `qwen` / `deepseek` / `glm`）一把 Redis 钥匙，不按模型名。只统计厂商真正的错误：429、5xx、timeout、network。本地 `acquire_model()` 槽满、401、400、解析失败都不算。
+按 **brand**（`qwen` / `deepseek` / `glm`）一把 Redis 钥匙，不按模型名。只统计厂商真正的错误：429、5xx、timeout、network。本地 `acquire_model()` 槽满、401、400、解析失败都不算。
 
 默认：**连续 5 次** 上述错误 → 打开 **30 秒**。冷却期间 `call_model` 不发请求，抛 `ProviderError(kind=circuit_open)`，worker 按基础设施重试。冷却结束允许 **一次** half-open 探测；成功则关闭，失败再打开 30 秒。
 
@@ -94,8 +94,8 @@ KA_ACCOUNT_CIRCUIT_COOLDOWN_SECONDS=30
 
 ### 5 次 / 30 秒是什么意思，怎么改？
 
-- **阈值 5**：同一 provider 连续失败 5 次才停手。太小（2）时一次抖动就全员排队；太大（50）时会在明确挂掉的厂商上继续打。校园 10 次/分钟时，5 次 429 在并发下很容易碰到——这会让熔断器和 Retry-After 叠在一起，表现为“停 30 秒再试一次”。如果日常就是配额不够而不是厂商宕机，把阈值调到 10–20，或先看监控里 `PROVIDER_RATE_LIMITED` 是不是成片出现、有没有伴随 5xx。
-- **冷却 30 秒**：打开之后至少这么久不发请求。太短等于还在锤；太长则厂商已经好了还在空等。校园配额如果 `Retry-After` 经常是 6–12 秒，30 秒冷却偏保守，可以改成 15。如果打开之后探测仍然 503，保持 30 或加到 60。
+- **阈值 5**：同一 provider 连续失败 5 次才停手。太小（2）时一次抖动就全员排队；太大（50）时会在明确挂掉的厂商上继续打。如果日常就是配额不够而不是厂商宕机，把阈值调到 10–20，或先看监控里 `PROVIDER_RATE_LIMITED` 是不是成片出现、有没有伴随 5xx。
+- **冷却 30 秒**：打开之后至少这么久不发请求。太短等于还在锤；太长则厂商已经好了还在空等。若 `Retry-After` 经常是 6–12 秒，30 秒冷却偏保守，可以改成 15。如果打开之后探测仍然 503，保持 30 或加到 60。
 - **怎么判断该改**：看 `model_calls.error_json` 的 `kind` 和 `retry_after_seconds`，以及 outbox 的 `infrastructure_attempts`。几乎都是 429 且带 Retry-After → 调高阈值、缩短冷却，让 Retry-After 当主节奏。出现连续 502/超时 → 阈值可以低一点，冷却可以长一点。
 
 熔断器坏了（Redis 报错）时放行，避免闸门把所有模型调用挡住。
@@ -117,7 +117,7 @@ KA_ACCOUNT_CIRCUIT_COOLDOWN_SECONDS=30
 | 文件 | 职责 |
 |---|---|
 | `backend/llm/errors.py` | `ProviderError`、`Retry-After` 解析、SDK/HTTP 映射 |
-| `backend/llm/client.py` | 适配层；`max_retries=0`；校园网关一次 POST |
+| `backend/llm/client.py` | 适配层；`max_retries=0` |
 | `backend/llm/calls.py` | `call_model`：熔断 → 占座 → 调用；流式带 generation_id |
 | `backend/llm/breaker.py` | Redis 熔断器 |
 | `backend/services/run_worker.py` | 基础设施重试 / 不可重试则失败 |

@@ -13,7 +13,7 @@ from typing import Any
 
 from ..db import Database
 from ..documents import SUPPORTED_EXTS
-from ..llm import campus_client, deepseek_client
+from ..llm import deepseek_client
 from ..llm.errors import ModelCapacityExceeded, ProviderError
 from ..schemas import ContractChunk
 from .chunks import flatten_chunk_tree
@@ -29,7 +29,7 @@ def file_contract(
 
     `table` is what the panel shows. `pending` is what confirm needs and is not sent to
     the model. A filename without bytes never reaches here. The chat model does not
-    read the file: the campus model picks sections, DeepSeek fills the form.
+    read the file: Qwen picks sections, DeepSeek fills the form.
     """
     readable = [(name, data) for name, data in documents if name.lower().endswith(SUPPORTED_EXTS)]
     if not readable:
@@ -37,7 +37,7 @@ def file_contract(
     name, data = readable[0]
     try:
         extraction, tree = read_agreement(
-            deepseek_client(), campus_client(), name, data,
+            deepseek_client(), name, data,
             db=db, run_id=run_id,
         )
         model = "deepseek-flash"

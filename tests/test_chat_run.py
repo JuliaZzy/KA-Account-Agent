@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from backend.llm import FakeLLM
+from backend.llm.routing import run_budget_for
 from backend.service import handle_message, new_session
-from backend.services.chat_run import work_chat
+from backend.services.chat_run import enqueue_chat_run, work_chat
 
 
 def _chat(db):
@@ -27,6 +28,9 @@ def test_a_turn_enqueues_and_the_worker_records_the_loop(db):
     assert queued["status"] == "queued"
     assert queued["run_type"] == "chat"
     assert queued["user_id"] == "u-a"
+    chat_budget = run_budget_for("chat")
+    assert queued["max_model_calls"] == chat_budget.max_model_calls
+    assert queued["max_tokens"] == chat_budget.max_tokens
 
     assert work_chat(db, llm, run_id) is True
     run = db.find_agent_run("dist-1", run_id)
@@ -54,6 +58,17 @@ def test_closing_the_stream_leaves_the_run_queued(db):
     assert work_chat(db, llm, opened["run_id"]) is True
     run = db.find_agent_run("dist-1", opened["run_id"])
     assert run["status"] == "succeeded"
+
+
+def test_enqueue_writes_open_run_budget(db):
+    db.upsert_user("u-a", "dist-1", "Ada")
+    session = new_session(db, "ps-1", "u-a")
+    run = enqueue_chat_run(db, session, "hello")
+    opened = [row for row in db.find_runs_by_owner(run["id"]) if row["run_type"] == "open"]
+    budget = run_budget_for("open")
+    assert opened
+    assert opened[0]["max_model_calls"] == budget.max_model_calls
+    assert opened[0]["max_tokens"] == budget.max_tokens
 
 
 def test_a_model_error_fails_the_run_on_the_worker(db):
@@ -134,7 +149,7 @@ def test_po_claim_is_recorded_on_the_chat_run(db):
     assert run["status"] == "succeeded"
     po = next(child for child in db.find_runs_by_owner(run_id) if child["run_type"] == "po")
     trace = db.run_trace("dist-1", po["id"])
-    claim = next(row for row in trace["model_calls"] if row["model"] == "deepseek-chat")
+    claim = next(row for row in trace["model_calls"] if row["model"] == "qwen3.7-flash")
     assert claim["status"] == "succeeded"
     assert claim["step_id"] == next(step["id"] for step in trace["steps"] if step["name"] == "po.draft")
     assert claim["request_json"]["system"]
@@ -169,7 +184,7 @@ def test_report_plan_is_recorded_on_the_chat_run(db):
     trace = db.run_trace("dist-1", report["id"])
     planned = next(
         row for row in trace["model_calls"]
-        if row["model"] == "deepseek-reasoner"
+        if row["model"] == "deepseek-flash"
         and (row.get("request_json") or {}).get("schema", {}).get("name") == "report_plan"
     )
     assert planned["status"] == "succeeded"
@@ -200,8 +215,8 @@ def test_a_prose_reply_is_published_while_the_model_is_still_writing(db):
     seen: list[str] = []
     original = db.note_running_reply
 
-    def spy(target_id: str, text: str, *, generation_id: str | None = None):
-        row = original(target_id, text, generation_id=generation_id)
+    def spy(target_id: str, text: str, *, generation_id: str | None = None, reasoning: str | None = None):
+        row = original(target_id, text, generation_id=generation_id, reasoning=reasoning)
         if row is not None:
             assert row["status"] == "running"
             assert generation_id

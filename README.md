@@ -75,8 +75,8 @@ API 文档：<http://127.0.0.1:8000/docs>
 
 | 配置 | 用途 |
 | --- | --- |
-| `SJTU_BASE_URL`、`SJTU_API_KEY` | 校园网关 |
-| `DEEPSEEK_BASE_URL`、`DEEPSEEK_API_KEY` | 官方 DeepSeek |
+| `DEEPSEEK_BASE_URL`、`DEEPSEEK_API_KEY` | 官方 DeepSeek（结构化 JSON / 工具 / 识图） |
+| `QWEN_BASE_URL`、`QWEN_API_KEY` | 官方 Qwen（PLAN / ANSWER 等短文本） |
 | `PO_EXTRACT_MODEL` | 可选的采购抽取模型覆盖 |
 | `EMBEDDING_BASE_URL`、`EMBEDDING_API_KEY`、`EMBEDDING_MODEL`、`EMBEDDING_DIMENSIONS` | 品牌资料 embedding，与聊天模型分开配置 |
 | `RERANK_BASE_URL`、`RERANK_API_KEY`、`RERANK_MODEL` | 可选的检索重排；URL 为空时跳过重排 |

@@ -170,15 +170,9 @@ def extract_turn(
         for m in prompt_turns(history, folded_through)
     ] + [{"role": "user", "content": user_content}]
     ledger = dict(db=db, run_id=run_id, step_id=step_id, purpose="po.extract")
-    if images:
-        raw = model_calls.school_json(
-            model_calls.SCHOOL_VISION, system=system, messages=msgs, schema=EXTRACT_SCHEMA,
-            temperature=0, client=llm, **ledger,
-        )
-    else:
-        raw = model_calls.flash_json(
-            system=system, messages=msgs, schema=EXTRACT_SCHEMA, temperature=0, client=llm, **ledger,
-        )
+    raw = model_calls.flash_json(
+        system=system, messages=msgs, schema=EXTRACT_SCHEMA, temperature=0, client=llm, **ledger,
+    )
     lang = raw.get("reply_language")
     return Extraction(
         slots=normalize_slots(raw),

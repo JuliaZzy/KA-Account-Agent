@@ -107,7 +107,7 @@ Redis 只做这一波的计数和暂存，**账本在 Postgres**：子 run 的 `
 - 寒暄、澄清、或这一轮什么都不用跑：`tasks` 为空数组。空计划**不**进工具循环，直接 ANSWER。
 - 不要编造 SKU、价格、日期、国家。`input` 只放用户说过的。
 
-编排 system 提示在 `backend/orchestrator/prompt.py` 的 `plan_system()`（内含 `all_schemas()` 的 tool JSON）；schema 在 `plan_schema()`。聊天路径走官方 `qwen_json`，不走校园 `minimax`，也不走官方 DeepSeek。
+编排 system 提示在 `backend/orchestrator/prompt.py` 的 `plan_system()`（内含 `all_schemas()` 的 tool JSON）；schema 在 `plan_schema()`。聊天路径走官方 `qwen_json`（`qwen3.7-flash`），不走官方 DeepSeek。
 
 聊天父 run **不再**用 `REACT` 选工具。`REACT` 从父 run 的 decide 上拿掉。子 agent 若还要再拆任务，走自己的 PLAN（或固定步骤），不要在父 run 里开 ReAct 循环。
 
@@ -145,7 +145,7 @@ Redis 只做这一波的计数和暂存，**账本在 Postgres**：子 run 的 `
 - 只跑了代理
 - 代理 + 工具混在一起
 
-父 run 把这些拼进模型输入，再调 `ANSWER`（校园 `deepseek-chat`）：
+父 run 把这些拼进模型输入，再调 `ANSWER`（官方 `qwen3.7-flash`）：
 
 1. 用户原话
 2. 最近对话（fold 过的）

@@ -110,9 +110,9 @@ Worker 消失、lease 过期或 outbox stale 时由 sweeper 和 outbox 机制重
 
 ## 7. 当前运行时风险和优化项
 
-- 当前监控主要有完成时间、排队等待和模型延迟 P95，缺少 P99 和按阶段拆分；性能测试文档见 [`../performance/performance-test-plan.md`](../performance/performance-test-plan.md)。
-- 父 Run/子 Run 协议主要靠模块约定，应增加版本字段和 contract test。
-- 测试中的 `work_chat` 会同步 drain Run，生产通过 Celery 执行；需要验证两条路径状态语义一致。
+- `/monitor` 已有完成时间、排队和阶段耗时的 P50/P95/P99。SLO、超时和并发默认值见 [`architecture.md`](architecture.md) 的「当前运行标准」。压测步骤见 [`../performance/performance-test-plan.md`](../performance/performance-test-plan.md)。
+- 父 Run/子 Run 没有 `plan_version`。信封、失败码和恢复契约见 `tests/test_orchestrator_contract.py`。
+- 测试中的 `work_chat` 同步 drain，生产通过 Celery 执行。两条路径都进入 `work_once`；租约过期后的续跑走 sweeper 的 `sweep_expired_leases`。契约见 `tests/test_execution_contract.py`。
 - `response_lost` 目前没有通用的外部对账协议，副作用工具仍需人工介入。
 - 模型路由、Prompt、工具 Schema 和检索索引版本应进入 Run trace，才能复现实验和回滚。
 

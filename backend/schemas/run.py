@@ -266,18 +266,49 @@ class RunbookResponse(BaseModel):
     body: str
 
 
+class StageLatency(BaseModel):
+    p50: float | None = None
+    p95: float | None = None
+    p99: float | None = None
+    count: int = 0
+
+
+class PlanQuality(BaseModel):
+    calls: int = 0
+    failed: int = 0
+    unknown_agent_calls: int = 0
+    unknown_agent_dropped: int = 0
+    cycle: int = 0
+    unknown_dependency: int = 0
+    depends_on_unknown_agent: int = 0
+
+
 class MonitorMetrics(BaseModel):
     created: int
     succeeded: int
     failed: int
+    duration_p50: float | None = None
     duration_p95: float | None = None
+    duration_p99: float | None = None
+    queue_lag_p50: float | None = None
     queue_lag_p95: float | None = None
+    queue_lag_p99: float | None = None
+    model_latency_p50: float | None = None
     model_latency_p95: float | None = None
+    model_latency_p99: float | None = None
+    tool_latency_p50: float | None = None
+    tool_latency_p95: float | None = None
+    tool_latency_p99: float | None = None
+    stages: dict[str, StageLatency] = Field(default_factory=dict)
+    plan: PlanQuality = Field(default_factory=PlanQuality)
     pending_jobs: int
     active_runs: int
     sse_connections: int
     stuck_runs: int
     model_errors: int
+    route_selected: int = 0
+    route_fallback: int = 0
+    route_quality_gate_failed: int = 0
     tool_calls: int
     tool_errors: int
     duplicates: int
@@ -296,6 +327,7 @@ class MonitorBar(BaseModel):
     label: str
     count: int
     tail: bool
+    mark: str | None = None
 
 
 class MonitorLevel(BaseModel):
@@ -307,9 +339,13 @@ class MonitorLevel(BaseModel):
 class MonitorCharts(BaseModel):
     hours: list[MonitorHour]
     duration: list[MonitorBar]
+    duration_p50: float | None = None
     duration_p95: float | None = None
+    duration_p99: float | None = None
     queue: list[MonitorBar]
+    queue_p50: float | None = None
     queue_p95: float | None = None
+    queue_p99: float | None = None
     levels: list[MonitorLevel]
 
 

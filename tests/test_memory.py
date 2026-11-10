@@ -147,7 +147,7 @@ def test_a_fold_on_a_running_chat_is_recorded_on_that_run(db):
     assert tool["result_json"]["folded_through"] == 2
     call = trace["model_calls"][0]
     assert call["step_id"] == trace["steps"][0]["id"]
-    assert (call["provider"], call["model"], call["status"]) == ("fake", "deepseek-chat", "succeeded")
+    assert (call["provider"], call["model"], call["status"]) == ("fake", "qwen3.7-flash", "succeeded")
     assert call["request_json"]["schema"]["name"] == "fold_summary"
     assert "fiscal year" in call["response_json"]["json"]["summary"]
 

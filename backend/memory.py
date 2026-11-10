@@ -371,7 +371,7 @@ def record_history(
     already finished. The chat route schedules that fold after the stream is sent. Without a
     scheduler the fold still runs here, so a direct caller sees the summary before this returns.
     `fold` defaults to whether a client was passed. A chat reply sets it so the worker can fold
-    without injecting a vendor; `llm` None then opens the campus client inside the fold.
+    without injecting a vendor; `llm` None then opens the official vendor inside the fold.
     """
     db.update_session(session["id"], history=history, **fields)
     folded = int(session.get("folded_through") or 0)

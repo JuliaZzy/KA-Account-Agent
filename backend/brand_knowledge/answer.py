@@ -63,6 +63,7 @@ def _search_query(
             )}],
             schema=_followup_schema(),
             temperature=0,
+            purpose="brand.query",
         )
     except Exception:
         return text
@@ -110,6 +111,7 @@ def answer_in_chat(
         db, llm, session, text,
         prompt_text=evidence_prompt(text, named),
         system=ANSWER,
+        purpose="brand.answer",
         extra={"brand_hits": [
             {
                 "n": h["n"], "cid": h.get("cid"), "doc": h.get("doc"), "page": h.get("page"),

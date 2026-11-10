@@ -15,11 +15,9 @@ import urllib.request
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
-import requests
 from openai import AsyncOpenAI, OpenAI
 
 from ..config import LLMSettings, vendor_endpoint
-from .errors import ProviderError, provider_error_from_http, translate_provider_error
 
 
 def _usage_count(usage: Any, *names: str) -> int:
@@ -481,129 +479,6 @@ class DeepSeekClient:
             kwargs["user"] = user
         return _finish_response(self, self._client.responses.create(**kwargs), stream=stream)
 
-"""
-for attempt in range(1, 6):  # 最多重试 5 次，避免无限循环
-        try:
-            resp = requests.post(url, headers=headers, json=data, timeout=(30, 600))
-        except requests.RequestException as e:
-            print(f"请求异常(第{attempt}次): {e}")
-            time.sleep(2)
-            continue
-
-        if resp.status_code == 200:
-            return resp.json()["choices"][0]["message"]["content"].strip()
-
-        # 非 200：打印出来你就知道是不是 401/403/429 等
-        print(f"HTTP {resp.status_code} (第{attempt}次): {resp.text[:500]}")
-        if 400 <= resp.status_code < 500 and resp.status_code != 429:
-            break  # 4xx(非429)通常重试没意义
-        time.sleep(2)
-
-    raise RuntimeError("请求失败，见上方 HTTP 输出")
-
-if __name__ == "__main__":
-    question = "请介绍下你自己？"
-    print(query(question))
-"""
-
-def _campus_endpoint() -> tuple[str, dict[str, str]]:
-    endpoint = vendor_endpoint("sjtu")
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {endpoint.api_key}"}
-    return endpoint.base_url.rstrip("/") + "/chat/completions", headers
-
-
-def _campus_stream(client: Any, body: dict[str, Any], *, model: str) -> Iterator[Any]:
-    """Campus SSE. Each yielded object is one chat-completion chunk."""
-    _remember_usage(client, None)
-    try:
-        resp = requests.post(
-            client.url,
-            headers=client.headers,
-            json=body,
-            timeout=(30, 600),
-            stream=True,
-        )
-    except requests.RequestException as exc:
-        raise translate_provider_error(exc, provider="sjtu", model=model) from exc
-    if resp.status_code != 200:
-        try:
-            raise provider_error_from_http(resp, provider="sjtu", model=model)
-        finally:
-            resp.close()
-    try:
-        for line in resp.iter_lines(decode_unicode=True):
-            if not line or not str(line).startswith("data:"):
-                continue
-            data = str(line)[5:].strip()
-            if data == "[DONE]":
-                break
-            try:
-                chunk = json.loads(data)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(chunk, dict) and chunk.get("usage") is not None:
-                _remember_usage(client, chunk["usage"])
-            yield chunk
-    except requests.RequestException as exc:
-        raise translate_provider_error(exc, provider="sjtu", model=model) from exc
-    finally:
-        resp.close()
-
-class SJTUClient:
-    """SJTU gateway, called with requests as in the campus sample."""
-
-    def __init__(self, settings: LLMSettings | None = None):
-        self.settings = settings or LLMSettings()
-        self.url, self.headers = _campus_endpoint()
-
-    def chat_completion(
-        self,
-        model: str,
-        messages: list[dict[str, Any]],
-        stream: bool = False,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        top_p: float | None = None,
-        tools: list[dict[str, Any]] | None = None,
-        tool_choice: str | None = None,
-    ) -> Any:
-        # 深度推理是另一个调用名，例如 deepseek-reasoner。思考文字在返回的 reasoning_content 里。
-        # 看图把 content 写成列表，不要另开接口：
-        # {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
-        # {"type": "text", "text": "..."}
-        body: dict[str, Any] = {"model": model, "messages": messages, "stream": stream}
-        if max_tokens is not None:
-            body["max_tokens"] = max_tokens
-        if temperature is not None:
-            body["temperature"] = temperature
-        if top_p is not None:
-            body["top_p"] = top_p
-        if tools:
-            body["tools"] = tools
-        if tool_choice:
-            body["tool_choice"] = tool_choice
-        if stream:
-            body["stream_options"] = {"include_usage": True}
-            return _campus_stream(self, body, model=model)
-        try:
-            resp = requests.post(self.url, headers=self.headers, json=body, timeout=(30, 600))
-        except requests.RequestException as exc:
-            raise translate_provider_error(exc, provider="sjtu", model=model) from exc
-        if resp.status_code != 200:
-            raise provider_error_from_http(resp, provider="sjtu", model=model)
-        try:
-            data = resp.json()
-        except ValueError as exc:
-            raise ProviderError(
-                "sjtu", model, "bad_response", status_code=resp.status_code, retryable=False,
-            ) from exc
-        if not isinstance(data, dict):
-            raise ProviderError(
-                "sjtu", model, "bad_response", status_code=resp.status_code, retryable=False,
-            )
-        _remember_usage(self, data.get("usage"))
-        return data
-
 
 class GLMOCRClient:
     """Zhipu layout parsing. The body is the model name and one PDF data URL."""
@@ -637,10 +512,6 @@ class GLMOCRClient:
         return payload
 
 
-def campus_client() -> SJTUClient:
-    return SJTUClient()
-
-
 def deepseek_client() -> DeepSeekClient:
     return DeepSeekClient()
 
@@ -653,15 +524,13 @@ def qwen_client() -> QwenClient:
     return QwenClient()
 
 
-VENDORS = (SJTUClient, DeepSeekClient, GLMClient, QwenClient)
+VENDORS = (DeepSeekClient, GLMClient, QwenClient)
 
 
 def open_client(brand: str) -> Any:
     """The vendor client for this brand. Keys come from the environment."""
     if brand == "fake":
         raise ValueError("fake brand requires an injected test double")
-    if brand == "sjtu":
-        return campus_client()
     if brand == "deepseek":
         return deepseek_client()
     if brand == "glm":
@@ -681,7 +550,6 @@ def client_for(brand: str, injected: Any | None) -> Any:
             raise ValueError("fake brand requires an injected test double")
         return injected
     wanted = {
-        "sjtu": SJTUClient,
         "deepseek": DeepSeekClient,
         "glm": GLMClient,
         "qwen": QwenClient,

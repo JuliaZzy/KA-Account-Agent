@@ -12,18 +12,36 @@ type Board = {
   runbooks: { id: string; title: string; body: string }[];
   charts: {
     hours: { at: string; created: number; failed: number }[];
-    duration: { label: string; count: number; tail: boolean }[];
+    duration: { label: string; count: number; tail: boolean; mark: string | null }[];
+    duration_p50: number | null;
     duration_p95: number | null;
-    queue: { label: string; count: number; tail: boolean }[];
+    duration_p99: number | null;
+    queue: { label: string; count: number; tail: boolean; mark: string | null }[];
+    queue_p50: number | null;
     queue_p95: number | null;
+    queue_p99: number | null;
     levels: { label: string; value: number; limit: number | null }[];
   };
   metrics: {
     created: number;
     succeeded: number;
     failed: number;
+    duration_p50: number | null;
     duration_p95: number | null;
+    duration_p99: number | null;
+    queue_lag_p50: number | null;
     queue_lag_p95: number | null;
+    queue_lag_p99: number | null;
+    stages: Record<string, { p50: number | null; p95: number | null; p99: number | null; count: number }>;
+    plan: {
+      calls: number;
+      failed: number;
+      unknown_agent_calls: number;
+      unknown_agent_dropped: number;
+      cycle: number;
+      unknown_dependency: number;
+      depends_on_unknown_agent: number;
+    };
     pending_jobs: number;
     active_runs: number;
     sse_connections: number;
@@ -68,6 +86,24 @@ const STATUSES = ["", "queued", "running", "waiting_for_user", "succeeded", "fai
 
 function headers(userId: string): HeadersInit {
   return { "X-User-Id": userId };
+}
+
+function share(count: number, calls: number): string {
+  if (calls <= 0) return "—";
+  return `${((count / calls) * 100).toFixed(1)}%`;
+}
+
+function planRows(plan: Board["metrics"]["plan"] | undefined): { label: string; count: number; share: string }[] {
+  const calls = plan?.calls ?? 0;
+  return [
+    { label: "PLAN 调用", count: calls, share: calls > 0 ? "100%" : "—" },
+    { label: "丢掉未知 agent 的调用", count: plan?.unknown_agent_calls ?? 0, share: share(plan?.unknown_agent_calls ?? 0, calls) },
+    { label: "丢掉的未知 agent 个数", count: plan?.unknown_agent_dropped ?? 0, share: "—" },
+    { label: "依赖了被丢掉的 agent", count: plan?.depends_on_unknown_agent ?? 0, share: share(plan?.depends_on_unknown_agent ?? 0, calls) },
+    { label: "依赖指向不存在的任务", count: plan?.unknown_dependency ?? 0, share: share(plan?.unknown_dependency ?? 0, calls) },
+    { label: "成环", count: plan?.cycle ?? 0, share: share(plan?.cycle ?? 0, calls) },
+    { label: "PLAN 步骤失败", count: plan?.failed ?? 0, share: share(plan?.failed ?? 0, calls) },
+  ];
 }
 
 function seconds(value: number | null): string {
@@ -168,16 +204,55 @@ export function MonitorPage() {
             <ChartCard title="每小时新建与失败" note="看失败那条是不是在往上走，不看累计了多少。">
               <MonitorChart option={hourOption(board.charts.hours)} />
             </ChartCard>
-            <ChartCard title="完成时间" note={`近 24 小时的分布，P95 ${seconds(board.charts.duration_p95)}。超过 60 秒的落在右边。`}>
+            <ChartCard title="完成时间" note={`近 24 小时成功 run，P50 ${seconds(board.charts.duration_p50)}，P95 ${seconds(board.charts.duration_p95)}，P99 ${seconds(board.charts.duration_p99)}。柱上标出落点。超过 60 秒的落在右边。`}>
               <MonitorChart option={barOption(board.charts.duration)} />
             </ChartCard>
-            <ChartCard title="排队时长" note={`近 24 小时从创建到开始，P95 ${seconds(board.charts.queue_p95)}。超过 10 秒的落在右边。`}>
+            <ChartCard title="排队时长" note={`近 24 小时已开始的 run，从创建到开始。P50 ${seconds(board.charts.queue_p50)}，P95 ${seconds(board.charts.queue_p95)}，P99 ${seconds(board.charts.queue_p99)}。超过 10 秒的落在右边。`}>
               <MonitorChart option={barOption(board.charts.queue)} />
             </ChartCard>
             <ChartCard title="当前水位" note="卡住和待领没有历史曲线，这里只是打开页面这一刻。虚线是卡住和正在跑的上限。">
               <MonitorChart option={levelOption(board.charts.levels)} />
             </ChartCard>
           </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>阶段</th><th>P50</th><th>P95</th><th>P99</th><th>样本</th></tr>
+              </thead>
+              <tbody>
+                {STAGE_ROWS.map((row) => {
+                  const stage = board.metrics.stages?.[row.key];
+                  return (
+                    <tr key={row.key}>
+                      <td>{row.label}</td>
+                      <td>{seconds(stage?.p50 ?? null)}</td>
+                      <td>{seconds(stage?.p95 ?? null)}</td>
+                      <td>{seconds(stage?.p99 ?? null)}</td>
+                      <td>{stage?.count ?? 0}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="muted">入队时刻是 run 的创建时间。请求进到写入这一行之前没有单独的耗时。</p>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>PLAN</th><th>次数</th><th>占 PLAN 调用</th></tr>
+              </thead>
+              <tbody>
+                {planRows(board.metrics.plan).map((row) => (
+                  <tr key={row.label}>
+                    <td>{row.label}</td>
+                    <td>{row.count}</td>
+                    <td>{row.share}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="muted">未知 agent 被丢掉但没有人依赖它时，这次 PLAN 仍然成功。依赖或环会让整份计划失败。</p>
           <div className="filters">
             <span className="badge info">发信 {board.switches.send_email ? "开" : "关"}</span>
             <span className="badge info">MCP {board.switches.mcp ? "开" : "关"}</span>
@@ -320,6 +395,17 @@ const BAD = "#ba1a1a";
 const INK = "#3e4943";
 const LINE = "#dae2fd";
 
+const STAGE_ROWS: { key: string; label: string }[] = [
+  { key: "queue", label: "排队" },
+  { key: "claim", label: "领到后到第一步" },
+  { key: "plan", label: "PLAN" },
+  { key: "child", label: "子任务" },
+  { key: "model", label: "模型" },
+  { key: "tool", label: "工具" },
+  { key: "answer", label: "ANSWER" },
+  { key: "history", label: "写 history" },
+];
+
 function headlines(board: Board): { label: string; value: string }[] {
   const created = board.charts.hours.reduce((sum, point) => sum + point.created, 0);
   const failed = board.charts.hours.reduce((sum, point) => sum + point.failed, 0);
@@ -329,8 +415,8 @@ function headlines(board: Board): { label: string; value: string }[] {
   return [
     { label: "24h 新建", value: String(created) },
     { label: "24h 失败", value: `${failed} · ${ratio}` },
-    { label: "完成 P95", value: seconds(board.charts.duration_p95) },
-    { label: "排队 P95", value: seconds(board.charts.queue_p95) },
+    { label: "完成 P50 / P95 / P99", value: `${seconds(board.charts.duration_p50)} / ${seconds(board.charts.duration_p95)} / ${seconds(board.charts.duration_p99)}` },
+    { label: "排队 P50 / P95 / P99", value: `${seconds(board.charts.queue_p50)} / ${seconds(board.charts.queue_p95)} / ${seconds(board.charts.queue_p99)}` },
     { label: "卡住", value: String(stuck) },
     { label: "待领", value: String(pending) },
   ];
@@ -360,14 +446,17 @@ function hourOption(hours: Board["charts"]["hours"]): echarts.EChartsOption {
   };
 }
 
-function barOption(bars: { label: string; count: number; tail: boolean }[]): echarts.EChartsOption {
+function barOption(bars: { label: string; count: number; tail: boolean; mark?: string | null }[]): echarts.EChartsOption {
+  const marks = bars.flatMap((bar) => (
+    bar.mark ? [{ name: bar.mark, xAxis: bar.label, yAxis: bar.count }] : []
+  ));
   return {
     tooltip: { trigger: "axis" },
-    grid: { left: 36, right: 12, top: 16, bottom: 28 },
+    grid: { left: 36, right: 12, top: 28, bottom: 64 },
     xAxis: {
       type: "category",
       data: bars.map((bar) => bar.label),
-      axisLabel: { color: INK, fontSize: 10 },
+      axisLabel: { color: INK, fontSize: 10, rotate: 40, interval: 0 },
       axisLine: { lineStyle: { color: LINE } },
     },
     yAxis: {
@@ -380,6 +469,13 @@ function barOption(bars: { label: string; count: number; tail: boolean }[]): ech
       type: "bar",
       data: bars.map((bar) => ({ value: bar.count, itemStyle: { color: bar.tail ? BAD : MOSS } })),
       barMaxWidth: 22,
+      markPoint: marks.length === 0 ? undefined : {
+        symbol: "circle",
+        symbolSize: 8,
+        itemStyle: { color: INK },
+        label: { formatter: "{b}", color: INK, fontSize: 10, position: "top" },
+        data: marks,
+      },
     }],
   };
 }

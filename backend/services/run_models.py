@@ -17,7 +17,7 @@ from typing import Any
 
 from ..db import Database
 from ..llm import calls as model_calls
-from ..llm.calls import DEEPSEEK_FLASH, SCHOOL_CHAT, Brand
+from ..llm.calls import DEEPSEEK_FLASH, QWEN_PLAN, Brand
 from ..llm.fake import FakeLLM
 from ..llm.types import AssistantTurn
 from ..memory import attach, prompt_context, standing_block, summary_block
@@ -33,19 +33,20 @@ def bind(
 ) -> tuple[Callable[..., AssistantTurn], Callable[..., str]]:
     """Turn one injected client into the harness callbacks.
 
-    Tool choice is official `deepseek-flash`. The final reply is campus
-    `deepseek-chat`. `call_model` opens the matching vendor. `on_text`
-    receives the prose as it grows.
+    Tool choice is official `deepseek-flash`. The final reply is cheap official
+    `qwen3.7-flash`. `call_model` opens the matching vendor. `on_text` receives
+    the prose as it grows.
     """
 
     decide_brand: Brand = "fake" if isinstance(llm, FakeLLM) else "deepseek"
-    answer_brand: Brand = "fake" if isinstance(llm, FakeLLM) else "sjtu"
+    answer_brand: Brand = "fake" if isinstance(llm, FakeLLM) else "qwen"
 
     def decide(context: list[dict[str, Any]], schemas: list[dict[str, Any]]) -> AssistantTurn:
         called = model_calls.call_model(
             DEEPSEEK_FLASH, brand=decide_brand, kind="chat_completion", expect="tools",
             client=llm, system=decide_system, messages=_tool_messages(context),
             tools=schemas, tool_choice="auto", reasoning_effort="none", on_text=on_text,
+            purpose="run.decide",
         )
         turn = called.body if isinstance(called.body, AssistantTurn) else AssistantTurn()
         return _with_usage(turn, (
@@ -55,9 +56,9 @@ def bind(
 
     def answer(context: list[dict[str, Any]]) -> str:
         called = model_calls.call_model(
-            SCHOOL_CHAT, brand=answer_brand, kind="chat_completion", expect="text",
+            QWEN_PLAN, brand=answer_brand, kind="chat_completion", expect="text",
             client=llm, system=answer_system, messages=_answer_messages(context),
-            on_text=on_text,
+            on_text=on_text, purpose="run.answer", reasoning_effort="none",
         )
         text = str(called.body or "").strip()
         answer.prompt_tokens = called.prompt_tokens
@@ -68,7 +69,7 @@ def bind(
         return text
 
     decide.brand, decide.model = decide_brand, DEEPSEEK_FLASH
-    answer.brand, answer.model = answer_brand, SCHOOL_CHAT
+    answer.brand, answer.model = answer_brand, QWEN_PLAN
     return decide, answer
 
 

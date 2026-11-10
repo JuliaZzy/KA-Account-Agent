@@ -65,7 +65,7 @@
   --user-id user-liancai-chen \
   --requests 20 \
   --concurrency 5 \
-  --output .load-test-result.json
+  --output docs/experiments/exports/load-test-result.json
 ```
 
 `scripts/load_test_chat.py` 测量的是从 HTTP 提交到 assistant message 写入会话的用户可见耗时。默认消息走空计划路径，适合先测编排器、队列、worker、PostgreSQL、Redis 和 SSE/API 周边的基线；要测查数或报表路径，可以换成合成业务问题，例如：
@@ -83,7 +83,7 @@
 也可以用模板文件混合不同路径。每行一个模板，`{i}` 会替换成请求编号：
 
 ```bash
-cat > .load-test-messages.txt <<'EOF'
+cat > docs/experiments/exports/load-test-messages.txt <<'EOF'
 你好，第 {i} 次
 查询最近三个月订单总额，第 {i} 次
 查询本期销售额，第 {i} 次
@@ -94,10 +94,10 @@ EOF
   --base-url http://api:8000 \
   --partnership-id ps-liancai-01 \
   --user-id user-liancai-chen \
-  --messages-file .load-test-messages.txt \
+  --messages-file docs/experiments/exports/load-test-messages.txt \
   --requests 40 \
   --concurrency 5 \
-  --output .load-test-result.json
+  --output docs/experiments/exports/load-test-result.json
 ```
 
 采购和合同路径需要额外的结构化输入或文件附件，不能用一条普通文本消息代表；如果要压这两条路径，应单独写带 `files`/`attachments` 的场景脚本，并把它们单独统计。
@@ -117,7 +117,7 @@ EOF
 ```bash
 ./dev py scripts/resume_metrics.py \
   --junitxml .resume-eval.xml \
-  --load-json .load-test-result.json \
+  --load-json docs/experiments/exports/load-test-result.json \
   --org-id dist-liancai
 ```
 

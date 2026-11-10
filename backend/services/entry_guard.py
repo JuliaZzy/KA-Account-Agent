@@ -137,7 +137,7 @@ def limits() -> Limits:
         read_user=_int("KA_ACCOUNT_RATE_READ_USER", 2000),
         global_running=_int("KA_ACCOUNT_GATE_GLOBAL", 100),
         org_running=_int("KA_ACCOUNT_GATE_ORG", 10),
-        user_running=_int("KA_ACCOUNT_GATE_USER", 3),
+        user_running=_int("KA_ACCOUNT_GATE_USER", 5),
         side_effect=_int("KA_ACCOUNT_GATE_SIDE_EFFECT", 3),
         read_tool=_int("KA_ACCOUNT_GATE_READ_TOOL", 20),
         model=_int("KA_ACCOUNT_GATE_MODEL", 32),

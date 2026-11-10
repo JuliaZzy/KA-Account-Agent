@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.db import Database
+from scripts.load_test_chat import P99_MIN_SAMPLES, _percentile
 
 
 def _number(value: Any) -> float | None:
@@ -23,14 +24,6 @@ def _number(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return result if math.isfinite(result) else None
-
-
-def _percentile(values: list[float], percentile: float) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    index = max(0, min(len(ordered) - 1, math.ceil(percentile * len(ordered)) - 1))
-    return ordered[index]
 
 
 def junit_metrics(path: Path) -> dict[str, Any]:
@@ -83,6 +76,15 @@ def ledger_metrics(db: Database, org_id: str) -> dict[str, Any]:
     }
 
 
+def _published_p99(stored: Any, values: list[float], sample_count: int | None = None) -> float | None:
+    """P99 is omitted until the sample is large enough to be more than one point."""
+    count = len(values) if values else int(sample_count or 0)
+    if count < P99_MIN_SAMPLES:
+        return None
+    number = _number(stored)
+    return _percentile(values, 0.99) if number is None else number
+
+
 def load_test_metrics(path: Path) -> dict[str, Any]:
     """Read the completion summary emitted by ``load_test_chat.py``."""
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -107,6 +109,9 @@ def load_test_metrics(path: Path) -> dict[str, Any]:
         observed_p50 = _percentile(durations, 0.50)
     if observed_p95 is None:
         observed_p95 = _percentile(durations, 0.95)
+    observed_p99 = _published_p99(
+        summary.get("observed_p99_seconds"), durations, _number(summary.get("submitted")),
+    )
     if observed_max is None:
         observed_max = max(durations, default=None)
     timeouts = int(summary.get("timeouts") or sum(
@@ -119,6 +124,7 @@ def load_test_metrics(path: Path) -> dict[str, Any]:
         "completion_rate": _number(summary.get("completion_rate")),
         "observed_p50_seconds": observed_p50,
         "observed_p95_seconds": observed_p95,
+        "observed_p99_seconds": observed_p99,
         "observed_max_seconds": observed_max,
         "completed_p50_seconds": _number(
             summary.get("completed_p50_seconds", summary.get("completion_p50_seconds"))
@@ -126,6 +132,9 @@ def load_test_metrics(path: Path) -> dict[str, Any]:
         "completed_p95_seconds": _number(
             summary.get("completed_p95_seconds", summary.get("completion_p95_seconds"))
         ) or _percentile(completed_durations, 0.95),
+        "completed_p99_seconds": _published_p99(
+            summary.get("completed_p99_seconds"), completed_durations, _number(summary.get("completed")),
+        ),
         "completed_max_seconds": _number(
             summary.get("completed_max_seconds", summary.get("completion_max_seconds"))
         ) or max(completed_durations, default=None),
@@ -180,8 +189,9 @@ def main() -> int:
             f"合成压测：{metric['completed']}/{metric['submitted']} 完成 "
             f"({_format_percent(metric['completion_rate'])})；"
             f"超时 {metric['timeouts']} 条；"
-            f"观测 P95 {metric['observed_p95_seconds']} 秒；"
-            f"成功请求 P95 {metric['completed_p95_seconds']} 秒。"
+            f"成功 P50 {metric['completed_p50_seconds']} 秒，"
+            f"P95 {metric['completed_p95_seconds']} 秒，"
+            f"P99 {metric['completed_p99_seconds']} 秒。"
         )
     return 0
 

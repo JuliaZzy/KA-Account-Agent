@@ -23,6 +23,13 @@ _STEP_DONE = frozenset({StepStatus.SUCCEEDED, StepStatus.FAILED})
 _TOOL_DONE = frozenset({ToolCallStatus.SUCCEEDED, ToolCallStatus.FAILED})
 _TOOL_SETTLE = _TOOL_DONE | {ToolCallStatus.RESPONSE_LOST}
 _CHECKPOINT_KEYS = frozenset({"context", "completed_tool_calls", "last"})
+_RESULT_KEYS = ("id", "kind", "name", "status", "ok", "error", "payload")
+
+
+def _same_wave_result(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    """Compare the result envelope. Keys the first write did not have are ignored."""
+    shared = [key for key in _RESULT_KEYS if key in left and key in right]
+    return all(left.get(key) == right.get(key) for key in shared)
 
 
 def _optional_nonnegative_int(value: Any) -> int | None:
@@ -81,6 +88,14 @@ class RecordMixin:
             state = dict(previous.state_json or {}) if previous is not None else {}
             results = dict(state.get("orchestrator", {}).get("results") or {})
             orchestrator = dict(state.get("orchestrator") or {})
+            existing = results.get(task_id)
+            if isinstance(existing, dict):
+                if not _same_wave_result(existing, result):
+                    self._append_event(s, owner_run_id, "wave.result_ignored", {
+                        "task_id": task_id, "kept": "first",
+                    }, now)
+                s.flush()
+                return True
             results[task_id] = result
             finished = [str(item) for item in (orchestrator.get("finished") or []) if item]
             if task_id not in finished:

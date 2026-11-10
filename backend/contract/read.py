@@ -17,7 +17,7 @@ from typing import Any
 
 from ..db import Database
 from ..documents import SUPPORTED_EXTS, load_pages, render_pdf_images
-from ..llm import DeepSeekClient, SJTUClient, campus_client, deepseek_client
+from ..llm import DeepSeekClient, deepseek_client
 from ..llm import calls as model_calls
 from ..schemas import ContractChunk
 from .chunks import flatten_chunk_tree, split_chunks
@@ -257,15 +257,22 @@ def _chosen_chunks(raw: dict[str, Any], allowed: dict[str, dict]) -> list[dict]:
     return chosen
 
 
-def _school_json(llm: SJTUClient, *, system: str, user: str) -> dict[str, Any]:
-    """Campus chat returns the whole completion. The selection is the message text."""
+def _school_json(
+    llm: Any, *, system: str, user: str,
+    db: Database | None = None, run_id: str | None = None, purpose: str = "contract.select",
+) -> dict[str, Any]:
+    """Cheap official Qwen JSON. The selection is the message text."""
     return model_calls.school_json(
-        model_calls.SCHOOL_CHAT, client=llm, system=system,
+        client=llm, system=system,
         messages=[{"role": "user", "content": user}], temperature=0,
+        db=db, run_id=run_id, purpose=purpose,
     )
 
 
-def _select_chunks(llm: SJTUClient, index: dict[str, dict]) -> list[dict]:
+def _select_chunks(
+    llm: Any, index: dict[str, dict],
+    *, db: Database | None = None, run_id: str | None = None,
+) -> list[dict]:
     """One selection over the full outline. A single chunk has nothing to choose."""
     readable = {cid: node for cid, node in index.items() if (node.get("body") or "").strip()}
     if len(index) <= 1:
@@ -274,11 +281,15 @@ def _select_chunks(llm: SJTUClient, index: dict[str, dict]) -> list[dict]:
         llm,
         system=SELECT_SYSTEM,
         user=json.dumps({"outline": _outline(index)}, ensure_ascii=False),
+        db=db, run_id=run_id, purpose="contract.select",
     )
     return _chosen_chunks(raw, readable)
 
 
-def _reflect_chunks(llm: SJTUClient, missing: list[str], unread: dict[str, dict]) -> list[dict]:
+def _reflect_chunks(
+    llm: Any, missing: list[str], unread: dict[str, dict],
+    *, db: Database | None = None, run_id: str | None = None,
+) -> list[dict]:
     """Second and third pass: only chunks not yet read, aimed at fields still empty."""
     raw = _school_json(
         llm,
@@ -287,6 +298,7 @@ def _reflect_chunks(llm: SJTUClient, missing: list[str], unread: dict[str, dict]
             {"missing_fields": missing, "unread_outline": _outline(unread)},
             ensure_ascii=False,
         ),
+        db=db, run_id=run_id, purpose="contract.reflect",
     )
     return _chosen_chunks(raw, unread)
 
@@ -333,7 +345,7 @@ def _merge(parts: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def read_agreement(
-    llm: DeepSeekClient, school: SJTUClient, file_name: str, data: bytes,
+    llm: DeepSeekClient | Any, file_name: str, data: bytes,
     *, db: Database | None = None, run_id: str | None = None,
 ) -> tuple[dict[str, Any], list[dict]]:
     """Sanitized extraction plus the heading tree. Raises ValueError when the file cannot be
@@ -362,12 +374,13 @@ def read_agreement(
             raw = model_calls.flash_json(
                 client=llm, system=EXTRACT_SYSTEM, messages=messages,
                 schema=EXTRACT_SCHEMA, temperature=0,
+                db=db, run_id=run_id, purpose="contract.extract",
             )
             if not isinstance(raw, dict):
                 raise ValueError(f"Extraction for {chunk['id']} was not a JSON object.")
             parts.append(sanitize_extraction(raw, pages, image_pages))
 
-    first = _select_chunks(school, index)
+    first = _select_chunks(llm, index, db=db, run_id=run_id)
     if not first:
         raise ValueError(f"No agreement sections selected for reading in {file_name!r}.")
     take(first)
@@ -377,7 +390,7 @@ def read_agreement(
         score = _latest_confidence(parts)
         if not missing or not unread or (score is not None and score >= CONFIDENCE_STOP):
             break
-        more = _reflect_chunks(school, missing, unread)
+        more = _reflect_chunks(llm, missing, unread, db=db, run_id=run_id)
         if not more:
             break
         take(more)
@@ -389,8 +402,7 @@ def read_agreement(
 
 def read_and_ingest(
     db: Database,
-    llm: DeepSeekClient,
-    school: SJTUClient,
+    llm: DeepSeekClient | Any,
     *,
     brand_id: str,
     partnership_id: str,
@@ -399,7 +411,7 @@ def read_and_ingest(
     title: str | None = None,
 ) -> Any:
     """Read the file and write the contract, its terms and the derived PO rules."""
-    extraction, tree = read_agreement(llm, school, file_name, data)
+    extraction, tree = read_agreement(llm, file_name, data)
     model = "deepseek-flash"
     return ingest_extraction(
         db, extraction, brand_id=brand_id, partnership_id=partnership_id,
@@ -444,14 +456,13 @@ def main(argv: list[str] | None = None) -> int:
 
     data = Path(args.file).read_bytes()
     llm = deepseek_client()
-    school = campus_client()
     if args.apply:
         rec = read_and_ingest(
-            Database(), llm, school, brand_id=args.brand, partnership_id=args.partnership,
+            Database(), llm, brand_id=args.brand, partnership_id=args.partnership,
             file_name=Path(args.file).name, data=data, title=args.title,
         )
     else:
-        extraction, tree = read_agreement(llm, school, Path(args.file).name, data)
+        extraction, tree = read_agreement(llm, Path(args.file).name, data)
         rec = record_from_extraction(
             extraction, brand_id=args.brand, partnership_id=args.partnership, title=args.title,
             file_name=Path(args.file).name, chunks=_chunk_models(tree),

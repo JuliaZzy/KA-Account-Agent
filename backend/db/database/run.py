@@ -12,7 +12,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy import Integer, and_, cast, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -23,6 +23,7 @@ from ...services.run_names import (
     RunStatus,
     RunType,
     StepEvent,
+    StepStatus,
     ToolCallStatus,
     event_display,
 )
@@ -37,11 +38,20 @@ from .support import (
 )
 
 # Prometheus histogram edges, in seconds. The last bucket is +Inf and is the row count.
-_DURATION_EDGES = (1, 5, 15, 30, 60, 120, 300)
-_LAG_EDGES = (0.1, 0.3, 1, 5, 10, 30, 60)
-_MODEL_EDGES = (0.5, 1, 2, 5, 10, 30, 60)
-_DURATION_LABELS = ("≤1s", "≤5s", "≤15s", "≤30s", "≤60s", "≤2min", "≤5min", ">5min")
-_LAG_LABELS = ("≤0.1s", "≤0.3s", "≤1s", "≤5s", "≤10s", "≤30s", "≤1min", ">1min")
+# Duration stays dense from 1s through the 180s completion timeout, then reaches 300s.
+# Model calls use a shorter range. A value past the last edge is only "> last edge".
+_DURATION_EDGES = (1, 2, 5, 10, 15, 30, 45, 60, 90, 120, 150, 180, 240, 300)
+_LAG_EDGES = (0.1, 0.3, 1, 2, 5, 10, 30, 60, 120, 180, 300)
+_MODEL_EDGES = (0.25, 0.5, 1, 2, 3, 5, 8, 10, 15, 20, 30)
+_TOOL_EDGES = (0.1, 0.5, 1, 2, 5, 10, 30, 60)
+_DURATION_LABELS = (
+    "≤1s", "≤2s", "≤5s", "≤10s", "≤15s", "≤30s", "≤45s", "≤60s",
+    "≤90s", "≤120s", "≤150s", "≤180s", "≤240s", "≤300s", ">300s",
+)
+_LAG_LABELS = (
+    "≤0.1s", "≤0.3s", "≤1s", "≤2s", "≤5s", "≤10s",
+    "≤30s", "≤60s", "≤120s", "≤180s", "≤300s", ">300s",
+)
 
 
 def _hour_key(value: datetime) -> datetime:
@@ -81,22 +91,68 @@ def _histogram(
     columns: list[Any] = [func.count().filter(seconds <= edge) for edge in edges]
     columns.append(func.count())
     columns.append(func.coalesce(func.sum(seconds), 0))
+    columns.append(func.percentile_cont(0.50).within_group(seconds))
     columns.append(func.percentile_cont(0.95).within_group(seconds))
+    columns.append(func.percentile_cont(0.99).within_group(seconds))
     query = select(*columns)
     if joined is orm.ModelCall:
         query = query.select_from(orm.ModelCall).join(
             orm.AgentRun, orm.ModelCall.run_id == orm.AgentRun.id,
         )
+    elif joined is orm.AgentStep:
+        query = query.select_from(orm.AgentStep).join(
+            orm.AgentRun, orm.AgentStep.run_id == orm.AgentRun.id,
+        )
+    elif joined is orm.ToolCall:
+        query = query.select_from(orm.ToolCall)
     row = s.execute(query.where(*filters)).one()
     width = len(edges)
-    p95 = row[width + 2]
+    p50 = row[width + 2]
+    p95 = row[width + 3]
+    p99 = row[width + 4]
     return {
         "edges": list(edges),
         "buckets": [int(row[index] or 0) for index in range(width)],
         "count": int(row[width] or 0),
         "sum": float(row[width + 1] or 0),
+        "p50": None if p50 is None else float(p50),
         "p95": None if p95 is None else float(p95),
+        "p99": None if p99 is None else float(p99),
     }
+
+
+def _stage(hist: dict[str, Any]) -> dict[str, Any]:
+    return {"p50": hist["p50"], "p95": hist["p95"], "p99": hist["p99"], "count": hist["count"]}
+
+
+def _tail_from(edges: tuple[float, ...], limit: float) -> int:
+    """First bar whose upper edge is past the SLO. That bar and the ones after it are the tail."""
+    for index, edge in enumerate(edges):
+        if edge > limit:
+            return index
+    return len(edges)
+
+
+def _mark_bars(
+    bars: list[dict[str, Any]], edges: tuple[float, ...],
+    p50: float | None, p95: float | None, p99: float | None,
+) -> list[dict[str, Any]]:
+    """Name the bucket that contains each percentile. The last bar is everything above the edges."""
+
+    def bucket(value: float | None) -> int | None:
+        if value is None:
+            return None
+        for index, edge in enumerate(edges):
+            if value <= edge:
+                return index
+        return len(edges)
+
+    at = {"P50": bucket(p50), "P95": bucket(p95), "P99": bucket(p99)}
+    marked: list[dict[str, Any]] = []
+    for index, bar in enumerate(bars):
+        names = [name for name, slot in at.items() if slot == index]
+        marked.append({**bar, "mark": " / ".join(names) if names else None})
+    return marked
 
 
 def _wave_child(child: dict[str, Any]) -> tuple[str, str, dict[str, Any], dict[str, Any]]:
@@ -1068,20 +1124,77 @@ class RunMixin:
                 "epoch", func.coalesce(orm.AgentRun.started_at, func.now()) - orm.AgentRun.created_at,
             )
             model_seconds = orm.ModelCall.latency_ms / 1000.0
+            tool_seconds = orm.ToolCall.latency_ms / 1000.0
+            step_seconds = func.extract("epoch", orm.AgentStep.ended_at - orm.AgentStep.started_at)
+            first_step = (
+                select(func.min(orm.AgentStep.started_at))
+                .where(
+                    orm.AgentStep.run_id == orm.AgentRun.id,
+                    orm.AgentStep.started_at.is_not(None),
+                )
+                .correlate(orm.AgentRun)
+                .scalar_subquery()
+            )
+            claim_seconds = func.extract("epoch", first_step - orm.AgentRun.started_at)
+            child_seconds = func.extract("epoch", orm.AgentRun.ended_at - orm.AgentRun.started_at)
+            purpose = orm.AgentStep.input_json["purpose"].astext
+
+            def purpose_hist(name: str) -> dict[str, Any]:
+                return _histogram(
+                    s, step_seconds, _MODEL_EDGES,
+                    org, purpose == name,
+                    orm.AgentStep.status == StepStatus.SUCCEEDED,
+                    orm.AgentStep.started_at.is_not(None),
+                    orm.AgentStep.ended_at.is_not(None),
+                    joined=orm.AgentStep,
+                )
+
+            # Percentiles are successful samples. Failed and still-open rows stay in the counters.
+            finished = and_(
+                orm.AgentRun.status == RunStatus.SUCCEEDED,
+                orm.AgentRun.started_at.is_not(None),
+                orm.AgentRun.ended_at.is_not(None),
+            )
+            duration_hist = _histogram(s, duration, _DURATION_EDGES, org, finished)
+            lag_hist = _histogram(s, lag, _LAG_EDGES, org, orm.AgentRun.started_at.is_not(None))
+            model_hist = _histogram(
+                s, model_seconds, _MODEL_EDGES,
+                org, orm.ModelCall.status == StepStatus.SUCCEEDED, orm.ModelCall.latency_ms.is_not(None),
+                joined=orm.ModelCall,
+            )
+            tool_hist = _histogram(
+                s, tool_seconds, _TOOL_EDGES,
+                orm.ToolCall.org_id == org_id,
+                orm.ToolCall.status == ToolCallStatus.SUCCEEDED,
+                orm.ToolCall.latency_ms.is_not(None),
+                joined=orm.ToolCall,
+            )
+            claim_hist = _histogram(
+                s, claim_seconds, _LAG_EDGES,
+                org, orm.AgentRun.started_at.is_not(None), first_step.is_not(None),
+            )
+            child_hist = _histogram(
+                s, child_seconds, _DURATION_EDGES,
+                org, finished, orm.AgentRun.owner_run_id.is_not(None),
+            )
             facts = {
                 "created": self._count(s, orm.AgentRun, org),
                 "succeeded": self._count(s, orm.AgentRun, org, orm.AgentRun.status == RunStatus.SUCCEEDED),
                 "failed": self._count(s, orm.AgentRun, org, orm.AgentRun.status == RunStatus.FAILED),
-                "duration": _histogram(
-                    s, duration, _DURATION_EDGES,
-                    org, orm.AgentRun.started_at.is_not(None), orm.AgentRun.ended_at.is_not(None),
-                ),
-                "queue_lag": _histogram(s, lag, _LAG_EDGES, org),
-                "model_latency": _histogram(
-                    s, model_seconds, _MODEL_EDGES,
-                    org, orm.ModelCall.latency_ms.is_not(None),
-                    joined=orm.ModelCall,
-                ),
+                "duration": duration_hist,
+                "queue_lag": lag_hist,
+                "model_latency": model_hist,
+                "tool_latency": tool_hist,
+                "stages": {
+                    "queue": _stage(lag_hist),
+                    "claim": _stage(claim_hist),
+                    "plan": _stage(purpose_hist("orchestrator.plan")),
+                    "child": _stage(child_hist),
+                    "model": _stage(model_hist),
+                    "tool": _stage(tool_hist),
+                    "answer": _stage(purpose_hist("orchestrator.answer")),
+                    "history": _stage(purpose_hist("orchestrator.history")),
+                },
                 "model_errors": self._count(
                     s, orm.ModelCall, org, orm.ModelCall.status == "failed", joined=orm.ModelCall,
                 ),
@@ -1089,6 +1202,18 @@ class RunMixin:
                     s, orm.ModelCall, org,
                     orm.ModelCall.error_json["code"].astext == "PROVIDER_RATE_LIMITED",
                     joined=orm.ModelCall,
+                ),
+                "route_selected": self._count(
+                    s, orm.RunEvent, org, orm.RunEvent.event_type == StepEvent.MODEL_ROUTE_SELECTED,
+                    joined=orm.RunEvent,
+                ),
+                "route_fallback": self._count(
+                    s, orm.RunEvent, org, orm.RunEvent.event_type == StepEvent.MODEL_ROUTE_FALLBACK,
+                    joined=orm.RunEvent,
+                ),
+                "route_quality_gate_failed": self._count(
+                    s, orm.RunEvent, org, orm.RunEvent.event_type == StepEvent.MODEL_QUALITY_GATE_FAILED,
+                    joined=orm.RunEvent,
                 ),
                 "tool_calls": self._count(s, orm.ToolCall, orm.ToolCall.org_id == org_id),
                 "tool_errors": self._count(
@@ -1144,6 +1269,7 @@ class RunMixin:
                 "stuck_runs": self._count(s, orm.AgentRun, org, or_(stuck_queued, stuck_running)),
                 "failed_codes": self._failed_codes(s, org_id),
             }
+            facts["plan"] = self._plan_quality(s, org)
             return facts
 
     def monitor_charts(self, org_id: str) -> dict[str, Any]:
@@ -1170,17 +1296,65 @@ class RunMixin:
             lag = func.extract(
                 "epoch", func.coalesce(orm.AgentRun.started_at, func.now()) - orm.AgentRun.created_at,
             )
-            duration_hist = _histogram(
-                s, duration, _DURATION_EDGES,
-                org, recent, orm.AgentRun.started_at.is_not(None), orm.AgentRun.ended_at.is_not(None),
+            finished = and_(
+                orm.AgentRun.status == RunStatus.SUCCEEDED,
+                orm.AgentRun.started_at.is_not(None),
+                orm.AgentRun.ended_at.is_not(None),
             )
-            lag_hist = _histogram(s, lag, _LAG_EDGES, org, recent)
+            duration_hist = _histogram(s, duration, _DURATION_EDGES, org, recent, finished)
+            lag_hist = _histogram(
+                s, lag, _LAG_EDGES, org, recent, orm.AgentRun.started_at.is_not(None),
+            )
         return {
             "hours": _fill_hours(start, rows),
-            "duration": _bars(duration_hist, _DURATION_LABELS, tail_from=5),
+            "duration": _mark_bars(
+                _bars(duration_hist, _DURATION_LABELS, tail_from=_tail_from(_DURATION_EDGES, 60)),
+                _DURATION_EDGES, duration_hist["p50"], duration_hist["p95"], duration_hist["p99"],
+            ),
+            "duration_p50": duration_hist["p50"],
             "duration_p95": duration_hist["p95"],
-            "queue": _bars(lag_hist, _LAG_LABELS, tail_from=5),
+            "duration_p99": duration_hist["p99"],
+            "queue": _mark_bars(
+                _bars(lag_hist, _LAG_LABELS, tail_from=_tail_from(_LAG_EDGES, 10)),
+                _LAG_EDGES, lag_hist["p50"], lag_hist["p95"], lag_hist["p99"],
+            ),
+            "queue_p50": lag_hist["p50"],
             "queue_p95": lag_hist["p95"],
+            "queue_p99": lag_hist["p99"],
+        }
+
+    def _plan_quality(self, s: Session, org: Any) -> dict[str, int]:
+        """How often PLAN drops an unknown agent or refuses the graph.
+
+        The denominator is PLAN steps. A dropped name that nothing depends on
+        still lets the call succeed, so that count is separate from failures.
+        """
+        purpose = orm.AgentStep.input_json["purpose"].astext == "orchestrator.plan"
+        code = orm.AgentStep.error_json["code"].astext
+        unknown = cast(func.coalesce(
+            orm.AgentStep.output_json["dropped"]["unknown_agent"].astext,
+            orm.AgentStep.error_json["dropped"]["unknown_agent"].astext,
+            "0",
+        ), Integer)
+        base = (purpose, org)
+
+        def plans(*filters: Any) -> int:
+            return self._count(s, orm.AgentStep, *base, *filters, joined=orm.AgentStep)
+
+        dropped = s.scalar(
+            select(func.coalesce(func.sum(unknown), 0))
+            .select_from(orm.AgentStep)
+            .join(orm.AgentRun, orm.AgentStep.run_id == orm.AgentRun.id)
+            .where(*base)
+        )
+        return {
+            "calls": plans(),
+            "failed": plans(orm.AgentStep.status == "failed"),
+            "unknown_agent_calls": plans(unknown > 0),
+            "unknown_agent_dropped": int(dropped or 0),
+            "cycle": plans(code == "plan_cycle"),
+            "unknown_dependency": plans(code == "plan_unknown_dependency"),
+            "depends_on_unknown_agent": plans(code == "plan_depends_on_unknown_agent"),
         }
 
     @staticmethod
@@ -1190,6 +1364,8 @@ class RunMixin:
             query = query.join(orm.AgentRun, orm.ModelCall.run_id == orm.AgentRun.id)
         elif joined is orm.RunEvent:
             query = query.join(orm.AgentRun, orm.RunEvent.run_id == orm.AgentRun.id)
+        elif joined is orm.AgentStep:
+            query = query.join(orm.AgentRun, orm.AgentStep.run_id == orm.AgentRun.id)
         return int(s.scalar(query.where(*filters)) or 0)
 
     @staticmethod

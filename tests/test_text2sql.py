@@ -24,7 +24,7 @@ from backend.text2sql.text2sql import _json_rows, _rows_for_prompt
 
 
 def _models(monkeypatch, replies: list[dict]):
-    """Script the campus and DeepSeek clients. The queue is shared, in call order."""
+    """Script the official model clients. The queue is shared, in call order."""
     pending = list(replies)
     school: list[dict] = []
 
@@ -39,7 +39,7 @@ def _models(monkeypatch, replies: list[dict]):
             raw = pending.pop(0)
             return type("Reply", (), {"output_text": json.dumps(raw)})()
 
-    monkeypatch.setattr("backend.text2sql.text2sql.campus_client", lambda: _School())
+    monkeypatch.setattr("backend.llm.client.qwen_client", lambda: _School())
     monkeypatch.setattr("backend.text2sql.text2sql.deepseek_client", lambda: _DeepSeek())
     return pending, school
 
@@ -513,9 +513,9 @@ def test_data_query_records_model_calls_on_the_chat_run(db, monkeypatch):
         if row["step_id"] == step_id
     ]
     assert models == [
-        ("sjtu", "deepseek-chat"),
+        ("qwen", "qwen3.7-flash"),
         ("deepseek", "deepseek-flash"),
-        ("sjtu", "deepseek-chat"),
+        ("qwen", "qwen3.7-flash"),
     ]
     parent_events = db.list_run_events("dist-1", run_id) or []
     assert any(
@@ -555,10 +555,10 @@ def test_data_query_records_a_low_score_retry(db, monkeypatch):
         if row["step_id"] == step_id
     ]
     assert models == [
-        ("sjtu", "deepseek-chat"),
+        ("qwen", "qwen3.7-flash"),
         ("deepseek", "deepseek-flash"),
-        ("sjtu", "deepseek-chat"),
-        ("sjtu", "deepseek-chat"),
+        ("qwen", "qwen3.7-flash"),
+        ("qwen", "qwen3.7-flash"),
         ("deepseek", "deepseek-flash"),
-        ("sjtu", "deepseek-chat"),
+        ("qwen", "qwen3.7-flash"),
     ]

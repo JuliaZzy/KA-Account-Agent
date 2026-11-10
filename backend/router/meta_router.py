@@ -28,7 +28,7 @@ def meta() -> dict[str, Any]:
             "id": row.id,
             "label": row.id,
             "short": row.id,
-            "vision": row.id == "qwen",
+            "vision": row.id == "deepseek-flash",
             "thinking": row.thinking,
         }
         for row in LLM_CONFIGS

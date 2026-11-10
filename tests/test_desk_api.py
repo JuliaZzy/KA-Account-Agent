@@ -14,12 +14,14 @@ def client(db, llm=None) -> TestClient:
     return TestClient(create_app(db=db, llm=llm or FakeLLM()))
 
 
-def test_meta_lists_the_campus_models(db):
+def test_meta_lists_the_official_models(db):
     from backend import service
 
     body = client(db).get("/api/meta").json()
-    assert "qwen" in [m["id"] for m in body["models"]]
-    assert body["default_model"]
+    ids = [m["id"] for m in body["models"]]
+    assert "qwen3.7-flash" in ids
+    assert "deepseek-flash" in ids
+    assert body["default_model"] == "qwen3.7-flash"
     assert "停产" in body["product_statuses"]
     assert body["memory_kinds"]["preference"] == "Preference"
     assert body["max_images"] == service.MAX_IMAGES

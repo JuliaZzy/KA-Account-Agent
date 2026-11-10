@@ -8,8 +8,9 @@ from typing import Any
 
 from ..db import Database
 from ..llm.errors import ModelCapacityExceeded, ProviderError
-from ..orchestrator.gather import finish_child
+from ..orchestrator.gather import checkpoint_state, finish_child, load_state
 from ..orchestrator.plan import PlanTask, tool_name_for
+from ..repositories.run_repository import latest_checkpoint
 from ..services.run_names import StepStatus, StepType, ToolCallStatus, step_name, tool_error
 from ..services.session_tools import tools as turn_tools
 
@@ -38,6 +39,9 @@ def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
             input=payload.get("input") if isinstance(payload.get("input"), dict) else {},
         )
         name = tool_name_for(task)
+    saved = _saved_result(db, run, payload, name)
+    if saved is not None:
+        return _settle(db, run, saved)
     if name == "report.draft":
         from ..orchestrator.report import execute_report
 
@@ -58,8 +62,7 @@ def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
         result = _failed(payload, f"unknown tool {name}", name=name)
         if step_id:
             db.finish_step(step_id, StepStatus.FAILED, None, {"message": result["error"]})
-        finish_child(db, run, result)
-        return result
+        return _settle(db, run, result)
 
     # Planned side effects run outside run_loop.execute_tool. Reserve their
     # idempotency seat before entering the handler, so a lease retry can tell
@@ -78,8 +81,7 @@ def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
         row, created = claimed
         if not created:
             result = _reused_planned_call(db, step_id, payload, name, row)
-            finish_child(db, run, result)
-            return result
+            return _settle(db, run, result)
         claimed_id = str(row["id"])
 
     try:
@@ -111,8 +113,44 @@ def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
             _complete_planned_call(db, claimed_id, result, None)
         else:
             _record_tool(db, run, step_id, name, args, result, None)
+    return _settle(db, run, result)
+
+
+def _tool_checkpoint(result: dict[str, Any]) -> dict[str, Any] | None:
+    if not result.get("ok"):
+        return None
+    return checkpoint_state([], [], {}, extra={"phase": "tool_done", "result": result})
+
+
+def _settle(db: Database, run: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    """The tool row already stored the checkpoint. Wake the parent."""
     finish_child(db, run, result)
     return result
+
+
+def _saved_result(
+    db: Database, run: dict[str, Any], payload: dict[str, Any], name: str,
+) -> dict[str, Any] | None:
+    state = load_state(latest_checkpoint(db, run["id"]))
+    if isinstance(state, dict) and state.get("phase") == "tool_done" and isinstance(state.get("result"), dict):
+        return state["result"]
+    org_id = str(run.get("org_id") or "")
+    if not org_id:
+        return None
+    trace = db.run_trace(org_id, run["id"]) or {}
+    for call in reversed(trace.get("tool_calls") or []):
+        if call.get("tool_name") != name or call.get("status") != ToolCallStatus.SUCCEEDED:
+            continue
+        raw = call.get("result_json") if isinstance(call.get("result_json"), dict) else {}
+        return {
+            "id": payload.get("task_id"),
+            "kind": payload.get("kind"),
+            "name": name,
+            "ok": True,
+            "error": None,
+            "payload": raw,
+        }
+    return None
 
 
 def _planned_idempotency_key(
@@ -154,9 +192,11 @@ def _reused_planned_call(
             "ok": bool(ok), "error": None if ok else str(raw.get("error") or "tool failed"),
             "payload": raw,
         }
-        db.finish_step(step_id, StepStatus.SUCCEEDED if ok else StepStatus.FAILED, raw, None if ok else {
-            "message": result["error"],
-        })
+        db.finish_step(
+            step_id, StepStatus.SUCCEEDED if ok else StepStatus.FAILED, raw,
+            None if ok else {"message": result["error"]},
+            _tool_checkpoint(result),
+        )
         return result
 
     stored_error = row.get("error_json") if isinstance(row.get("error_json"), dict) else {}
@@ -186,6 +226,7 @@ def _complete_planned_call(
         step_status=StepStatus.SUCCEEDED if ok else StepStatus.FAILED,
         step_output=output if ok else {},
         step_error=error,
+        checkpoint=_tool_checkpoint(result),
     )
 
 
@@ -207,6 +248,7 @@ def _record_tool(
         idempotency_key=f"{name}:{run['id']}:{payload.get('task_id') or step_id}",
         latency_ms=0, error=error,
         step_status=status, step_output=output, step_error=error,
+        checkpoint=_tool_checkpoint(result),
     )
     if saved is None:
         db.finish_step(step_id, status, output, error)

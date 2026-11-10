@@ -6,12 +6,9 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-import pytest
-import requests
-
 from backend.llm.breaker import acquire, record_failure, record_success, release
-from backend.llm.client import DeepSeekClient, GLMClient, QwenClient, SJTUClient
-from backend.llm.errors import ProviderError, parse_retry_after, translate_provider_error
+from backend.llm.client import DeepSeekClient, GLMClient, QwenClient
+from backend.llm.errors import parse_retry_after, provider_error_from_http, translate_provider_error
 
 
 def test_parse_retry_after_seconds():
@@ -29,58 +26,38 @@ def test_parse_retry_after_http_date():
     assert 20 <= seconds <= 35
 
 
-def test_campus_429_is_provider_error_and_posts_once(monkeypatch):
-    monkeypatch.setenv("SJTU_BASE_URL", "https://campus.example/api/v1")
-    monkeypatch.setenv("SJTU_API_KEY", "campus-key")
-    posted: list[int] = []
-
-    def post(*_args, **_kwargs):
-        posted.append(1)
-        return SimpleNamespace(
-            status_code=429,
-            text="slow down",
-            headers={"Retry-After": "12", "X-Request-Id": "req-1"},
-        )
-
-    monkeypatch.setattr("backend.llm.client.requests.post", post)
-    client = SJTUClient()
-    with pytest.raises(ProviderError) as raised:
-        client.chat_completion("deepseek-chat", [{"role": "user", "content": "hi"}])
-    assert raised.value.kind == "rate_limited"
-    assert raised.value.retryable is True
-    assert raised.value.status_code == 429
-    assert raised.value.retry_after_seconds == 12
-    assert raised.value.request_id == "req-1"
-    assert raised.value.code == "PROVIDER_RATE_LIMITED"
-    assert posted == [1]
-
-
-def test_campus_401_is_not_retryable(monkeypatch):
-    monkeypatch.setenv("SJTU_BASE_URL", "https://campus.example/api/v1")
-    monkeypatch.setenv("SJTU_API_KEY", "campus-key")
-
-    monkeypatch.setattr(
-        "backend.llm.client.requests.post",
-        lambda *_a, **_k: SimpleNamespace(status_code=401, text="no", headers={}, json=lambda: {}),
+def test_http_429_maps_retry_after():
+    err = provider_error_from_http(
+        SimpleNamespace(status_code=429, headers={"Retry-After": "12", "X-Request-Id": "req-1"}),
+        provider="qwen",
+        model="qwen3.7-flash",
     )
-    with pytest.raises(ProviderError) as raised:
-        SJTUClient().chat_completion("deepseek-chat", [{"role": "user", "content": "hi"}])
-    assert raised.value.kind == "authentication"
-    assert raised.value.retryable is False
+    assert err.kind == "rate_limited"
+    assert err.retryable is True
+    assert err.status_code == 429
+    assert err.retry_after_seconds == 12
+    assert err.request_id == "req-1"
+    assert err.code == "PROVIDER_RATE_LIMITED"
 
 
-def test_campus_timeout_is_retryable(monkeypatch):
-    monkeypatch.setenv("SJTU_BASE_URL", "https://campus.example/api/v1")
-    monkeypatch.setenv("SJTU_API_KEY", "campus-key")
+def test_http_401_is_not_retryable():
+    err = provider_error_from_http(
+        SimpleNamespace(status_code=401, headers={}, text="no"),
+        provider="deepseek",
+        model="deepseek-flash",
+    )
+    assert err.kind == "authentication"
+    assert err.retryable is False
 
-    def post(*_args, **_kwargs):
-        raise requests.Timeout("read timed out")
 
-    monkeypatch.setattr("backend.llm.client.requests.post", post)
-    with pytest.raises(ProviderError) as raised:
-        SJTUClient().chat_completion("deepseek-chat", [{"role": "user", "content": "hi"}])
-    assert raised.value.kind == "timeout"
-    assert raised.value.retryable is True
+def test_timeout_exception_is_retryable():
+    err = translate_provider_error(
+        TimeoutError("read timed out"),
+        provider="qwen",
+        model="qwen3.7-flash",
+    )
+    assert err.kind == "timeout"
+    assert err.retryable is True
 
 
 def test_openai_compatible_clients_disable_sdk_retries(monkeypatch):

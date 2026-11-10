@@ -115,6 +115,9 @@ class StepEvent(StrEnum):
     MODEL_STARTED = "model.started"
     MODEL_COMPLETED = "model.completed"
     MODEL_FAILED = "model.failed"
+    MODEL_ROUTE_SELECTED = "model.route_selected"
+    MODEL_ROUTE_FALLBACK = "model.route_fallback"
+    MODEL_QUALITY_GATE_FAILED = "model.quality_gate_failed"
     TOOL_STARTED = "tool.started"
     TOOL_COMPLETED = "tool.completed"
     TOOL_FAILED = "tool.failed"
@@ -131,6 +134,9 @@ PROJECTED_CHILD_EVENTS = frozenset({
     StepEvent.MODEL_STARTED,
     StepEvent.MODEL_COMPLETED,
     StepEvent.MODEL_FAILED,
+    StepEvent.MODEL_ROUTE_SELECTED,
+    StepEvent.MODEL_ROUTE_FALLBACK,
+    StepEvent.MODEL_QUALITY_GATE_FAILED,
 })
 
 PUBLIC_RUN_EVENTS = frozenset({

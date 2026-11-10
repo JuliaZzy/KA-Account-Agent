@@ -135,14 +135,28 @@ def monitor(db: Database, org_id: str) -> dict[str, Any]:
             "created": facts["created"],
             "succeeded": facts["succeeded"],
             "failed": facts["failed"],
+            "duration_p50": facts["duration"]["p50"],
             "duration_p95": facts["duration"]["p95"],
+            "duration_p99": facts["duration"]["p99"],
+            "queue_lag_p50": facts["queue_lag"]["p50"],
             "queue_lag_p95": facts["queue_lag"]["p95"],
+            "queue_lag_p99": facts["queue_lag"]["p99"],
+            "model_latency_p50": facts["model_latency"]["p50"],
             "model_latency_p95": facts["model_latency"]["p95"],
+            "model_latency_p99": facts["model_latency"]["p99"],
+            "tool_latency_p50": facts["tool_latency"]["p50"],
+            "tool_latency_p95": facts["tool_latency"]["p95"],
+            "tool_latency_p99": facts["tool_latency"]["p99"],
+            "stages": facts["stages"],
+            "plan": facts["plan"],
             "pending_jobs": facts["pending_jobs"],
             "active_runs": facts["active_runs"],
             "sse_connections": facts["sse_connections"],
             "stuck_runs": facts["stuck_runs"],
             "model_errors": facts["model_errors"],
+            "route_selected": facts["route_selected"],
+            "route_fallback": facts["route_fallback"],
+            "route_quality_gate_failed": facts["route_quality_gate_failed"],
             "tool_calls": facts["tool_calls"],
             "tool_errors": facts["tool_errors"],
             "duplicates": facts["duplicates"],
@@ -159,9 +173,13 @@ def _charts(db: Database, org_id: str, facts: dict[str, Any]) -> dict[str, Any]:
     return {
         "hours": window["hours"],
         "duration": window["duration"],
+        "duration_p50": window["duration_p50"],
         "duration_p95": window["duration_p95"],
+        "duration_p99": window["duration_p99"],
         "queue": window["queue"],
+        "queue_p50": window["queue_p50"],
         "queue_p95": window["queue_p95"],
+        "queue_p99": window["queue_p99"],
         "levels": [
             {"label": "卡住", "value": facts["stuck_runs"], "limit": 10},
             {"label": "正在跑", "value": facts["active_runs"], "limit": cap.org_running or None},
@@ -209,10 +227,12 @@ def _slo(facts: dict[str, Any], daily_tokens: int, daily_cost: int) -> list[dict
         ("发消息建 run 的延迟 P95", "< 300ms", "没有单独记这一跳", None),
         ("run.created 成功率", "> 99.9%", "拒绝发生在写入之前，没有分母", None),
         ("普通 run 完成时间 P95", "< 60s", _seconds(facts["duration"]["p95"]), _under(facts["duration"]["p95"], 60)),
+        ("普通 run 完成时间 P99", "< 120s", _seconds(facts["duration"]["p99"]), _under(facts["duration"]["p99"], 120)),
         ("run.failed 比例", "< 1%", _percent(failed_ratio), failed_ratio is None or failed_ratio < 0.01),
         ("send_email 错误率", "< 0.1%", _percent(mail), mail is None or mail < 0.001),
         ("MCP 错误率", "< 0.1%", _percent(mcp), mcp is None or mcp < 0.001),
         ("排队等待 P95", "< 10s", _seconds(facts["queue_lag"]["p95"]), _under(facts["queue_lag"]["p95"], 10)),
+        ("排队等待 P99", "< 30s", _seconds(facts["queue_lag"]["p99"]), _under(facts["queue_lag"]["p99"], 30)),
         ("SSE 断线后用 after 补齐", "必须成立", "事件流按 after 再读", True),
         ("卡住的 run", "< 10", str(facts["stuck_runs"]), facts["stuck_runs"] < 10),
         ("单 org 每日费用", _budget_target(daily_tokens, daily_cost), _budget_value(facts, daily_tokens, daily_cost), _budget_ok(facts, daily_tokens, daily_cost)),
@@ -230,8 +250,10 @@ def _alerts(facts: dict[str, Any], daily_tokens: int, daily_cost: int) -> list[d
             "action": f"看 error_code 最高的几项：{codes}",
             "runbook": None,
         })
-    if not _under(facts["queue_lag"]["p95"], 10):
+    if not _under(facts["queue_lag"]["p95"], 10) or not _under(facts["queue_lag"]["p99"], 30):
         found.append({"signal": "排队变长", "action": "先看 worker 还是下游，再决定扩容。", "runbook": "queue"})
+    if not _under(facts["duration"]["p99"], 120):
+        found.append({"signal": "完成时间 P99 变长", "action": "看 PLAN、子任务、模型和 ANSWER 哪一段拉长了。", "runbook": "stuck"})
     if facts["pending_jobs"] > 0 and facts["active_runs"] == 0:
         found.append({
             "signal": "待领任务还在，没有正在跑的 run",

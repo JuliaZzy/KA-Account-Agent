@@ -1,7 +1,7 @@
 """把一个自然语言问题变成这个合作关系表里的行。
 
-学校的 deepseek-chat 选表，官方 deepseek-flash（思考关闭）写一条 SELECT。代码解析这条语句，在已经排除其他合作关系的视图上执行，并返回行。
-行回来之后仍由学校的 deepseek-chat 打分。之后的聊天轮次引用这些行，它不重算它们。
+官方 qwen3.7-flash 选表，官方 deepseek-flash（思考关闭）写一条 SELECT。代码解析这条语句，在已经排除其他合作关系的视图上执行，并返回行。
+行回来之后仍由 qwen3.7-flash 打分。之后的聊天轮次引用这些行，它不重算它们。
 
 失败后的改写最多三次：同一套 SQL 规则和列说明，加上失败的语句和报错。仍失败就把最后一次语句和报错交给人工。图表和报表代码仍走 `codefix`。
 行回来之后打分，最多三次。80 分及以上就用这些行；低于 80 分可以换一个问题再查。
@@ -22,7 +22,7 @@ from typing import Any
 from ..codefix import format_failures
 from ..db import Database, utcnow
 from ..llm import calls as model_calls
-from ..llm import campus_client, deepseek_client
+from ..llm import deepseek_client
 from ..llm.errors import ModelCapacityExceeded, ProviderError
 from ..memory import actor_id, attach, prompt_context, prompt_turns, standing_block, summary_block
 from .prompt import PICK, REFLECT, SQL
@@ -36,7 +36,7 @@ _MAX_ROWS = 50
 REFLECT_PASS = 80
 MAX_REFLECTIONS = 3
 _SQL_ATTEMPTS = 3
-_SCHOOL = "deepseek-chat"
+_SCHOOL = model_calls.QWEN_PLAN
 _FENCE = re.compile(r"^```(?:sql)?\s*([\s\S]*?)\s*```$", re.IGNORECASE)
 
 
@@ -69,17 +69,13 @@ def _ds_client():
     return deepseek_client()
 
 
-def _school_client():
-    return campus_client()
-
-
 def _ask_school(
     *, system: str, user: str, trace: _RunTrace | None = None, purpose: str = "data.pick",
 ) -> dict[str, Any]:
-    """Campus deepseek-chat. The gateway has no JSON schema; the reply text is the object."""
+    """Cheap official Qwen JSON. The reply text is the object when no schema is sent."""
     return model_calls.school_json(
         _SCHOOL, system=system, messages=[{"role": "user", "content": user}],
-        temperature=0, client=_school_client(), **_ledger(trace, purpose),
+        temperature=0, **_ledger(trace, purpose),
     )
 
 

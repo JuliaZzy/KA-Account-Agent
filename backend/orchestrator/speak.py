@@ -11,6 +11,7 @@ from typing import Any
 from ..db import Database
 from ..llm import calls as model_calls
 from ..memory import attach, prompt_context, prompt_turns, record_history, standing_block, summary_block
+from ..services.run_names import StepStatus, StepType, step_name
 from .prompt import ANSWER
 
 
@@ -48,6 +49,15 @@ def save_reply(
     # The raw extraction and heading tree stay on the message for confirm. The done
     # event the desk reads does not need them.
     extra = dict(extra or {})
+    if run_id and any(
+        isinstance(item, dict) and item.get("role") == "assistant" and item.get("run_id") == run_id
+        for item in history
+    ):
+        return {
+            "type": "done", "stage": session.get("stage"), "slots": session.get("slots"), "draft": None,
+            "gaps": [], "gaps_detail": [], "advisories": [], "confirm_token": None, "submitted": None,
+            **extra,
+        }
     pending = extra.pop("contract_pending", None)
     assistant: dict[str, Any] = {"role": "assistant", "content": reply}
     if run_id:
@@ -92,11 +102,24 @@ def save_reply(
     series = extra.get("report_series")
     if isinstance(series, list) and series:
         assistant["report_series"] = series
-    record_history(
-        db, session, [*history, {"role": "user", "content": text}, assistant], llm=llm,
-        fold=True, run_id=run_id,
-        **(session_fields or {}),
-    )
+    step = None
+    if run_id:
+        step = db.insert_step(
+            run_id, StepType.MODEL, step_name(StepType.MODEL, None),
+            {"purpose": "orchestrator.history"},
+        )
+    try:
+        record_history(
+            db, session, [*history, {"role": "user", "content": text}, assistant], llm=llm,
+            fold=True, run_id=run_id,
+            **(session_fields or {}),
+        )
+    except Exception as exc:
+        if step is not None:
+            db.finish_step(step["id"], StepStatus.FAILED, None, {"message": str(exc)})
+        raise
+    if step is not None:
+        db.finish_step(step["id"], StepStatus.SUCCEEDED, {"saved": True})
     return {
         "type": "done", "stage": session.get("stage"), "slots": session.get("slots"), "draft": None,
         "gaps": [], "gaps_detail": [], "advisories": [], "confirm_token": None, "submitted": None,
@@ -108,6 +131,7 @@ def answer_directly(
     db: Database, llm: Any, session: dict[str, Any], text: str, *,
     prompt_text: str | None = None, system: str | None = None, extra: dict[str, Any] | None = None,
     done_step: tuple[str, str, str] | None = None, session_fields: dict[str, Any] | None = None,
+    purpose: str = "orchestrator.answer",
 ) -> Iterator[dict[str, Any]]:
     from .status import status
 
@@ -118,6 +142,7 @@ def answer_directly(
     for chunk in model_calls.school_text(
         model_calls.SCHOOL_CHAT, client=llm, system=system,
         messages=_chat_messages(session, prompt_text or text),
+        purpose=purpose,
     ):
         parts.append(chunk)
         yield {"type": "token", "text": chunk}

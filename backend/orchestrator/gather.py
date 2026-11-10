@@ -23,7 +23,7 @@ from ..services.run_names import (
     RunType,
     StepEvent,
 )
-from .plan import PlanTask, ready_wave, run_type_for, tool_name_for
+from .plan import RESULT_STATUSES, PlanTask, parse_tasks, ready_wave, run_type_for, tool_name_for
 
 log = logging.getLogger(__name__)
 
@@ -158,6 +158,12 @@ def _collect_prior(
                     f"invalid result for dependency {dependency_id!r} of task {task.id!r}: "
                     "error must be string or null"
                 )
+            status = result.get("status")
+            if status is not None and status not in RESULT_STATUSES:
+                raise ValueError(
+                    f"invalid result for dependency {dependency_id!r} of task {task.id!r}: "
+                    f"status must be one of {sorted(RESULT_STATUSES)!r}"
+                )
             if not isinstance(result["payload"], dict):
                 raise ValueError(
                     f"invalid result for dependency {dependency_id!r} of task {task.id!r}: "
@@ -171,25 +177,91 @@ def collect_wave(
     db: Database | None, owner: dict[str, Any] | str | None,
     session_id: str, wave_id: str,
 ) -> dict[str, dict[str, Any]]:
-    """Redis is the wave mailbox. Child `output_json` and the owner checkpoint are the record."""
+    """Redis is the wave mailbox. A result already on the owner checkpoint stays first.
+
+    Child `output_json` and Redis fill ids the checkpoint does not have yet.
+    A later Redis write does not replace the checkpoint copy.
+    """
     boxed: dict[str, dict[str, Any]] = {}
+    saved: dict[str, dict[str, Any]] = {}
     owner_id = owner if isinstance(owner, str) else (owner or {}).get("id")
     if db is not None and owner_id:
         state = load_state(latest_checkpoint(db, str(owner_id))) or {}
-        saved = state.get("results") or {}
-        if isinstance(saved, dict):
-            boxed.update({str(key): value for key, value in saved.items() if isinstance(value, dict)})
+        raw = state.get("results") or {}
+        if isinstance(raw, dict):
+            saved = {str(key): value for key, value in raw.items() if isinstance(value, dict)}
         for child in find_runs_by_owner(db, str(owner_id)):
             payload = child.get("input_json") if isinstance(child.get("input_json"), dict) else {}
             if str(payload.get("wave_id") or "") != wave_id:
                 continue
             task_id = str(payload.get("task_id") or "")
             output = child.get("output_json")
-            if task_id and isinstance(output, dict) and output:
+            if task_id and isinstance(output, dict) and output and task_id not in saved:
                 boxed[task_id] = output
     if session_id and wave_id:
-        boxed.update(load_results(session_id, wave_id))
+        for task_id, item in load_results(session_id, wave_id).items():
+            if task_id not in saved and isinstance(item, dict):
+                boxed[task_id] = item
+    boxed.update(saved)
     return boxed
+
+
+def recovered_plan(
+    db: Database, run: dict[str, Any],
+) -> tuple[list[PlanTask], list[str], dict[str, dict[str, Any]]] | None:
+    """Rebuild a plan when the checkpoint row is gone but the PLAN step or children remain.
+
+    None means there is nothing to resume, so the caller may PLAN again.
+    Tasks come from the succeeded PLAN step. Child `output_json` fills results.
+    """
+    tasks = _tasks_from_plan_step(db, run)
+    children = [
+        child for child in find_runs_by_owner(db, str(run.get("id") or ""))
+        if _task_id(child)
+    ]
+    if tasks is None and not children:
+        return None
+    if tasks is None:
+        tasks = []
+        for child in children:
+            payload = child.get("input_json") if isinstance(child.get("input_json"), dict) else {}
+            raw_input = payload.get("input") if isinstance(payload.get("input"), dict) else {}
+            tasks.append(PlanTask(
+                id=_task_id(child),
+                kind=str(payload.get("kind") or "tool"),
+                name=str(payload.get("name") or payload.get("tool_name") or ""),
+                input=dict(raw_input),
+            ))
+    finished: list[str] = []
+    results: dict[str, dict[str, Any]] = {}
+    for child in children:
+        payload = child.get("input_json") if isinstance(child.get("input_json"), dict) else {}
+        task_id = _task_id(child)
+        output = child.get("output_json")
+        if task_id and isinstance(output, dict) and output:
+            results[task_id] = output
+            if task_id not in finished:
+                finished.append(task_id)
+    return tasks, finished, results
+
+
+def _task_id(child: dict[str, Any]) -> str:
+    payload = child.get("input_json") if isinstance(child.get("input_json"), dict) else {}
+    return str(payload.get("task_id") or "")
+
+
+def _tasks_from_plan_step(db: Database, run: dict[str, Any]) -> list[PlanTask] | None:
+    org_id = str(run.get("org_id") or "")
+    if not org_id:
+        return None
+    trace = db.run_trace(org_id, str(run.get("id") or "")) or {}
+    for step in trace.get("steps") or []:
+        step_input = step.get("input_json") if isinstance(step.get("input_json"), dict) else {}
+        if step_input.get("purpose") != "orchestrator.plan" or step.get("status") != "succeeded":
+            continue
+        output = step.get("output_json") if isinstance(step.get("output_json"), dict) else {}
+        return parse_tasks({"tasks": output.get("tasks") or []})
+    return None
 
 
 def finish_child(
@@ -205,6 +277,8 @@ def finish_child(
     owner_id = str(run.get("owner_run_id") or payload.get("owner_run_id") or "")
     if not session_id or not wave_id or not task_id:
         return
+    if result.get("status") not in RESULT_STATUSES:
+        result["status"] = "succeeded" if result.get("ok") is True else "failed"
     if owner_id:
         event_type = StepEvent.TOOL_COMPLETED if result.get("ok") else StepEvent.TOOL_FAILED
         db.record_child_wave_result(

@@ -167,6 +167,7 @@ def run_tool_calls(
     for _ in range(MAX_TOOL_ROUNDS):
         last = model_calls.flash_tools(
             client=llm, system=attach(REACT, memory or ""), messages=messages, tools=schemas,
+            purpose="session.tools",
         )
         if not last.tool_calls:
             if used:

@@ -245,7 +245,7 @@ def test_provider_rate_limit_requeues_with_retry_after(make_db, monkeypatch):
 
     def execute(_run):
         raise ProviderError(
-            "sjtu", "deepseek-chat", "rate_limited",
+            "qwen", "qwen3.7-flash", "rate_limited",
             status_code=429, retry_after_seconds=12, retryable=True,
         )
 
@@ -276,7 +276,7 @@ def test_provider_authentication_fails_the_run(make_db):
     dispatch_pending(db)
 
     def execute(_run):
-        raise ProviderError("sjtu", "deepseek-chat", "authentication", status_code=401, retryable=False)
+        raise ProviderError("qwen", "qwen3.7-flash", "authentication", status_code=401, retryable=False)
 
     assert work_once(db, "worker-a", execute, run_id=run_id) is True
     failed = client.get(f"/runs/{run_id}", headers=HEADERS).json()
@@ -834,14 +834,14 @@ def test_bind_uses_the_injected_client(monkeypatch):
         {"role": "assistant", "content": "先查"},
         {"role": "user", "content": json.dumps({"echo": "hi"}, ensure_ascii=False)},
     ]
-    assert answer.brand == "sjtu"
-    assert answer.model == "deepseek-chat"
-    assert seen["answer"]["model"] == "deepseek-chat"
+    assert answer.brand == "qwen"
+    assert answer.model == "qwen3.7-flash"
+    assert seen["answer"]["model"] == "qwen3.7-flash"
 
     qwen = Client()
-    qwen.brand, qwen.model = "sjtu", "qwen"
+    qwen.brand, qwen.model = "qwen", "qwen3.7-flash"
     _, qwen_answer = bind(qwen, answer_system="用中文回答")
-    assert qwen_answer.model == "deepseek-chat"
+    assert qwen_answer.model == "qwen3.7-flash"
     assert qwen_answer([]) == "好的"
     assert seen["answer"]["system"] == "用中文回答"
 

@@ -1,4 +1,4 @@
-"""Tools return a typed envelope. Translate uses the campus client; search does not hit Bocha."""
+"""Tools return a typed envelope. Translate uses the official Qwen path; search does not hit Bocha."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ class _School:
 
 def _school(monkeypatch, text: str) -> _School:
     client = _School(text)
-    monkeypatch.setattr("backend.llm.client.campus_client", lambda: client)
+    monkeypatch.setattr("backend.llm.client.qwen_client", lambda: client)
     return client
 
 
@@ -39,7 +39,7 @@ def test_translate_returns_only_the_model_text(monkeypatch):
     school = _school(monkeypatch, "ten cases of fish oil")
     out = translate_run({"text": "10 箱鱼油", "target_language": "English"}, llm=FakeLLM())
     assert out == {"ok": True, "data": {"translation": "ten cases of fish oil"}, "error": None}
-    assert school.calls[0]["model"] == "deepseek-chat"
+    assert school.calls[0]["model"] == "qwen3.7-flash"
     assert "10 箱鱼油" in school.calls[0]["messages"][1]["content"]
 
 
@@ -115,7 +115,7 @@ def test_orchestrator_runs_translate_then_answers(monkeypatch):
     assert reply == "ten cases of fish oil"
     assert [c["kind"] for c in llm.calls] == ["complete", "complete"]
     assert llm.calls[0]["tools"] == SCHEMAS
-    assert school.calls[0]["model"] == "deepseek-chat"
+    assert school.calls[0]["model"] == "qwen3.7-flash"
     assert "10 箱鱼油" in school.calls[0]["messages"][1]["content"]
     tool_turn = llm.calls[1]["messages"][-1]
     assert tool_turn["role"] == "tool"
