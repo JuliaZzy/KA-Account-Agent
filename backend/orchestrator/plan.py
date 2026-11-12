@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -183,8 +184,17 @@ def scheduled(tasks: list[PlanTask]) -> list[PlanTask]:
     return kept
 
 
-def _normalize_data_contract(tasks: list[PlanTask]) -> list[PlanTask]:
+# A chart request is recognised in code as well as by the planner: the planner sometimes drops
+# `chart` when the sentence is phrased as a comparison ("对比…，用柱状图"), and then the answer
+# has numbers but no picture. A whole report (report task) draws its own charts.
+_CHART_ASK = re.compile(r"饼图|折线图|柱状图|柱形图|条形图|曲线图|趋势图|占比图|面积图|散点图|图表|画.{0,8}图|做.{0,8}图|\b(chart|plot|graph)\b", re.I)
+
+
+def _normalize_data_contract(tasks: list[PlanTask], message: str = "") -> list[PlanTask]:
     """Fill the deterministic delivery mode on every planned data task."""
+    wants_chart = bool(_CHART_ASK.search(message or "")) and not any(
+        task.kind == "agent" and task.name == "report" for task in tasks
+    )
     data = [task for task in tasks if task.kind == "agent" and task.name == "data"]
     only_data = len(tasks) == 1 and len(data) == 1
     data_ids = {task.id for task in data}
@@ -195,6 +205,10 @@ def _normalize_data_contract(tasks: list[PlanTask]) -> list[PlanTask]:
             continue
         has_downstream = any(task.id in other.depends_on for other in tasks)
         payload = dict(task.input)
+        if payload.get("chart") or wants_chart:
+            payload["chart"] = True
+        else:
+            payload.pop("chart", None)
         payload["deliver"] = "answer" if only_data and not task.depends_on and not has_downstream else "data"
         columns = payload.get("columns", payload.get("required_columns"))
         if isinstance(columns, list):
@@ -307,7 +321,7 @@ def make_plan(
     if caught is None:
         tasks, notes, unknown_ids = _accept(raw)
         tasks = scheduled(tasks)
-        tasks = _normalize_data_contract(tasks)
+        tasks = _normalize_data_contract(tasks, message)
         dropped = _present_drops(notes)
         rejected = reject_plan(tasks, unknown_ids)
         if rejected is not None:

@@ -378,6 +378,10 @@ async def main_async(args, client=None, db=None) -> list[dict]:
     cases = [json.loads(line) for line in open(args.cases, encoding="utf-8")]
     if args.only:
         cases = [c for c in cases if c["id"] in args.only.split(",")]
+    # Files without a `split` (golden_v2, golden_hard_v2) are unaffected. In the merged file the
+    # held-out split only runs when it is asked for by name.
+    wanted = set(args.split.split(",")) if args.split else {"core", "dev"}
+    cases = [c for c in cases if c.get("split", "core") in wanted or "split" not in c]
     out: list[dict] = []
     if args.phase in ("ingest", "ingest-check"):
         own = client is None
@@ -435,6 +439,7 @@ def main() -> int:
                     help="keep 1: purchase_orders before/after counts assume no other writers, and B is a no-load baseline")
     ap.add_argument("--timeout", type=float, default=180)
     ap.add_argument("--only", help="comma-separated case ids")
+    ap.add_argument("--split", help="golden_all_v2 only: comma-separated of core,dev,heldout (default core,dev)")
     ap.add_argument("--inproc", action="store_true", help="ingest: call the import code directly instead of the HTTP route")
     args = ap.parse_args()
     db = None

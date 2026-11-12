@@ -157,7 +157,14 @@ def _candidates(ps: list[Product]) -> list[dict[str, str]]:
     return [{"sku": p.sku, "name": p.display_name} for p in ps]
 
 
-def _resolve_lines(slots: PoSlots, catalog: Catalog) -> list[ResolvedLine]:
+def typed_in(sku: str | None, user_text: str) -> bool:
+    """True when the customer wrote this SKU themselves (whole token, any case) in their own words."""
+    if not sku or not user_text:
+        return False
+    return re.search(rf"(?<![A-Za-z0-9-]){re.escape(sku)}(?![A-Za-z0-9-])", user_text, re.I) is not None
+
+
+def _resolve_lines(slots: PoSlots, catalog: Catalog, user_text: str = "") -> list[ResolvedLine]:
     out: list[ResolvedLine] = []
     for li in slots.line_items:
         cases = max(0, int(li.cases or 0))
@@ -172,6 +179,12 @@ def _resolve_lines(slots: PoSlots, catalog: Catalog) -> list[ResolvedLine]:
         known = catalog.by_sku.get(li.sku.lower()) if li.sku else None
         if exact:
             out.append(_priced(matches[0], cases, li.reference, li.sku))
+        elif known and typed_in(known.sku, user_text):
+            # A SKU the customer typed is naming a product outright, however loosely the rest of the
+            # line reads ("Energy Drink 250 ml (BEV-90435324)" ties three 250 ml drinks on words).
+            # Only text the customer wrote counts: a SKU the model supplied on its own still cannot
+            # settle a tie, which is what the measured case above is about.
+            out.append(_priced(known, cases, li.reference, li.sku))
         elif known and len(matches) <= 1:
             out.append(_priced(known, cases, li.reference, li.sku))
         elif len(matches) == 1:
@@ -265,8 +278,9 @@ def run_code_check(
     ship_to_country: str | None,
     resolve: Resolver | None = None,
     today: str | None = None,
+    user_text: str = "",
 ) -> CheckResult:
-    lines = _resolve_lines(slots, catalog)
+    lines = _resolve_lines(slots, catalog, user_text)
     if resolve:
         lines = _apply_llm_resolution(lines, catalog, resolve)
     subtotal = round(sum(l.line_total or 0 for l in lines), 2)

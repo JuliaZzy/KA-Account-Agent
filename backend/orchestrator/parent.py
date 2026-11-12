@@ -197,5 +197,12 @@ def _materials(results: list[dict[str, Any]]) -> str:
                 row_count=payload.get("row_count"), truncated=bool(payload.get("truncated")),
             )}
             item["payload"] = payload
+        if isinstance(item.get("payload"), dict) and "charts" in item["payload"]:
+            # The option JSON is for the chat window. The answer only needs to know what was drawn.
+            drawn = item["payload"].get("charts") or []
+            item["payload"] = {
+                **{k: v for k, v in item["payload"].items() if k != "charts"},
+                "charts_drawn": [str(c.get("title") or "") for c in drawn if isinstance(c, dict)],
+            }
         rendered.append(item)
     return json.dumps(rendered, ensure_ascii=False, default=str)

@@ -271,6 +271,12 @@ OUT=docs/experiments/exports/load-test-smoke-s1-10
 - 同时检查质量回归和副作用重复拦截。
 - B1 历史合同导入没有模型账本，成本不可回填；新一轮合同导入记录独立 run，`run_golden.py` 保存 OCR 与抽取账本，`summarize_golden.py` 的 `contract_import` 单列导入耗时与费用，不与聊天路径混算。汇总中的 `missing_ledger_samples`、`legacy_ledger_samples` 和 `unknown_usage_calls` 非零时，已知费用只是下限，不能当完整成本与历史结果直接比较。
 
+### 实验 C0：text2sql 选型（2026-11 完成）
+
+不是原计划里的实验，是做 C 之前需要先定的事：text2sql 用旧 workflow 还是 ReAct。结论是只保留 ReAct，旧 workflow 不再对比。过程和修复见记录 15 到 23：
+workflow 对 ReAct（16）、难题开发集（17、18）、留出集（19）、全量金标回归（20、22、23）和修复（21）。
+ReAct 的优势集中在空结果重查和报错修复，成本约高 37% 到 45%。C 的优化前基线用记录 23 的最终回归。评测集合并为 `golden_all_v2.jsonl`（`split` = core / dev / heldout），用法见 `merge_golden_v2.py`。
+
 ### 实验 C：上下文和 Token 优化
 
 比较历史消息裁剪、长期记忆摘要、工具 Schema 精简和模型调用预算变化。

@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-from backend.llm.pricing import call_cost_cny, is_deepseek_peak
+from backend.llm.pricing import call_cost_cny
 from scripts.load_test_chat import _percentile, summarize_usage_rows
 from scripts.resume_metrics import load_test_metrics
 
@@ -97,11 +97,9 @@ def test_zero_timeouts_are_not_replaced_by_other_failures(tmp_path):
 
 
 def test_qwen_and_deepseek_pricing_and_usage_summary():
-    # Weekday 02:30 UTC is 10:30 Beijing time (peak); 00:30 UTC is 08:30 Beijing time (off-peak).
+    # Weekday 02:30 UTC is 10:30 Beijing time, inside the vendor's peak window; pricing ignores it.
     peak_time = datetime(2026, 11, 10, 2, 30, tzinfo=UTC)
     offpeak_time = datetime(2026, 11, 10, 0, 30, tzinfo=UTC)
-    assert is_deepseek_peak(peak_time) is True
-    assert is_deepseek_peak(offpeak_time) is False
 
     # qwen3.7-flash <=32K tier: miss ¥0.20/1M, implicit hit ¥0.04/1M (20%), output ¥0.80/1M
     qwen_short = call_cost_cny(
@@ -125,7 +123,7 @@ def test_qwen_and_deepseek_pricing_and_usage_summary():
     )
     assert round(qwen_long, 4) == round(0.5 * 1.20 + 0.5 * 0.24 + 4.80, 4)
 
-    # deepseek-flash peak (¥2.00 miss / ¥0.04 hit / ¥8.00 out) vs off-peak (half)
+    # deepseek-flash is always priced off-peak (¥1.00 miss / ¥0.02 hit / ¥4.00 out), at any hour
     ds_peak = call_cost_cny(
         "deepseek",
         "deepseek-flash",
@@ -144,8 +142,8 @@ def test_qwen_and_deepseek_pricing_and_usage_summary():
         cache_miss_tokens=500_000,
         created_at=offpeak_time,
     )
-    assert round(ds_peak, 4) == round(0.5 * 2.00 + 0.5 * 0.04 + 8.00, 4)
-    assert round(ds_offpeak, 4) == round(ds_peak / 2, 4)
+    assert round(ds_peak, 4) == round(0.5 * 1.00 + 0.5 * 0.02 + 4.00, 4)
+    assert round(ds_offpeak, 4) == round(ds_peak, 4)
 
     usage = summarize_usage_rows(
         [

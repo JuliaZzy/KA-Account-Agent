@@ -1046,6 +1046,26 @@ def _charts(llm: Any, message: str, asked: list[_Ask], trace: _RunTrace | None =
     return charts or [], [format_failures(attempts)] if attempts else []
 
 
+def chart_for_query(
+    db: Database, llm: Any, message: str, question: str, result: QueryResult, *,
+    partnership_id: str, brand_id: str, distributor_id: str, session_id: str,
+    run_id: str | None = None, step_id: str | None = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """One chart for a single chat question, from rows text2sql already fetched.
+
+    The report draft draws charts per section; a lone "draw me a pie" never reaches it, so the data
+    path calls this instead. Same chart prompt, schema, id and axis fitting as the draft.
+    Returns ``(charts, failures)``; an empty ``charts`` means nothing was drawn and the caller must say so.
+    """
+    asked = [_Ask("chart", question, result)]
+    _hydrate_full_rows(
+        db, asked, partnership_id=partnership_id, brand_id=brand_id,
+        distributor_id=distributor_id, session_id=session_id,
+    )
+    made, failures = _charts(llm, message, asked, trace=_RunTrace(db=db, run_id=run_id, step_id=step_id))
+    return fit_chart_axes(_assign_chart_ids(made, set())), failures
+
+
 def _query_results(asked: list[_Ask], *, include_full: bool = False) -> list[dict[str, Any]]:
     """Every successful text2sql result on this draft. Later chapters can read earlier rows."""
     results = []

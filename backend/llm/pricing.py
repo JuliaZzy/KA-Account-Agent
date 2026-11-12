@@ -11,38 +11,21 @@ Prices are per 1,000,000 tokens and follow the vendor billing pages checked on
     <=32K tier). Explicit cache creation: 125% of standard input price; explicit
     cache hit: 10% of standard input price.
 - DeepSeek official API ``deepseek-flash`` (``DeepSeek-V4.1-Flash-1017``):
-  - Peak hours (Monday-Friday 09:00-12:00 and 14:00-18:00 Beijing time, UTC+8):
-    cache hit input ¥0.04 / 1M, cache miss input ¥2.00 / 1M, output ¥8.00 / 1M.
-  - Off-peak hours (all other weekday hours and all day Saturday/Sunday):
-    cache hit input ¥0.02 / 1M, cache miss input ¥1.00 / 1M, output ¥4.00 / 1M.
+  - Always priced at the off-peak rate: cache hit input ¥0.02 / 1M, cache miss input
+    ¥1.00 / 1M, output ¥4.00 / 1M. The vendor charges double during weekday Beijing peak
+    hours (09:00-12:00, 14:00-18:00), but the experiments are compared on one fixed price
+    table so that the time of day a run happened to start at never changes a cost number.
+    ``created_at`` is still accepted by the helpers below and ignored for DeepSeek.
 - Zhipu GLM-OCR: input and output ¥0.20 / 1M tokens, checked 2026-11-10.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import datetime
 from typing import Any
 
-_BEIJING_TZ = timezone(timedelta(hours=8))
 _PER_MILLION = 1_000_000.0
-
-
-def is_deepseek_peak(at: datetime | None = None) -> bool:
-    """Return True when ``at`` falls in DeepSeek's weekday Beijing peak windows.
-
-    When ``at`` is omitted, default to peak pricing so budget guards do not
-    under-estimate daytime traffic.
-    """
-    if at is None:
-        return True
-    if at.tzinfo is None:
-        at = at.replace(tzinfo=UTC)
-    bj = at.astimezone(_BEIJING_TZ)
-    if bj.weekday() >= 5:
-        return False
-    hm = (bj.hour, bj.minute)
-    return (9, 0) <= hm < (12, 0) or (14, 0) <= hm < (18, 0)
 
 
 def _qwen_tier_rates(prompt_tokens: int) -> tuple[float, float]:
@@ -107,10 +90,7 @@ def call_cost_cny(
             + completion * out_rate
         ) / _PER_MILLION
     if name == "deepseek-flash" or brand in ("deepseek", "ds"):
-        peak = is_deepseek_peak(created_at)
-        in_rate = 2.00 if peak else 1.00
-        hit_rate = 0.04 if peak else 0.02
-        out_rate = 8.00 if peak else 4.00
+        in_rate, hit_rate, out_rate = 1.00, 0.02, 4.00
         return ((miss + creation) * in_rate + hit * hit_rate + completion * out_rate) / _PER_MILLION
     return 0.0
 

@@ -59,6 +59,40 @@ def test_data_delivery_mode_is_derived_from_the_plan_shape():
     assert mixed[0].input["deliver"] == "data"
 
 
+def test_chart_flag_on_a_data_task_is_kept_as_a_bool_and_dropped_when_falsy():
+    tasks = _normalize_data_contract(parse_tasks({"tasks": [
+        {"id": "a", "kind": "agent", "name": "data", "input": {"question": "q", "chart": "pie"}, "depends_on": []},
+        {"id": "b", "kind": "agent", "name": "data", "input": {"question": "q", "chart": False}, "depends_on": []},
+    ]}))
+    assert tasks[0].input["chart"] is True
+    assert "chart" not in tasks[1].input
+
+
+def test_a_chart_request_in_the_message_sets_chart_even_if_the_planner_forgot_it():
+    def plan():
+        return parse_tasks({"tasks": [
+            {"id": "d", "kind": "agent", "name": "data", "input": {"question": "q"}, "depends_on": []},
+        ]})
+
+    assert _normalize_data_contract(plan(), "对比2026年9月的采购金额和销售额，用柱状图。")[0].input["chart"] is True
+    assert "chart" not in _normalize_data_contract(plan(), "2026年9月采购总金额是多少？")[0].input
+    with_report = _normalize_data_contract(parse_tasks({"tasks": [
+        {"id": "d", "kind": "agent", "name": "data", "input": {"question": "q"}, "depends_on": []},
+        {"id": "r", "kind": "agent", "name": "report", "input": {}, "depends_on": []},
+    ]}), "出一份月报，带饼图")
+    assert "chart" not in with_report[0].input
+
+
+def test_answer_materials_replace_chart_options_with_what_was_drawn():
+    text = _materials([{
+        "id": "d", "status": "succeeded", "ok": True, "error": None,
+        "payload": {"chart": {"requested": True, "produced": True},
+                    "charts": [{"title": "渠道占比", "echarts_option": {"series": [1] * 500}}]},
+    }])
+    assert "渠道占比" in text and "charts_drawn" in text
+    assert "echarts_option" not in text
+
+
 def test_kind_is_derived_from_the_name_and_never_asked_of_the_model():
     tasks = parse_tasks({"tasks": [
         {"id": "d", "name": "data_agent", "input": {"question": "total"}, "depends_on": []},
@@ -206,3 +240,19 @@ def test_a_second_result_keeps_the_first_and_a_lost_checkpoint_does_not_replan(d
     answered = load_state(latest_checkpoint(db, run_id))
     assert answered["phase"] == "answer_done"
     assert answered["results"]["x"]["id"] == "x"
+
+
+def test_scope_flags_another_party_the_user_named():
+    from types import SimpleNamespace as NS
+
+    from backend.services.session_tools import _scope
+
+    def ps(brand, dist):
+        return NS(brand_name=brand, distributor_name=dist)
+
+    mine = ps("Activia", "海纳分销")
+    db = NS(partnerships=lambda: [mine, ps("Activia", "联采贸易"), ps("Red Bull", "联采贸易")])
+    assert _scope(db, mine, "联采贸易2026年9月的采购总金额")["user_named_other"] == ["联采贸易"]
+    assert _scope(db, mine, "Red Bull 的订单")["user_named_other"] == ["Red Bull"]
+    # Naming your own distributor or brand is not a mismatch.
+    assert "user_named_other" not in _scope(db, mine, "海纳分销 Activia 9月采购额")

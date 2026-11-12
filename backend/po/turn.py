@@ -23,7 +23,7 @@ from ..memory import prompt_context, recall, record_history, summary_block, with
 from ..orchestrator.status import status
 from ..schemas import AgentSettings, CommercialRule, Partnership
 from .catalog import Catalog
-from .check import CheckResult, run_code_check
+from .check import CheckResult, run_code_check, typed_in
 from .draft import build_draft, build_draft_summary, hash_draft
 from .extract import extract_turn
 from .reply import ReplyInput, stream_reply
@@ -57,7 +57,7 @@ def load_bundle(db: Database, partnership_id: str, user_id: str | None = None) -
 
 
 def _check(
-    bundle: Bundle, slots: PoSlots, llm: Any | None, *, resolve_names: bool = True,
+    bundle: Bundle, slots: PoSlots, llm: Any | None, *, resolve_names: bool = True, user_text: str = "",
 ) -> CheckResult:
     # Confirm passes resolve_names=False. The conversation already settled the slots.
     resolve = (
@@ -67,11 +67,16 @@ def _check(
     check = run_code_check(
         slots=slots, catalog=bundle.catalog, rules=bundle.rules,
         partnership_id=bundle.partnership.id, ship_to_country=bundle.partnership.ship_to_country, resolve=resolve,
+        user_text=user_text,
     )
     # Persist resolved SKUs into the slots so a resolved line isn't re-searched next turn.
     for l, li in zip(check.lines, slots.line_items, strict=True):
         if l.resolved and l.sku:
             li.sku = l.sku
+            if typed_in(l.sku, user_text):
+                # Confirm re-checks without the chat. Keep the customer's own SKU as the reference
+                # so the line resolves the same way then (an exact SKU always wins the search).
+                li.reference = l.sku
     return check
 
 
@@ -150,7 +155,8 @@ def prepare_order(
         slots, language = current, "English"
 
     events.append(status("po-check", "核对", "正在算价格、起订量和规则", state="running"))
-    check = _check(bundle, slots, llm)
+    said = "\n".join([message, *(str(m.get("content") or "") for m in history if m.get("role") == "user")])
+    check = _check(bundle, slots, llm, user_text=said)
     stage = "confirm" if check.ready else "gathering"
     events.append(status("po-check", "核对", "可以确认" if stage == "confirm" else "还有缺项", state="done"))
     draft = build_draft(slots, check, bundle.partnership.currency, bundle.settings)

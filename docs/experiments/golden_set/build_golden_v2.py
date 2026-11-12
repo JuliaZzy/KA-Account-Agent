@@ -205,9 +205,9 @@ add("plan-03", "plan", "ps-liancai-01", "Activia 品牌的价格政策和返利�
     "brand_documents 为空。应说没有品牌资料，不能编。（Brand RAG 暂不评测，这条只测“无资料不乱编”。）")
 
 # ---------- Contract (negative only until the demo agreement is ingested) ----------
-add("con-01", "contract", "ps-liancai-01", "这份经销协议里的最小起订量和折扣条款是什么？",
+add("con-01", "contract", "ps-liancai-02", "这份经销协议里的最小起订量和折扣条款是什么？",
     [{"type": "refuses_or_not_found", "hard": True}, JUDGE("没有编造条款内容")], None, None, ["empty-source", "negative"],
-    "contracts 全空时的行为：说没有协议，不编条款。必须在上传协议之前跑（phase=pre_contract）。", phase="pre_contract")
+    "contracts 全空时的行为：说没有协议，不编条款。seed_v2 里协议已上传给 ps-liancai-01 和 -13，所以这题改在没有协议的 ps-liancai-02 上跑（phase=pre_contract，不需要在上传前）。", phase="pre_contract")
 
 # ---------- Purchase order flow ----------
 pp = pd.read_csv(D / "products.csv")

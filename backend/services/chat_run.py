@@ -330,6 +330,8 @@ def _apply_desk_payload(
             }
         if payload.get("handoff"):
             side.append({"type": "warning", "message": payload["handoff"]})
+        if payload.get("charts"):
+            extra["charts"] = payload["charts"]
     if name == "brand.search":
         hits = payload.get("hits")
         if isinstance(hits, list) and hits:

@@ -18,7 +18,7 @@ from ..mcp.runtime import get_hub, make_mcp_tool_fn, mcp_enabled
 from ..memory import prompt_context, standing_block, summary_block
 from ..po.agent import collect_order
 from ..po.turn import load_bundle
-from ..report.turn import ReportDraft, iter_draft
+from ..report.turn import ReportDraft, chart_for_query, iter_draft
 from ..text2sql.impl import answer_question_impl
 from ..tools import exchange_rate, lang_translate, send_email, web_search
 from .run_loop import Tool, ToolRegistry
@@ -118,7 +118,7 @@ def tools(
         Tool(
             name="data.query",
             description="Answer a question with rows from this partnership's tables through creating a SQL query.",
-            fn=_data_query(db, session, text, bundle),
+            fn=_data_query(db, llm, session, text, bundle),
             parameters=_QUESTION,
             timeout_seconds=120,
             retryable_errors=_RETRY_QUERY,
@@ -197,7 +197,30 @@ def _report_draft(db, llm, session, text, bundle):
         }
     return run
 
-def _data_query(db, session, text, bundle):
+def _scope(db, partnership, text: str) -> dict[str, Any]:
+    """Whose numbers a query returns, plus any other party the user named.
+
+    The model is told to open with "I can only see X" when the user names someone else, but it
+    skips that when nothing looks wrong (the numbers come back fine, just for the wrong party).
+    Matching names against the other partnerships is deterministic, so the answer gets a field to
+    act on instead of having to notice the mismatch itself."""
+    scope: dict[str, Any] = {"brand": partnership.brand_name, "distributor": partnership.distributor_name}
+    own = {partnership.brand_name, partnership.distributor_name}
+    named: list[str] = []
+    try:
+        others = db.partnerships()
+    except Exception:  # scope is advisory; never fail a query over it
+        others = []
+    for other in others:
+        for name in (other.distributor_name, other.brand_name):
+            if name and name not in own and name in text and name not in named:
+                named.append(name)
+    if named:
+        scope["user_named_other"] = named
+    return scope
+
+
+def _data_query(db, llm, session, text, bundle):
     def run(args: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
         ctx = context or {}
         run_id = ctx.get("run_id") if isinstance(ctx.get("run_id"), str) else None
@@ -217,10 +240,28 @@ def _data_query(db, session, text, bundle):
             "query result is missing required columns: " + ", ".join(result.missing_columns)
             if result.missing_columns else result.error
         )
+        asked_chart = bool(args.get("chart"))
+        charts: list[dict[str, Any]] = []
+        chart_error: str | None = None
+        if asked_chart and result.ok and result.rows:
+            try:
+                charts, failures = chart_for_query(
+                    db, llm, text, str(args.get("question") or "").strip() or _asked(args, text),
+                    result, partnership_id=partnership.id, brand_id=partnership.brand_id,
+                    distributor_id=partnership.distributor_id, session_id=session["id"],
+                    run_id=run_id, step_id=step_id,
+                )
+                chart_error = failures[0] if failures and not charts else None
+            except Exception as err:  # a failed chart must not turn a good answer into a failed query
+                chart_error = str(err).split("\n", 1)[0][:200]
         return {
             "ok": result.ok and not result.missing_columns,
             "complete": result.ok and not result.missing_columns,
             "deliver": str(args.get("deliver") or "data"),
+            # Whose numbers these are: the answer must not present them as another party's.
+            "scope": _scope(db, partnership, text),
+            "chart": {"requested": asked_chart, "produced": bool(charts), "error": chart_error} if asked_chart else None,
+            "charts": charts,
             "row_count": result.row_count,
             "columns": result.columns,
             "missing_columns": result.missing_columns,

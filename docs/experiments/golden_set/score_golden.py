@@ -19,7 +19,7 @@ COLUMN_ALIASES = {"line_total": {"line_total", "total_amount", "amount", "total"
                   "category": {"category", "product_category", "category_name"},
                   "quantity": {"quantity", "cases", "case_count", "purchase_cases", "purchase_boxes", "total_boxes",
                                "box_count", "boxes", "total_quantity", "total_cases", "total_quantity_boxes"}}
-REFUSE = ["无法", "不能", "不允许", "没有权限", "无权", "只读", "拒绝", "不可以", "抱歉", "超出", "仅限", "cannot", "can't", "not allowed", "unable"]
+REFUSE = ["无法", "不能", "不允许", "没有权限", "无权", "只读", "拒绝", "不可以", "抱歉", "超出", "仅限", "看不到", "只能查看", "cannot", "can't", "not allowed", "unable"]
 NODATA = ["没有", "无数据", "暂无", "未找到", "不存在", "没有订单", "没有数据", "为空", "no data", "no orders", "not found",
           # the agent's own phrasings ("没拿到 / 查不到 / 未查到") and "please attach the file" for a missing agreement
           "没拿到", "未拿到", "没查到", "查不到", "未查到", "查无", "请附上", "请上传", "未提供"]
@@ -113,7 +113,9 @@ def contract_mismatches(ex, exp):
     return bad
 
 def run_check(c, r):
-    t, ans = c["type"], r.get("answer") or ""
+    # Bold/code marks are presentation, not content: "**不会** 自动续约" must read as "不会 自动续约".
+    # The mark often leaves a stray space between Chinese characters, which is not content either.
+    t, ans = c["type"], re.sub(r"(?<=[\u4e00-\u9fff])[ \t]+(?=[\u4e00-\u9fff])", "", re.sub(r"[*`]", "", r.get("answer") or ""))
     if t == "judge": return "pending"
     if t == "numbers_present":
         if not ans: return "n/a"
@@ -203,7 +205,7 @@ def run_check(c, r):
     return "n/a"
 
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument("--cases"); ap.add_argument("--results"); ap.add_argument("--phase", help="only score cases of this phase (plus phase=any)")
+    ap = argparse.ArgumentParser(); ap.add_argument("--cases"); ap.add_argument("--results"); ap.add_argument("--phase", help="only score cases of this phase (plus phase=any)"); ap.add_argument("--split", help="golden_all_v2 only: comma-separated splits to score (default: all that have results)")
     a = ap.parse_args()
     cases = [json.loads(l) for l in open(a.cases, encoding="utf-8")]
     res = collections.defaultdict(list)
@@ -213,6 +215,7 @@ def main():
     rows, bycat = [], collections.defaultdict(lambda: [0, 0, 0])  # runs, pass, na
     for c in cases:
         if a.phase and c.get("phase", "any") not in (a.phase, "any"): continue
+        if a.split and c.get("split", "core") not in a.split.split(","): continue
         runs = res.get(c["id"], [])
         outs = []
         for r in runs:

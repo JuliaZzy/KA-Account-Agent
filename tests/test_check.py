@@ -16,8 +16,11 @@ def slots(*lines: tuple[str, int, str | None], discount: Discount | None = NO_DI
     return PoSlots(line_items=[LineItemSlot(reference=r, cases=c, sku=s) for r, c, s in lines], discount=discount)
 
 
-def check(catalog, s: PoSlots, resolve=None, rules=()):
-    return run_code_check(slots=s, catalog=catalog, rules=list(rules), partnership_id="ps-1", ship_to_country="US", resolve=resolve)
+def check(catalog, s: PoSlots, resolve=None, rules=(), user_text: str = ""):
+    return run_code_check(
+        slots=s, catalog=catalog, rules=list(rules), partnership_id="ps-1", ship_to_country="US",
+        resolve=resolve, user_text=user_text,
+    )
 
 
 def kinds(r) -> list[str]:
@@ -113,6 +116,23 @@ def test_persisted_sku_skips_search(catalog):
 def test_exact_name_beats_its_longer_sibling(catalog):
     assert check(catalog, slots(("Radiance Serum", 10, None))).lines[0].sku == "SR-200"
     assert check(catalog, slots(("Radiance Serum Plus", 10, None))).lines[0].sku == "SR-201"
+
+
+def test_a_sku_the_customer_typed_settles_a_tie_in_the_words(catalog):
+    # "the serum" ties SR-200 and SR-201. The customer also wrote SR-200 themselves.
+    r = check(catalog, slots(("the serum", 10, "SR-200")), user_text="Order the serum (SR-200), 10 cases")
+    assert r.lines[0].sku == "SR-200" and not r.lines[0].ambiguous and r.lines[0].line_total == 500
+
+
+def test_a_sku_only_the_model_supplied_still_cannot_settle_the_tie(catalog):
+    r = check(catalog, slots(("the serum", 10, "SR-200")), user_text="Order the serum, 10 cases")
+    assert r.lines[0].ambiguous
+
+
+def test_a_typed_sku_must_be_a_whole_token(catalog):
+    # SR-2000 is not SR-200: a prefix match would silently pick a different product.
+    r = check(catalog, slots(("the serum", 10, "SR-200")), user_text="the serum SR-2000")
+    assert r.lines[0].ambiguous
 
 
 def test_guessed_sku_on_a_vague_reference_stays_ambiguous(catalog):
