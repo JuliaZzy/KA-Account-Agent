@@ -1,4 +1,4 @@
-"""Desk-wide reads: service index, model list, partnerships."""
+"""Desk-wide reads: service index, metadata, partnerships."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends
 from .. import service
 from ..db import Database
 from ..deps import get_db
-from ..llm_config import LLM_CONFIGS
 from ..memory import KIND_LABELS
 from ..schemas import PRODUCT_STATUS_VALUES
 
@@ -23,19 +22,7 @@ def index() -> dict[str, str]:
 
 @router.get("/api/meta")
 def meta() -> dict[str, Any]:
-    models = [
-        {
-            "id": row.id,
-            "label": row.id,
-            "short": row.id,
-            "vision": row.id == "deepseek-flash",
-            "thinking": row.thinking,
-        }
-        for row in LLM_CONFIGS
-    ]
     return {
-        "models": models,
-        "default_model": models[0]["id"] if models else "",
         "product_statuses": list(PRODUCT_STATUS_VALUES),
         "memory_kinds": KIND_LABELS,
         "max_images": service.MAX_IMAGES,

@@ -37,7 +37,6 @@ def enqueue_chat_run(
     *,
     images: list[str] | None = None,
     documents: list[tuple[str, bytes]] | None = None,
-    model: str | None = None,
     attachments: list[str] | None = None,
 ) -> dict[str, Any]:
     """Create through the outbox and dispatch. Do not claim the run.
@@ -71,7 +70,6 @@ def enqueue_chat_run(
             "message": (message or "")[:4000],
             "images": [url for url in (images or []) if isinstance(url, str)],
             "documents": filed,
-            "model": (model or "").strip() or None,
             "attachments": attachments,
         },
         max_model_calls=chat_budget.max_model_calls,
@@ -316,11 +314,18 @@ def _apply_desk_payload(
     if name == "data.query":
         side.append({
             "type": "data", "ok": bool(payload.get("ok")),
-            "row_count": payload.get("row_count") or 0, "log_id": payload.get("log_id"),
+            "row_count": payload.get("row_count") or 0,
+            "columns": payload.get("columns") or [],
+            "missing_columns": payload.get("missing_columns") or [],
+            "truncated": bool(payload.get("truncated")), "log_id": payload.get("log_id"),
         })
         if payload.get("log_id"):
             extra["data_query"] = {
                 "ok": bool(payload.get("ok")), "row_count": payload.get("row_count") or 0,
+                "columns": payload.get("columns") or [],
+                "missing_columns": payload.get("missing_columns") or [],
+                "truncated": bool(payload.get("truncated")),
+                "rows_handle": payload.get("rows_handle"),
                 "error": payload.get("error"), "log_id": payload["log_id"],
             }
         if payload.get("handoff"):

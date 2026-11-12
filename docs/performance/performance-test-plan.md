@@ -239,6 +239,18 @@ OUT=docs/experiments/exports/load-test-smoke-s1-10
 
 ## 5. 第 8 条实验计划
 
+### 执行顺序（A 之后，2026-11-10 调整）
+
+字母只是实验编号，不是执行顺序。A 之后按下面的顺序，让每一轮的数据被后面复用：
+
+1. **B1：golden set 一遍（并发 1）**：同时得到质量基线、无竞争延迟，以及 C 需要的优化前 Token/成本。**已完成**（记录 14）。
+2. **B2：并发 5 压测**：用 golden 里几条代表性问题当模板。这一轮同时是 D 的 Worker=5 数据点。
+3. **D：补 Worker 3 和 10 两轮**：只改 Worker 数，其余与 B2 完全一致。
+4. **C：做 Token/上下文优化**：每次只改一处，再跑一遍 golden set（并发 1），与 B1 对比；质量不得低于 B1 的阈值。
+5. **E：最后单独跑**：故障注入会污染延迟和完成率，所以不与上面混跑。
+
+复用的前提：B2/D 的模板、租户分布、timeout 固定；C 对比必须同一份 `golden_v1.jsonl`、并发 1、同样的判分口径（B1 记录里的修订口径）。
+
 ### 实验 A：运行链路基线
 
 目的：测量 API、outbox、Redis、Celery、Postgres、Worker 和 SSE/API 周边的基础耗时。
@@ -251,18 +263,19 @@ OUT=docs/experiments/exports/load-test-smoke-s1-10
 
 ### 实验 B：领域路径基线
 
-目的：分别测量 Text2SQL、品牌检索、报表和采购路径，定位模型、检索、数据库或工具耗时。
+目的：分别测量 Text2SQL、品牌检索、报表和采购路径，定位模型、检索、数据库或工具耗时。分两步：B1 = golden set 并发 1（已完成，记录 14）；B2 = 并发 5 压测，同时作为 D 的 Worker=5 数据点。
 
 - 每个场景先 20 条看 P50 和 P95；
 - 要报该场景 P99 时，成功样本凑到 300，不要 50～200 就写 P99；
 - 采购确认、发信和 MCP 副作用不直接压测真实外部系统，使用 Fake 或 dry-run 适配器；
 - 同时检查质量回归和副作用重复拦截。
+- B1 历史合同导入没有模型账本，成本不可回填；新一轮合同导入记录独立 run，`run_golden.py` 保存 OCR 与抽取账本，`summarize_golden.py` 的 `contract_import` 单列导入耗时与费用，不与聊天路径混算。汇总中的 `missing_ledger_samples`、`legacy_ledger_samples` 和 `unknown_usage_calls` 非零时，已知费用只是下限，不能当完整成本与历史结果直接比较。
 
 ### 实验 C：上下文和 Token 优化
 
 比较历史消息裁剪、长期记忆摘要、工具 Schema 精简和模型调用预算变化。
 
-- 固定同一批质量评测样本；
+- 固定同一批质量评测样本：即 golden set（`golden_v1.jsonl`，并发 1），优化前基线直接取 B1；
 - 记录平均、P50 和 P95 的 Prompt Token、Completion Token、单 Run 成本；
 - 记录可用样本的缓存命中 token、未命中 token、缓存创建 token 和命中率，并按 provider/model 分开；
 - 记录命中率与模型调用延迟的变化，不能只看 `prompt_tokens` 是否减少；
@@ -273,7 +286,7 @@ OUT=docs/experiments/exports/load-test-smoke-s1-10
 比较单波串行、依赖分波和多个 Worker 并发下的完成时间、队列等待、吞吐和失败率。
 
 - 使用 `tests/test_fanout.py` 的多任务场景；
-- 使用 3、5、10 个 Worker 并发配置做独立实验；
+- 使用 3、5、10 个 Worker 并发配置做独立实验；其中 Worker=5 直接取 B2，只需补 3 和 10 两轮；
 - 关注模型 provider 并发上限，不能只增加 Worker 数量。
 
 现有 `--concurrency` 是闭环并发：一个请求完成或客户端超时后才放行下一个，适合测固定并发下的表现。研究固定到达率时另用开环模式，例如 `--arrival-rate 30 --max-pending 20` 表示计划每分钟到达 30 条，生成器内在途和等待总数最多 20。记录计划到达时间、实际发送时间、生成器延迟、offered、submitted、generator_dropped、完成速率和服务端队列状态。`open_loop_send_rate_per_minute` 按首末实际发送间隔计算；完成速率按从调度开始到所有已发送请求返回的时间计算。生成器丢弃不算服务端失败；请求耗时从实际发送开始，需同时观察生成器延迟。先从低速小样本开始，不与闭环基线直接混算。
@@ -368,8 +381,9 @@ Cache Hit Ratio（仅统计有缓存字段的样本）：
 
 - [`12-a3-r2-greeting-2000.md`](../experiments/records/12-a3-r2-greeting-2000.md)（A3 r2：修复后复测，对话 2000/2000、最长 19s、连接泄漏 27→5；但暴露补投把「在排队」当成「丢了」：标题队列积压触发 3083 次补投、误杀 24 个 Run）
 - [`13-a3-r3-greeting-2000.md`](../experiments/records/13-a3-r3-greeting-2000.md)（A3 r3：补投先看队列深度 + title-worker 并发 3；4000 个 Run 全成功、补投 0 次、死信 0；P50 5.0s / P95 7.6s / P99 9.7s，比 r1 慢约 8% 原因未区分；单条 ¥0.000303）
+- [`14-b-domain-baseline-golden.md`](../experiments/records/14-b-domain-baseline-golden.md)（B1：39 条 golden set × 3 次；质量 67%（原版口径 51%）；Text2SQL P50 12.8s / P95 17.9s、约 95% 是串行模型调用；月报 66s / 31 次调用 / ¥0.018；报表 0/21，发现图表谎报、SKU 歧义、`ROUND` 类型错误、月份口径不一致）
 
-下一步：进入实验 B。A3 里 DB 重试与 Qwen 超时只有单测、没被真实压测触发，不要说成已在压测中验证。
+下一步：按 §5「执行顺序」——B2（并发 5）→ D（Worker 3/10）→ C → E。B1 已完成（记录 14），其发现的问题是否先修待定。A3 里 DB 重试与 Qwen 超时只有单测、没被真实压测触发，不要说成已在压测中验证。
 
 ## 8. 当前缺口
 

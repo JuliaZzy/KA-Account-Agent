@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import re
 from typing import Any
 
@@ -13,8 +14,24 @@ from .support import _row_dict, utcnow
 _READER_ROLE = "text2sql_reader"
 
 
+class ScopedRows(list[dict[str, Any]]):
+    """Rows returned by a bounded query, with an explicit truncation marker."""
+
+    def __init__(
+        self, rows: list[dict[str, Any]], *, columns: list[str] | None = None, truncated: bool = False,
+        row_count: int | None = None,
+    ):
+        super().__init__(rows)
+        self.columns = list(columns or [])
+        self.truncated = truncated
+        self.row_count = len(rows) if row_count is None else row_count
+
+
 class Text2SqlMixin:
-    def run_scoped_read(self, sql: str, views: list[tuple[str, str]], params: dict[str, Any]) -> list[dict[str, Any]]:
+    def run_scoped_read(
+        self, sql: str, views: list[tuple[str, str]], params: dict[str, Any], *, max_rows: int | None = 200,
+        count_sql: str | None = None,
+    ) -> ScopedRows:
         """Run one SELECT against TEMP views as `text2sql_reader`, then roll back.
 
         Each view already filters to the partnership (or its brand). The reader role has
@@ -23,7 +40,9 @@ class Text2SqlMixin:
         or read server files. The rollback drops the views and resets the role. Scope ids
         are inlined as quoted literals: a view body cannot keep a bind parameter. The user
         statement goes through `text()` with colons escaped, so `::cast` stays a cast and
-        `%` in a LIKE pattern is not eaten as a driver placeholder.
+        `%` in a LIKE pattern is not eaten as a driver placeholder. At most 200 rows are
+        returned by default; the result carries `truncated=True` when a 201st row exists.
+        Internal code consumers can pass `max_rows=None` to read the complete result.
         """
         statement = (sql or "").strip()
         if not re.match(r"^(select|with)\b", statement, re.IGNORECASE):
@@ -54,7 +73,23 @@ class Text2SqlMixin:
                 conn.exec_driver_sql(f"SET LOCAL ROLE {_READER_ROLE}")
                 result = conn.execute(text(statement.replace(":", r"\:")))
                 keys = list(result.keys())
-                return [{key: row._mapping[key] for key in keys} for row in result.fetchmany(200)]
+                if max_rows is None:
+                    fetched = result.fetchall()
+                    return ScopedRows(
+                        [{key: row._mapping[key] for key in keys} for row in fetched],
+                        columns=[str(key) for key in keys],
+                    )
+                fetched = result.fetchmany(max_rows + 1)
+                rows = [{key: row._mapping[key] for key in keys} for row in fetched[:max_rows]]
+                truncated = len(fetched) > max_rows
+                row_count = len(rows)
+                if count_sql:
+                    total = conn.execute(text(count_sql.replace(":", r"\:"))).scalar_one()
+                    row_count = int(total)
+                    truncated = truncated or row_count > len(rows)
+                return ScopedRows(
+                    rows, columns=[str(key) for key in keys], truncated=truncated, row_count=row_count,
+                )
             finally:
                 trans.rollback()
 
@@ -74,16 +109,44 @@ class Text2SqlMixin:
                 user_feedback=row.get("user_feedback"),
                 feedback_reason=row.get("feedback_reason"),
                 corrected_sql=row.get("corrected_sql"),
+                run_id=row.get("run_id"),
+                turn=row.get("turn"),
+                score=row.get("score"),
                 created_at=row.get("created_at") or utcnow(),
             )
             s.add(log)
             s.flush()
             return log.id
 
-    def list_text2sql_logs(self, partnership_id: str | None = None, *, limit: int = 200) -> list[dict[str, Any]]:
+    def set_text2sql_score(self, id: int, score: int) -> None:
+        """Record the model's own rating of a statement's result, known only a turn later."""
+        with self.tx() as s:
+            row = s.get(orm.Text2SQLLog, id)
+            if row is not None:
+                row.score = score
+
+    def load_text2sql_rows(
+        self, log_id: int, partnership_id: str, views: list[tuple[str, str]], params: dict[str, Any],
+    ) -> ScopedRows:
+        """Reload the complete rows behind a successful, partnership-scoped query log."""
+        with self.tx() as s:
+            row = s.get(orm.Text2SQLLog, log_id)
+            if row is None or row.partnership_id != partnership_id:
+                raise KeyError(f"text2sql log {log_id} not found")
+            if not row.execution_success or not row.generated_sql:
+                raise ValueError(f"text2sql log {log_id} has no successful query")
+            statement = row.generated_sql
+        return self.run_scoped_read(statement, views, params, max_rows=None)
+
+    def list_text2sql_logs(
+        self, partnership_id: str | None = None, *, limit: int = 200, admin: bool = False,
+    ) -> list[dict[str, Any]]:
+        """List one partnership's logs, or all logs only for an explicit admin caller."""
+        if partnership_id is None and not admin:
+            raise ValueError("partnership_id is required unless admin=True")
         with self.tx() as s:
             q = select(orm.Text2SQLLog).order_by(orm.Text2SQLLog.id.desc()).limit(limit)
-            if partnership_id:
+            if partnership_id is not None:
                 q = q.where(orm.Text2SQLLog.partnership_id == partnership_id)
             return [_row_dict(r) for r in s.scalars(q).all()]
 
@@ -107,15 +170,19 @@ class Text2SqlMixin:
 
     def stamp_text2sql_feedback(self, session_id: str, log_id: int, feedback: str) -> None:
         """Remember the rating on the assistant turn so a reloaded chat still shows it."""
-        session = self.session(session_id)
-        if not session:
-            return
-        history = list(session.get("history") or [])
-        for message in history:
-            mark = message.get("data_query") if isinstance(message, dict) else None
-            if isinstance(mark, dict) and mark.get("log_id") == log_id:
-                mark["feedback"] = feedback
-        self.update_session(session_id, history=history)
+        with self.tx() as s:
+            session = s.get(orm.ChatSession, session_id, with_for_update=True)
+            if session is None:
+                return
+            # Deep copy: SQLAlchemy compares a JSON column by value, so mutating the loaded
+            # objects in place makes old == new and the UPDATE is silently skipped.
+            history = copy.deepcopy(list(session.history or []))
+            for message in history:
+                mark = message.get("data_query") if isinstance(message, dict) else None
+                if isinstance(mark, dict) and mark.get("log_id") == log_id:
+                    mark["feedback"] = feedback
+            session.history = history
+            session.updated_at = utcnow()
 
 
 def _clip(value: str | None, limit: int) -> str | None:
@@ -129,5 +196,5 @@ def _inline_scope(sql: str, params: dict[str, Any]) -> str:
         token = str(value)
         if re.fullmatch(r"[A-Za-z0-9_\-]+", token) is None:
             raise ValueError("scope id is not a safe token")
-        sql = sql.replace(":" + key, "'" + token + "'")
+        sql = re.sub(r":" + re.escape(key) + r"\b", "'" + token + "'", sql)
     return sql

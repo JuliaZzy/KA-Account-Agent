@@ -1,4 +1,5 @@
-"""One distributor, fifteen brands, orders and sell-out from 2024-01 through 2026-09.
+"""One distributor (plus 海纳分销 purchase orders), fifteen brands, sell-out from 2024-01
+through 2026-09. Purchase orders: 0–4 per partnership per month, rare spikes up to 8.
 
     ./dev py scripts/seed_demo.py
     ./dev py scripts/seed_demo.py --accounts
@@ -23,6 +24,7 @@ the distributor, and the partnerships stay.
 from __future__ import annotations
 
 import calendar
+import hashlib
 import json
 import sys
 import time
@@ -260,6 +262,15 @@ def _clear(db: Database) -> None:
         conn.execute(text("DELETE FROM sales_reports WHERE id LIKE 'rpt-demo-%'"))
 
 
+def _orders_per_month(seed_key: str, year: int, month: int) -> int:
+    """0–4 orders most months; ~2.5% of months spike to 5–8 (deterministic per partnership)."""
+    digest = hashlib.sha256(f"{seed_key}:{year:04d}-{month:02d}".encode()).digest()
+    n = int.from_bytes(digest[:4], "big")
+    if n % 400 < 10:
+        return 5 + (n // 400) % 4
+    return n % 5
+
+
 def _scale(year: int, month: int) -> float:
     return SEASON[month] * (1.08 ** (year - 2024))
 
@@ -294,40 +305,48 @@ def _money(status: str, terms: str, total: float) -> tuple[float, float]:
 
 def _seed_orders(db: Database, link: dict) -> int:
     terms_cycle = ("net_30", "50_50", "100_prepaid")
+    dist_id = link.get("distributor_id", DIST_ID)
+    po_key = link.get("po_key") or f"{link['index']:02d}"
+    seed_key = link["partnership_id"]
     n = 0
-    for ordinal, (year, month) in enumerate(months()):
-        products = link["products"]
-        picked = [products[(ordinal + slot) % len(products)] for slot in range(3)]
-        items = []
-        for slot, product in enumerate(picked):
-            qty = _cases(product, year, month, slot)
-            price = float(product.case_price or 0)
-            items.append({
-                "product_id": product.id, "sku": product.sku,
-                "product_name": (product.display_name or product.sku)[:200],
-                "quantity": qty, "case_price": price, "line_total": round(qty * price, 2),
-                "case_pack": product.case_pack,
-            })
-        subtotal = round(sum(item["line_total"] for item in items), 2)
-        terms = terms_cycle[ordinal % 3]
-        status = _status(year, month)
-        prepaid, balance = _money(status, terms, subtotal)
-        submitted = datetime(year, month, 12, 2, 0, tzinfo=UTC)
-        eta_month = month + 1 if month < 12 else 1
-        eta_year = year if month < 12 else year + 1
-        po_id = f"po-demo-{link['index']:02d}-{year}{month:02d}"
-        db.insert_po(PurchaseOrder(
-            id=po_id, po_number=f"PO-DEMO-{year}{month:02d}-{link['index']:02d}",
-            brand_id=link["brand_id"], distributor_id=DIST_ID, partnership_id=link["partnership_id"],
-            status=status, currency=link["currency"], payment_terms=terms, incoterms="FOB",
-            shipping_method="sea", eta_date=f"{eta_year}-{eta_month:02d}-20", ship_to_country="CN",
-            notes=None, discount_amount=None, discount_percentage=None,
-            subtotal_amount=subtotal, total_amount=subtotal,
-            submitted_at=submitted, submit_cycle_version=1,
-            prepaid_amount=prepaid, balance_paid=balance,
-        ), items, [])
-        db.update_po(po_id, created_at=submitted)
-        n += 1
+    ordinal = 0
+    for year, month in months():
+        count = _orders_per_month(seed_key, year, month)
+        for seq in range(count):
+            products = link["products"]
+            picked = [products[(ordinal + slot) % len(products)] for slot in range(3)]
+            items = []
+            for slot, product in enumerate(picked):
+                qty = _cases(product, year, month, slot + seq)
+                price = float(product.case_price or 0)
+                items.append({
+                    "product_id": product.id, "sku": product.sku,
+                    "product_name": (product.display_name or product.sku)[:200],
+                    "quantity": qty, "case_price": price, "line_total": round(qty * price, 2),
+                    "case_pack": product.case_pack,
+                })
+            subtotal = round(sum(item["line_total"] for item in items), 2)
+            terms = terms_cycle[ordinal % 3]
+            status = _status(year, month)
+            prepaid, balance = _money(status, terms, subtotal)
+            day = min(28, 3 + seq * 7)
+            submitted = datetime(year, month, day, 2 + seq, 0, tzinfo=UTC)
+            eta_month = month + 1 if month < 12 else 1
+            eta_year = year if month < 12 else year + 1
+            po_id = f"po-demo-{po_key}-{year}{month:02d}-{seq + 1:02d}"
+            db.insert_po(PurchaseOrder(
+                id=po_id, po_number=f"PO-DEMO-{year}{month:02d}-{po_key}-{seq + 1:02d}",
+                brand_id=link["brand_id"], distributor_id=dist_id, partnership_id=link["partnership_id"],
+                status=status, currency=link["currency"], payment_terms=terms, incoterms="FOB",
+                shipping_method="sea", eta_date=f"{eta_year}-{eta_month:02d}-20", ship_to_country="CN",
+                notes=None, discount_amount=None, discount_percentage=None,
+                subtotal_amount=subtotal, total_amount=subtotal,
+                submitted_at=submitted, submit_cycle_version=1,
+                prepaid_amount=prepaid, balance_paid=balance,
+            ), items, [])
+            db.update_po(po_id, created_at=submitted)
+            n += 1
+            ordinal += 1
     return n
 
 
@@ -478,6 +497,31 @@ def _ensure_brand(db: Database, tag: str) -> tuple[str, str, str]:
     return brand_id, found[0], found[1]
 
 
+def _haina_links(db: Database) -> list[dict]:
+    with db.engine.connect() as conn:
+        rows = conn.execute(text(
+            """
+            SELECT p.id, p.brand_id, b.name, p.currency
+            FROM partnerships p
+            JOIN brands b ON b.id = p.brand_id
+            WHERE p.distributor_id = :d
+            ORDER BY p.id
+            """
+        ), {"d": DIST2_ID}).all()
+    links = []
+    for row in rows:
+        slug = row.id.removeprefix("ps-haina-")
+        products = _products(db, row.brand_id)
+        if len(products) < 3:
+            raise SystemExit(f"{row.name} ({row.id}) has fewer than 3 priced products")
+        links.append({
+            "partnership_id": row.id, "brand_id": row.brand_id, "brand_name": row.name,
+            "currency": row.currency, "distributor_id": DIST2_ID,
+            "po_key": f"haina-{slug}", "products": products,
+        })
+    return links
+
+
 def ensure_accounts(db: Database) -> None:
     """海纳分销, and three people on each distributor. Existing chats stay with 陈思远."""
     db.upsert_distributor(DIST_ID, DIST_NAME, "CN")
@@ -532,12 +576,15 @@ def main() -> int:
             raise SystemExit(f"{link['brand_name']} has fewer than 3 priced products")
         orders += _seed_orders(db, link)
         facts += _seed_sales(db, link)
-        print(f"  {link['brand_name']}  {link['partnership_id']}")
+        print(f"  {DIST_NAME} · {link['brand_name']}  {link['partnership_id']}")
+    ensure_accounts(db)
+    for link in _haina_links(db):
+        orders += _seed_orders(db, link)
+        print(f"  {DIST2_NAME} · {link['brand_name']}  {link['partnership_id']}")
     _write_contract(links[0])
-    print(f"orders {orders} (none in 2026-10), confirmed sell-out facts {facts}")
+    print(f"orders {orders} (none in 2026-10; 0–4/mo per partnership, rare spikes ≤8), confirmed sell-out facts {facts}")
     print(f"contract for {links[0]['brand_name']} ({links[0]['partnership_id']}): {CONTRACT_PATH.relative_to(ROOT)}")
     print("In the desk, pick that partnership and upload the contract. The October order is container 1 (3%).")
-    ensure_accounts(db)
     return 0
 
 

@@ -13,7 +13,7 @@ from ..db import Database
 from ..deps import get_db
 from ..llm import deepseek_client
 from ..schemas import Partnership
-from ._common import dump, partnership_or_404, read_upload
+from ._common import dump, partnership_or_404, read_upload, user_on_partnership
 
 router = APIRouter()
 
@@ -53,9 +53,11 @@ async def import_contract(
     pid: str,
     file: UploadFile = File(...),
     title: str = Form(""),
+    user_id: str = Form(""),
     db: Database = Depends(get_db),
 ) -> dict[str, Any]:
     p: Partnership = partnership_or_404(db, pid)
+    user_on_partnership(db, p, user_id or None)
     name, data = await read_upload(file)
     label = title.strip() or name
     try:
@@ -72,6 +74,7 @@ async def import_contract(
             rec = read_and_ingest(
                 db, deepseek_client(),
                 brand_id=p.brand_id, partnership_id=p.id, file_name=name, data=data, title=label,
+                user_id=user_id or None,
             )
     except HTTPException:
         raise
@@ -79,6 +82,7 @@ async def import_contract(
         raise HTTPException(400, f"Could not import: {err}") from err
     return {
         "id": rec.contract.id,
+        "run_id": rec.ingestion_run_id,
         "title": rec.contract.title or rec.contract.id,
         "discount_rules": len(rec.terms.discount_rules),
         "po_rules": len(rec.derived_rules),

@@ -531,6 +531,24 @@ class RunMixin:
                 raise
             return existing, False
 
+    def create_inline_contract_run(self, org_id: str, user_id: str, file_name: str) -> dict[str, Any]:
+        """Start a synchronous import without creating a worker outbox job."""
+        now = utcnow()
+        run_id = f"run_{uuid.uuid4().hex}"
+        with self.tx() as s:
+            run = self._insert_queued_run(
+                s, run_id=run_id, org_id=org_id, user_id=user_id, run_type=RunType.CONTRACT,
+                idempotency_key=f"inline:{uuid.uuid4().hex}",
+                run_input={"execution": "inline_contract_import", "file_name": file_name}, now=now,
+                enqueue=False,
+            )
+            self._transition(
+                s, run, RunStatus.RUNNING, {}, now, lease_owner="inline-contract-import",
+                lease_expires_at=now + timedelta(hours=1), actor_type="api", actor_id=user_id,
+            )
+            s.flush()
+            return _row_dict(run)
+
     def _insert_queued_run(
         self,
         s: Session,
@@ -548,8 +566,9 @@ class RunMixin:
         max_tokens: int | None = None,
         max_tool_calls: int | None = None,
         max_duration_seconds: int | None = None,
+        enqueue: bool = True,
     ) -> orm.AgentRun:
-        """Insert a queued run, `run.created`, and its execute outbox. The caller owns the transaction."""
+        """Insert a queued run and its creation event, optionally scheduling execution."""
         run = orm.AgentRun(
             id=run_id,
             org_id=org_id,
@@ -577,7 +596,8 @@ class RunMixin:
         if owner_run_id is not None:
             created["owner_run_id"] = owner_run_id
         self._append_event(s, run_id, StepEvent.RUN_CREATED, created, now)
-        self._add_execute_outbox(s, run, now)
+        if enqueue:
+            self._add_execute_outbox(s, run, now)
         s.flush()
         return run
 
@@ -647,6 +667,13 @@ class RunMixin:
             from .queue import EXECUTION_MAX_ATTEMPTS
 
             for run in runs:
+                if (run.input_json or {}).get("execution") == "inline_contract_import":
+                    self._transition(
+                        s, run, RunStatus.FAILED, {"reason": "inline_lease_expired"}, now,
+                        error={"kind": "timeout", "message": "inline import expired"},
+                        actor_type="sweeper", actor_id="lease-sweep",
+                    )
+                    continue
                 if run.cancel_requested_at is not None:
                     self._transition(
                         s, run, RunStatus.CANCELLED, {"reason": "lease_expired"}, now,
@@ -999,10 +1026,13 @@ class RunMixin:
                     orm.UsageRecord.org_id == org_id, orm.UsageRecord.created_at >= start,
                 )
             ))
-            return {"total_tokens": int(tokens or 0), "estimated_cost_cents": sum_usage_cost_cents(rows)}
+            return {
+                "total_tokens": int(tokens or 0), "estimated_cost_cents": sum_usage_cost_cents(rows),
+                "unknown_usage_calls": sum(row.usage_source == "unknown" for row in rows),
+            }
 
     def session_usage_facts(self, session_ids: list[str]) -> list[dict[str, Any]]:
-        """Succeeded model calls for runs created by the given chat sessions."""
+        """Successful calls and unknown-usage failures for the given chat sessions."""
         cleaned = [str(item).strip() for item in session_ids if str(item).strip()]
         if not cleaned:
             return []
@@ -1012,7 +1042,7 @@ class RunMixin:
                 .join(orm.ModelCall, orm.ModelCall.run_id == orm.AgentRun.id)
                 .where(
                     orm.AgentRun.input_json["session_id"].astext.in_(cleaned),
-                    orm.ModelCall.status == StepStatus.SUCCEEDED,
+                    or_(orm.ModelCall.status == StepStatus.SUCCEEDED, orm.ModelCall.usage_source == "unknown"),
                 )
                 .order_by(orm.ModelCall.created_at, orm.ModelCall.id)
             ).all()
@@ -1025,6 +1055,7 @@ class RunMixin:
                     "model": call.model,
                     "prompt_tokens": int(call.prompt_tokens or 0),
                     "completion_tokens": int(call.completion_tokens or 0),
+                    "usage_source": call.usage_source,
                     "cache_hit_tokens": call.cache_hit_tokens,
                     "cache_miss_tokens": call.cache_miss_tokens,
                     "cache_creation_tokens": call.cache_creation_tokens,
@@ -1456,6 +1487,10 @@ class RunMixin:
                         orm.UsageRecord.org_id == org_id, orm.UsageRecord.created_at >= day,
                     )
                 )),
+                "daily_unknown_usage_calls": self._count(
+                    s, orm.UsageRecord, orm.UsageRecord.org_id == org_id,
+                    orm.UsageRecord.created_at >= day, orm.UsageRecord.usage_source == "unknown",
+                ),
                 "daily_tokens": int(s.scalar(
                     select(func.coalesce(func.sum(orm.UsageRecord.total_tokens), 0)).where(
                         orm.UsageRecord.org_id == org_id, orm.UsageRecord.created_at >= day,

@@ -65,4 +65,9 @@ class Text2SQLLog(Base):
     user_feedback: Mapped[str | None] = mapped_column(String(20))  # good | bad
     feedback_reason: Mapped[str | None] = mapped_column(Text)
     corrected_sql: Mapped[str | None] = mapped_column(Text)
+    # Which agent run and loop turn wrote this statement, and how the model rated its result
+    # (set one turn later, so it stays null for a statement that was never rated).
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id", ondelete="SET NULL"), index=True)
+    turn: Mapped[int | None] = mapped_column(Integer)
+    score: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(TimestampCol)

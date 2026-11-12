@@ -19,7 +19,7 @@ from ..memory import prompt_context, standing_block, summary_block
 from ..po.agent import collect_order
 from ..po.turn import load_bundle
 from ..report.turn import ReportDraft, iter_draft
-from ..text2sql.text2sql import answer_question
+from ..text2sql.impl import answer_question_impl
 from ..tools import exchange_rate, lang_translate, send_email, web_search
 from .run_loop import Tool, ToolRegistry
 from .run_names import TOOL_STARTED_DISPLAY, StepType, ToolErrorCode, step_name
@@ -203,8 +203,9 @@ def _data_query(db, session, text, bundle):
         run_id = ctx.get("run_id") if isinstance(ctx.get("run_id"), str) else None
         step_id = ctx.get("step_id") if isinstance(ctx.get("step_id"), str) else None
         partnership = bundle.partnership
-        result = answer_question(
+        result = answer_question_impl()(
             db, question=str(args.get("question") or "").strip() or _asked(args, text),
+            required_columns=_required_columns(args),
             run_id=run_id, step_id=step_id, 
             partnership_id=partnership.id, brand_id=partnership.brand_id,
             distributor_id=partnership.distributor_id, session_id=session["id"],
@@ -212,11 +213,21 @@ def _data_query(db, session, text, bundle):
             folded_through=int(session.get("folded_through") or 0),
             summary=str(session.get("summary") or ""),
         )
+        contract_error = (
+            "query result is missing required columns: " + ", ".join(result.missing_columns)
+            if result.missing_columns else result.error
+        )
         return {
-            "ok": result.ok,
+            "ok": result.ok and not result.missing_columns,
+            "complete": result.ok and not result.missing_columns,
+            "deliver": str(args.get("deliver") or "data"),
             "row_count": result.row_count,
+            "columns": result.columns,
+            "missing_columns": result.missing_columns,
+            "truncated": result.truncated,
+            "rows_handle": result.log_id,
             "rows": result.rows,
-            "error": result.error,
+            "error": contract_error,
             "error_type": result.error_type,
             "sql": result.sql,
             "tables": result.tables,
@@ -225,6 +236,18 @@ def _data_query(db, session, text, bundle):
             "score": result.score,
         }
     return run
+
+
+def _required_columns(args: dict[str, Any]) -> list[str]:
+    # `answer` is a direct conversational result. Its columns are not a downstream handoff
+    # contract, and forcing planner-selected aliases here can reject a correct aggregate.
+    if str(args.get("deliver") or "data").strip().lower() == "answer":
+        return []
+    raw = args.get("columns", args.get("required_columns", []))
+    if not isinstance(raw, list):
+        return []
+    return [str(column).strip() for column in raw if str(column).strip()]
+
 
 def _brand_search(db, llm, session, text, bundle):
     def run(args: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:

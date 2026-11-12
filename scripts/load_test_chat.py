@@ -141,6 +141,7 @@ def summarize_usage_rows(rows: list[dict[str, Any]], *, requests: int = 0) -> di
     denom = max(requests, len(chat_runs), 1) if (requests or chat_runs) else 0
     return {
         "model_calls": len(rows),
+        "unknown_usage_calls": sum(row.get("usage_source") == "unknown" for row in rows),
         "prompt_tokens": prompt_total,
         "completion_tokens": completion_total,
         "total_tokens": prompt_total + completion_total,

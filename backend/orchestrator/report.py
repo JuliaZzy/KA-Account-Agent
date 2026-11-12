@@ -10,6 +10,7 @@ from ..memory import actor_id, prompt_context, standing_block, summary_block
 from ..report.turn import (
     NeedQueries,
     ReportDraft,
+    _hydrate_full_rows,
     _plan,
     asks_from_payloads,
     iter_after_queries,
@@ -163,6 +164,13 @@ def _after_risks(
     report: dict[str, Any], results: dict[str, dict[str, Any]],
 ) -> dict[str, Any] | None:
     loaded = load_write_snapshot(report.get("snapshot") or {})
+    partnership = db.partnership(str(session["partnership_id"]))
+    _hydrate_full_rows(
+        db, loaded["asked"], partnership_id=str(session["partnership_id"]),
+        brand_id=str(getattr(partnership, "brand_id", "") or ""),
+        distributor_id=str(getattr(partnership, "distributor_id", "") or ""),
+        session_id=str(session["id"]),
+    )
     pairs = [
         (str(task_id), str(question))
         for task_id, question in report.get("questions") or []
@@ -170,6 +178,12 @@ def _after_risks(
     ]
     notes = merge_extra_asks(
         loaded["asked"], loaded["by_section"], pairs, results, section_id="risks",
+    )
+    _hydrate_full_rows(
+        db, loaded["asked"], partnership_id=str(session["partnership_id"]),
+        brand_id=str(getattr(partnership, "brand_id", "") or ""),
+        distributor_id=str(getattr(partnership, "distributor_id", "") or ""),
+        session_id=str(session["id"]),
     )
     loaded["failures"].extend(notes)
     draft = _take_draft(iter_from_risks(
@@ -338,7 +352,7 @@ def _data_tasks(questions: list[str], *, start: int = 1) -> list[PlanTask]:
     for index, question in enumerate(questions, start=start):
         tasks.append(PlanTask(
             id=f"q{index}", kind="agent", name="data",
-            input={"question": question}, depends_on=[],
+            input={"question": question, "deliver": "data", "columns": []}, depends_on=[],
         ))
     return tasks
 

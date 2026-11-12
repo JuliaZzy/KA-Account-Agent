@@ -13,6 +13,9 @@ from ..services.run_names import StepStatus, StepType, step_name
 from .prompt import plan_system
 
 AGENT_NAMES = frozenset({"po", "contract", "report", "brand", "data"})
+# What the planner writes. The suffix is how code tells an agent from a tool, so the model never
+# has to state a `kind` that could disagree with the name.
+AGENT_ALIASES = {f"{name}_agent": name for name in AGENT_NAMES}
 AGENT_TOOLS = {
     "po": "po.draft",
     "contract": "contract.read",
@@ -56,12 +59,11 @@ def plan_schema() -> dict[str, Any]:
                     "type": "object", "additionalProperties": False,
                     "properties": {
                         "id": {"type": "string"},
-                        "kind": {"type": "string", "enum": ["agent", "tool"]},
                         "name": {"type": "string"},
                         "input": {"type": "object"},
                         "depends_on": {"type": "array", "items": {"type": "string"}},
                     },
-                    "required": ["id", "kind", "name", "input", "depends_on"],
+                    "required": ["id", "name", "input", "depends_on"],
                 }},
             },
             "required": ["tasks"],
@@ -105,21 +107,28 @@ def _accept(raw: Any) -> tuple[list[PlanTask], dict[str, int], set[str]]:
             dropped["incomplete"] += 1
             continue
         task_id = str(item.get("id") or "").strip()
-        kind = str(item.get("kind") or "").strip()
         name = str(item.get("name") or "").strip()
+        # A `kind` from an older plan (checkpoints, replays) is read only to reject a bad value or an
+        # unknown agent; whether the task is an agent is decided by its name alone.
+        hint = str(item.get("kind") or "").strip()
         if not task_id:
             dropped["incomplete"] += 1
             continue
         if task_id in seen:
             dropped["duplicate_id"] += 1
             continue
-        if kind not in ("agent", "tool") or not name:
+        if not name or hint not in ("", "agent", "tool"):
             dropped["incomplete"] += 1
             continue
-        if kind == "agent" and name not in AGENT_NAMES:
+        agent = AGENT_ALIASES.get(name) or (name if name in AGENT_NAMES else None)
+        if agent is not None:
+            kind, name = "agent", agent
+        elif name.endswith("_agent") or hint == "agent":
             dropped["unknown_agent"] += 1
             unknown_ids.add(task_id)
             continue
+        else:
+            kind = "tool"
         payload = item.get("input") if isinstance(item.get("input"), dict) else {}
         deps = [str(dep) for dep in (item.get("depends_on") or []) if isinstance(dep, str) and dep]
         seen.add(task_id)
@@ -146,6 +155,7 @@ def _one_po(tasks: list[PlanTask]) -> list[PlanTask]:
         kept.append(task)
     return kept
 
+
 def scheduled(tasks: list[PlanTask]) -> list[PlanTask]:
     """Drop a data task a report lists as its own input. The draft queries itself.
 
@@ -171,6 +181,30 @@ def scheduled(tasks: list[PlanTask]) -> list[PlanTask]:
             )
         kept.append(task)
     return kept
+
+
+def _normalize_data_contract(tasks: list[PlanTask]) -> list[PlanTask]:
+    """Fill the deterministic delivery mode on every planned data task."""
+    data = [task for task in tasks if task.kind == "agent" and task.name == "data"]
+    only_data = len(tasks) == 1 and len(data) == 1
+    data_ids = {task.id for task in data}
+    normalized: list[PlanTask] = []
+    for task in tasks:
+        if task.id not in data_ids:
+            normalized.append(task)
+            continue
+        has_downstream = any(task.id in other.depends_on for other in tasks)
+        payload = dict(task.input)
+        payload["deliver"] = "answer" if only_data and not task.depends_on and not has_downstream else "data"
+        columns = payload.get("columns", payload.get("required_columns"))
+        if isinstance(columns, list):
+            payload["columns"] = [str(column).strip() for column in columns if str(column).strip()]
+        else:
+            payload["columns"] = []
+        normalized.append(PlanTask(
+            id=task.id, kind=task.kind, name=task.name, input=payload, depends_on=list(task.depends_on),
+        ))
+    return normalized
 
 
 def graph_error(tasks: list[PlanTask]) -> str | None:
@@ -273,6 +307,7 @@ def make_plan(
     if caught is None:
         tasks, notes, unknown_ids = _accept(raw)
         tasks = scheduled(tasks)
+        tasks = _normalize_data_contract(tasks)
         dropped = _present_drops(notes)
         rejected = reject_plan(tasks, unknown_ids)
         if rejected is not None:

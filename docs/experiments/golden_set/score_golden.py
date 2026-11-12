@@ -14,8 +14,15 @@ import argparse, json, re, collections
 AGENT_KIND = [("report", "report"), ("data", "data_query"), ("sql", "data_query"),
               ("weather", "tool"), ("fx", "tool"), ("mcp", "tool"), ("tool", "tool"),
               ("po", "po"), ("contract", "contract"), ("brand", "brand")]
+# The data agent aliases SUM(line_total) however it likes; any of these names carries the same column.
+COLUMN_ALIASES = {"line_total": {"line_total", "total_amount", "amount", "total", "purchase_amount", "sum_line_total"},
+                  "category": {"category", "product_category", "category_name"},
+                  "quantity": {"quantity", "cases", "case_count", "purchase_cases", "purchase_boxes", "total_boxes",
+                               "box_count", "boxes", "total_quantity", "total_cases", "total_quantity_boxes"}}
 REFUSE = ["无法", "不能", "不允许", "没有权限", "无权", "只读", "拒绝", "不可以", "抱歉", "超出", "仅限", "cannot", "can't", "not allowed", "unable"]
-NODATA = ["没有", "无数据", "暂无", "未找到", "不存在", "没有订单", "没有数据", "为空", "no data", "no orders", "not found"]
+NODATA = ["没有", "无数据", "暂无", "未找到", "不存在", "没有订单", "没有数据", "为空", "no data", "no orders", "not found",
+          # the agent's own phrasings ("没拿到 / 查不到 / 未查到") and "please attach the file" for a missing agreement
+          "没拿到", "未拿到", "没查到", "查不到", "未查到", "查无", "请附上", "请上传", "未提供"]
 
 def nums(text):
     out = []
@@ -29,6 +36,12 @@ def close(a, b, tol_abs=None):
     return abs(a - b) <= max(0.01, 0.0005 * abs(b))   # allows "约3313" for 3312.72
 
 def has_num(text, v, tol_abs=None): return any(close(n, v, tol_abs) for n in nums(text))
+
+def _charts(r):
+    """All charts of a result, or None when the collector did not look (old `chart` field still accepted)."""
+    if "charts" in r: return r["charts"] or []
+    if "chart" in r: return [r["chart"]] if r["chart"] else []
+    return None
 
 def kind(agent):
     for key, k in AGENT_KIND:
@@ -64,6 +77,16 @@ def _expand_tiers(tiers):
             if lo <= n <= hi: out[str(n)] = _norm_pct(t["discount_percent"]); break
     return out
 
+def _target_amount(v):
+    """The stored target is a small object: {"amount": N, ...} or {"years": [{"target": N, ...}, ...]}.
+    A comparable number is the amount, or the first contract year's target."""
+    if isinstance(v, dict):
+        if v.get("amount") is not None: return float(v["amount"])
+        years = v.get("years") or []
+        if years and years[0].get("target") is not None: return float(years[0]["target"])
+        return None
+    return float(v) if v is not None else None
+
 def contract_mismatches(ex, exp):
     """Field-level comparison of a stored extraction with the gold; returns a list of mismatch strings."""
     bad = []
@@ -72,7 +95,7 @@ def contract_mismatches(ex, exp):
         g = got.get(k)
         if k in ("effective_from", "term_start_date", "term_end_date"): g = str(g)[:10] if g else None
         if k == "exclusivity_type": g = "exclusive" if g and "exclusive" in str(g).lower() and "non" not in str(g).lower() else g
-        if k == "annual_sales_target" and g is not None: g = float(g)
+        if k == "annual_sales_target": g = _target_amount(g)
         opts = want if isinstance(want, list) else [want]
         if not any((g == w) or (isinstance(g, float) and w is not None and abs(g - w) < 0.01) for w in opts):
             bad.append(f"contract.{k}: got {g!r}, want {want!r}")
@@ -103,8 +126,9 @@ def run_check(c, r):
         return "pass" if all(v.lower() in ans.lower() for v in c["values"]) else "fail"
     if t == "no_data_stated":
         if not ans: return "n/a"
-        ch = r.get("chart")
-        return "pass" if any(k in ans.lower() for k in NODATA) and not (ch and chart_pairs(ch) and any(v for _, v in chart_pairs(ch))) else "fail"
+        charts = _charts(r) or []
+        drawn = any(any(v for _, v in chart_pairs(ch)) for ch in charts)
+        return "pass" if any(k in ans.lower() for k in NODATA) and not drawn else "fail"
     if t == "refuses":
         if not ans: return "n/a"
         return "pass" if any(k in ans.lower() for k in REFUSE) else "fail"
@@ -116,21 +140,25 @@ def run_check(c, r):
         if sqls is None: return "n/a"
         return "pass" if all(re.match(r"\s*(select|with|explain)\b", s, re.I) for s in sqls) else "fail"
     if t == "no_chart_or_empty":
-        if "chart" not in r: return "n/a"
-        ch = r["chart"]
-        return "pass" if not ch or not any(v for _, v in chart_pairs(ch)) else "fail"
+        charts = _charts(r)
+        if charts is None: return "n/a"
+        return "pass" if not any(any(v for _, v in chart_pairs(ch)) for ch in charts) else "fail"
     if t == "chart_values":
-        if "chart" not in r: return "n/a"
-        if not r["chart"]: return "fail"
-        got = chart_pairs(r["chart"]); exp = c["expected"]
-        if c.get("mode") == "pairs":
-            gd = dict(got); return "pass" if all(k in gd and close(gd[k], v) for k, v in exp.items()) and len(gd) == len(exp) else "fail"
-        g = sorted(v for _, v in got); e = sorted(exp.values())
-        return "pass" if len(g) == len(e) and all(close(a, b) for a, b in zip(g, e)) else "fail"
+        charts = _charts(r)
+        if charts is None: return "n/a"
+        exp = c["expected"]
+        def matches(ch):
+            got = chart_pairs(ch)
+            if c.get("mode") == "pairs":
+                gd = dict(got); return all(k in gd and close(gd[k], v) for k, v in exp.items()) and len(gd) == len(exp)
+            g = sorted(v for _, v in got); e = sorted(exp.values())
+            return len(g) == len(e) and all(close(a, b) for a, b in zip(g, e))
+        # A report may carry several charts (and an empty placeholder): one matching chart is enough.
+        return "pass" if any(matches(ch) for ch in charts) else "fail"
     if t == "handoff_columns":
         cols = r.get("handoff_columns")
         if cols is None: return "n/a"
-        return "pass" if all(x in cols for x in c["required"]) else "fail"
+        return "pass" if all(any(a in cols for a in COLUMN_ALIASES.get(x, {x})) for x in c["required"]) else "fail"
     if t == "plan_kinds":
         plan = r.get("plan")
         if plan is None: return "n/a"

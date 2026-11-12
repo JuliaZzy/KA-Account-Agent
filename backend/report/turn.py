@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterator
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import date
 from typing import Any
 
@@ -24,8 +24,10 @@ from ..db import Database, utcnow
 from ..llm import calls as model_calls
 from ..llm.errors import ModelCapacityExceeded, ProviderError
 from ..memory import actor_id, attach, prompt_context, prompt_turns, standing_block, summary_block
-from ..text2sql import QueryResult, answer_question
-from ..text2sql.table_metadata import catalog_text
+from ..text2sql import QueryResult
+from ..text2sql.impl import answer_question_impl
+from ..text2sql.table_metadata import catalog_text, scope_views
+from ..text2sql.text2sql import _json_rows, llm_result_view, prompt_view
 from ..tools.web_search import search
 from .analyze import column_kinds
 from .prompt import (
@@ -366,7 +368,12 @@ def load_write_snapshot(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def _ask_dict(item: _Ask) -> dict[str, Any]:
-    return {"id": item.id, "question": item.question, "result": asdict(item.result)}
+    result = {
+        spec.name: getattr(item.result, spec.name)
+        for spec in fields(item.result)
+        if spec.name != "full_rows"
+    }
+    return {"id": item.id, "question": item.question, "result": result}
 
 
 def _ask_from_dict(raw: dict[str, Any]) -> _Ask:
@@ -387,12 +394,15 @@ def _query_result(raw: dict[str, Any]) -> QueryResult:
         sql=raw.get("sql") if isinstance(raw.get("sql"), str) else None,
         rows=list(raw.get("rows") or []) if isinstance(raw.get("rows"), list) else [],
         row_count=int(raw.get("row_count") or 0),
+        columns=[str(column) for column in raw.get("columns") or [] if column],
         error=raw.get("error") if isinstance(raw.get("error"), str) else None,
         error_type=raw.get("error_type") if isinstance(raw.get("error_type"), str) else None,
         tables=[str(name) for name in raw.get("tables") or [] if name],
         log_id=raw.get("log_id") if isinstance(raw.get("log_id"), int) else None,
         handoff=str(raw.get("handoff") or ""),
         score=raw.get("score") if isinstance(raw.get("score"), int) else None,
+        truncated=bool(raw.get("truncated")),
+        missing_columns=[str(column) for column in raw.get("missing_columns") or [] if column],
     )
 
 
@@ -517,6 +527,10 @@ def iter_after_queries(
     """Charts through review. `park_extra` yields NeedQueries instead of asking inline."""
     from ..orchestrator.status import status
 
+    _hydrate_full_rows(
+        db, asked, partnership_id=partnership_id, distributor_id=distributor_id,
+        brand_id=brand_id, session_id=session_id,
+    )
     yield status("report-chart", "图表", "正在给业绩和库存配图", state="running")
     charts: list[dict[str, Any]] = []
     charts_for: dict[str, list[dict[str, Any]]] = {}
@@ -537,7 +551,7 @@ def iter_after_queries(
     yield status("report-news", "新闻", f"看了 {len(found)} 条检索", state="done")
 
     yield status("report-insight", "洞察", "正在按章节计算", state="running")
-    query_results = _query_results(asked)
+    query_results = _query_results(asked, include_full=True)
     insights_by_section: dict[str, list[dict[str, Any]]] = {}
     insight_failures: list[str] = []
     insight_errors: list[str] = []
@@ -644,7 +658,9 @@ def iter_from_risks(
             )
             _search_more(searches, found, search_fn or search)
         risks_section = next(section for section in planned if section.id == "risks")
-        got, err, fails = _code_wizard(llm, risks_section, _query_results(asked), trace=trace)
+        got, err, fails = _code_wizard(
+            llm, risks_section, _query_results(asked, include_full=True), trace=trace,
+        )
         if err:
             insight_errors.append(f"{risks_section.title}: {err}")
         insight_failures.extend(fails)
@@ -881,7 +897,7 @@ def _ask(
     trace: _RunTrace | None = None,
 ) -> tuple[_Ask, str]:
     """One planned question. Statement repair and the reflection score live in text2sql."""
-    result = answer_question(
+    result = answer_question_impl()(
         db, question=question, partnership_id=partnership_id, brand_id=brand_id,
         distributor_id=distributor_id, session_id=session_id, history=history,
         folded_through=folded_through, summary=summary,
@@ -959,20 +975,41 @@ def _echarts_charts(specs: Any) -> list[dict[str, Any]]:
     return kept
 
 
+def _hydrate_full_rows(
+    db: Database, asked: list[_Ask], *, partnership_id: str, brand_id: str,
+    distributor_id: str, session_id: str,
+) -> None:
+    """Load complete rows for code/chart consumers; prose paths keep the bounded view."""
+    from ..text2sql.text2sql import _scope_params
+
+    params = _scope_params(partnership_id, brand_id, distributor_id, actor_id(db, session_id))
+    for item in asked:
+        result = item.result
+        if not result.ok or not result.log_id or result.full_rows is not None:
+            continue
+        try:
+            rows = db.load_text2sql_rows(result.log_id, partnership_id, scope_views(), params)
+        except Exception:
+            continue
+        result.full_rows = _json_rows(rows)
+
+
 def _charts(llm: Any, message: str, asked: list[_Ask], trace: _RunTrace | None = None) -> tuple[list[dict[str, Any]], list[str]]:
     query_results = []
     for item in asked:
         if not item.result.ok or not item.result.rows:
             continue
-        columns = column_kinds(item.result.rows)
+        rows = item.result.full_rows if item.result.full_rows is not None else item.result.rows
+        columns = column_kinds(rows)
         if not columns:
             continue
         query_results.append({
             "id": item.id,
             "question": item.question,
-            "row_count": len(item.result.rows),
-            "columns": columns,
-            "rows": item.result.rows,
+            **prompt_view(
+                rows, columns=item.result.columns or _column_names(rows),
+                row_count=item.result.row_count, truncated=item.result.truncated,
+            ),
         })
     if not query_results:
         return [], []
@@ -1009,19 +1046,34 @@ def _charts(llm: Any, message: str, asked: list[_Ask], trace: _RunTrace | None =
     return charts or [], [format_failures(attempts)] if attempts else []
 
 
-def _query_results(asked: list[_Ask]) -> list[dict[str, Any]]:
+def _query_results(asked: list[_Ask], *, include_full: bool = False) -> list[dict[str, Any]]:
     """Every successful text2sql result on this draft. Later chapters can read earlier rows."""
     results = []
     for item in asked:
         if not item.result.ok or not item.result.rows:
             continue
-        rows = item.result.rows[:50]
+        source_rows = item.result.full_rows if include_full and item.result.full_rows is not None else item.result.rows
+        columns = item.result.columns or _column_names(source_rows)
+        if not include_full:
+            results.append({
+                "id": item.id, "question": item.question,
+                **prompt_view(
+                    source_rows, columns=columns, row_count=item.result.row_count,
+                    truncated=item.result.truncated,
+                ),
+            })
+            continue
+        # Code consumers (analyze(datasets), charts) get every row the handle returns. The
+        # `llm_*` fields keep what the query reported, for the prompt that describes the data.
         results.append({
             "id": item.id,
             "question": item.question,
-            "row_count": len(item.result.rows),
-            "columns": _column_names(rows),
-            "rows": rows,
+            "row_count": len(source_rows),
+            "truncated": False,
+            "columns": columns,
+            "rows": source_rows,
+            "llm_row_count": item.result.row_count,
+            "llm_truncated": item.result.truncated,
         })
     return results
 
@@ -1070,6 +1122,16 @@ def _code_wizard(
     """Ask for analyze(datasets) for one chapter. datasets is every successful query."""
     if not query_results:
         return [], None, []
+    prompt_results = []
+    for item in query_results:
+        prompt_results.append({
+            "id": item.get("id"), "question": item.get("question"),
+            **prompt_view(
+                item.get("rows") or [], columns=item.get("columns"),
+                row_count=item.get("llm_row_count", item.get("row_count")),
+                truncated=bool(item.get("llm_truncated", item.get("truncated"))),
+            ),
+        })
     try:
         raw = _call_json(
             llm,
@@ -1078,7 +1140,7 @@ def _code_wizard(
                 section_title=section.title,
                 section_brief=section.brief,
                 questions=json.dumps(section.questions, ensure_ascii=False),
-                query_results=json.dumps(query_results, ensure_ascii=False, default=str),
+                query_results=json.dumps(prompt_results, ensure_ascii=False, default=str),
             ),
             messages=[{"role": "user", "content": "只为当前章节写 analyze(datasets)。"}],
             schema=code_wizard_schema(), temperature=0, trace=trace,
@@ -1112,13 +1174,13 @@ def _section_payload(
     insights: list[dict[str, Any]], prior: str = "",
 ) -> str:
     wanted = {query.casefold() for query in section.searches}
-    rows = [
-        {
+    rows = []
+    for item in asked:
+        view = llm_result_view(item.result)
+        rows.append({
             "id": item.id, "question": item.question, "ok": item.result.ok,
-            "rows": item.result.rows if item.result.ok else [], "error": item.result.error,
-        }
-        for item in asked
-    ]
+            **view, "error": item.result.error,
+        })
     payload = {"rows": rows, "insights": insights}
     web = [
         {"query": item.query, "ok": item.ok, "results": item.results if item.ok else [], "error": item.error}
@@ -1712,7 +1774,16 @@ def _mark(asked: list[_Ask]) -> dict[str, Any] | None:
     if chosen is None or not chosen.result.log_id:
         return None
     result = chosen.result
-    return {"ok": result.ok, "row_count": result.row_count, "error": result.error, "log_id": result.log_id}
+    error = result.error or (
+        "query result is missing required columns: " + ", ".join(result.missing_columns)
+        if result.missing_columns else None
+    )
+    return {
+        "ok": result.ok and not result.missing_columns,
+        "row_count": result.row_count, "columns": result.columns,
+        "missing_columns": result.missing_columns, "truncated": result.truncated,
+        "rows_handle": result.log_id, "error": error, "log_id": result.log_id,
+    }
 
 
 def series_payload(asked: list[_Ask]) -> list[dict[str, Any]]:

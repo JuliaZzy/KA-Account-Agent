@@ -7,7 +7,14 @@ from sqlalchemy import text
 from backend.llm import FakeLLM
 from backend.orchestrator.gather import load_state
 from backend.orchestrator.parent import _materials
-from backend.orchestrator.plan import graph_error, parse_tasks, scheduled
+from backend.orchestrator.plan import (
+    _accept,
+    _normalize_data_contract,
+    graph_error,
+    parse_tasks,
+    plan_schema,
+    scheduled,
+)
 from backend.repositories.run_repository import latest_checkpoint
 from backend.service import handle_message, new_session
 from backend.services.chat_run import execute_chat, work_chat
@@ -37,6 +44,43 @@ def test_a_report_drops_its_data_task_and_the_dependency():
     assert [task.id for task in tasks] == ["r"]
     assert tasks[0].depends_on == []
     assert graph_error(tasks) is None
+
+
+def test_data_delivery_mode_is_derived_from_the_plan_shape():
+    only = _normalize_data_contract(parse_tasks({"tasks": [
+        {"id": "d", "kind": "agent", "name": "data", "input": {"question": "total"}, "depends_on": []},
+    ]}))
+    assert only[0].input["deliver"] == "answer"
+
+    mixed = _normalize_data_contract(parse_tasks({"tasks": [
+        {"id": "d", "kind": "agent", "name": "data", "input": {"question": "total"}, "depends_on": []},
+        {"id": "b", "kind": "agent", "name": "brand", "input": {}, "depends_on": []},
+    ]}))
+    assert mixed[0].input["deliver"] == "data"
+
+
+def test_kind_is_derived_from_the_name_and_never_asked_of_the_model():
+    tasks = parse_tasks({"tasks": [
+        {"id": "d", "name": "data_agent", "input": {"question": "total"}, "depends_on": []},
+        {"id": "t", "name": "translate", "input": {}, "depends_on": ["d"]},
+    ]})
+    assert [(task.kind, task.name) for task in tasks] == [("agent", "data"), ("tool", "translate")]
+    # A stale `kind` (older checkpoint, replayed plan) cannot turn an agent into a tool.
+    stale = parse_tasks({"tasks": [
+        {"id": "d", "kind": "tool", "name": "data", "input": {}, "depends_on": []},
+        {"id": "p", "kind": "tool", "name": "po_agent", "input": {}, "depends_on": []},
+    ]})
+    assert [(task.kind, task.name) for task in stale] == [("agent", "data"), ("agent", "po")]
+    assert "kind" not in plan_schema()["schema"]["properties"]["tasks"]["items"]["properties"]
+
+
+def test_an_unknown_agent_name_is_dropped_not_dispatched_as_a_tool():
+    tasks, dropped, unknown = _accept({"tasks": [
+        {"id": "x", "name": "pricing_agent", "input": {}, "depends_on": []},
+        {"id": "d", "name": "data_agent", "input": {}, "depends_on": ["x"]},
+    ]})
+    assert [task.name for task in tasks] == ["data"]
+    assert dropped["unknown_agent"] == 1 and unknown == {"x"}
 
 
 def test_a_cycle_is_rejected():

@@ -77,16 +77,16 @@ def _pages_from_payload(payload: dict) -> list[tuple[int, str]]:
         return [(1, markdown)]
     raise ValueError("GLM-OCR returned no pages.")
 
-def _open_ocr_step(db: Database, run_id: str, file_name: str) -> str | None:
+def _open_ocr_step(db: Database | None, run_id: str | None, file_name: str) -> str | None:
     if db is None or not run_id:
         return None 
     step = db.insert_step(run_id, StepType.TOOL, step_name(StepType.TOOL, "document.ocr"), {"file_name": file_name})
     if step is None:
-        return None
+        raise ValueError("Cannot record OCR: run is not running.")
     return step["id"]
 
 def _close_ocr(
-    db: Database, run_id: str | None, step_id: str | None, *,
+    db: Database | None, run_id: str | None, step_id: str | None, *,
     file_name: str, pages: int, latency_ms: int, error: Exception | None,
 ) -> None:
     if db is None or not run_id or not step_id:
@@ -101,7 +101,7 @@ def _close_ocr(
         args={"file_name": file_name},
         result={} if error is not None else result,
         status=tool_status,
-        idempotency_key=f"document.ocr:{run_id}:{file_name}",
+        idempotency_key=f"document.ocr:{step_id}",
         latency_ms=latency_ms,
         error=failure,
     )
@@ -111,10 +111,20 @@ def _close_ocr(
         failure,
     )
 
+
+def _ocr_usage(payload: dict) -> tuple[int, int, str]:
+    usage = payload.get("usage")
+    if isinstance(usage, dict):
+        prompt, completion = usage.get("prompt_tokens"), usage.get("completion_tokens")
+        valid = [isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in (prompt, completion)]
+        return prompt if valid[0] else 0, completion if valid[1] else 0, "actual" if all(valid) else "unknown"
+    return 0, 0, "unknown"
+
 def ocr_pdf(
     data: bytes, *, db: Database | None = None, run_id: str | None = None, file_name: str = "",
 ) -> list[tuple[int, str]]:
     """Pages of one PDF from GLM-OCR. Raises ValueError when the key is missing or the call fails."""
+    from .llm.calls import ModelBudgetExceeded, ModelResult, _budget
     from .llm.client import GLMOCRClient
 
     key = env("GLM_API_KEY")
@@ -124,13 +134,47 @@ def ocr_pdf(
     step_id = _open_ocr_step(db, run_id, file_name)
     started = time.perf_counter()
     try:
-        pages = _pages_from_payload(GLMOCRClient(api_key=key, url=url).parse(data))
+        gate = _budget(db, run_id, step_id, "document.ocr")
+        if isinstance(gate, ModelResult):
+            raise ModelBudgetExceeded()
     except Exception as e:
+        _close_ocr(
+            db, run_id, step_id, file_name=file_name, pages=0,
+            latency_ms=int((time.perf_counter() - started) * 1000), error=e,
+        )
+        raise
+    try:
+        payload = GLMOCRClient(api_key=key, url=url).parse(data)
+    except Exception as e:
+        if db is not None and run_id and step_id:
+            db.insert_model_call(
+                run_id, step_id, provider="glm", model="glm-ocr", request={"file_name": file_name},
+                response={}, prompt_tokens=0, completion_tokens=0, usage_source="unknown",
+                latency_ms=int((time.perf_counter() - started) * 1000), status=StepStatus.FAILED,
+                error={"message": str(e)},
+            )
         _close_ocr(
             db, run_id, step_id, file_name=file_name, pages=0, 
             latency_ms=int((time.perf_counter() - started) * 1000), error=e,
         )
         raise 
+    if db is not None and run_id and step_id:
+        prompt, completion, source = _ocr_usage(payload)
+        db.insert_model_call(
+            run_id, step_id, provider="glm", model="glm-ocr",
+            request={"file_name": file_name, "purpose": "document.ocr"},
+            response={"request_id": payload.get("request_id")},
+            prompt_tokens=prompt, completion_tokens=completion, usage_source=source,
+            latency_ms=int((time.perf_counter() - started) * 1000), status=StepStatus.SUCCEEDED,
+        )
+    try:
+        pages = _pages_from_payload(payload)
+    except Exception as e:
+        _close_ocr(
+            db, run_id, step_id, file_name=file_name, pages=0,
+            latency_ms=int((time.perf_counter() - started) * 1000), error=e,
+        )
+        raise
     _close_ocr(
         db, run_id, step_id, file_name=file_name, pages=len(pages), 
         latency_ms=int((time.perf_counter() - started) * 1000), error=None,

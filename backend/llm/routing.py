@@ -153,10 +153,12 @@ ROUTES: dict[str, RoutePolicy] = {
     "contract.extract": _structured("contract.extract"),
     "report": _structured("report", max_tokens=4000),
     "code.fix": _structured("code.fix"),
-    "data.pick": _cheap_text("data.pick"),
-    "data.score": _cheap_text("data.score"),
-    "data.sql": _structured("data.sql"),
-    "data.sql.revise": _structured("data.sql.revise"),
+    "data.react": RoutePolicy(
+        task="data.react", primary=DEEPSEEK_FLASH, fallbacks=(QWEN_FLASH,),
+        max_tokens=8_000, max_model_calls=8,
+        quality_gate="response_parsed",
+        fallback_on=("provider_error", "model_capacity", "invalid_json"),
+    ),
     "session.tools": _structured("session.tools"),
     "run.decide": _structured("run.decide"),
 }
@@ -211,7 +213,8 @@ def quality_check(policy: RoutePolicy, body: Any) -> tuple[bool, str]:
             return False, "invalid_task_id"
         known = set(ids)
         for item in items:
-            if not isinstance(item, dict) or item.get("kind") not in {"agent", "tool"}:
+            # `kind` is derived from the name by code; an older plan may still carry one.
+            if not isinstance(item, dict) or item.get("kind") not in {None, "", "agent", "tool"}:
                 return False, "invalid_task_kind"
             if not str(item.get("name") or "").strip():
                 return False, "empty_task_name"

@@ -65,7 +65,7 @@ def analyze(logs: list[dict[str, Any]]) -> tuple[dict[str, list[dict[str, Any]]]
 def main() -> None:
     from ..db import Database
 
-    categories, report, _few_shot = analyze(Database().list_text2sql_logs())
+    categories, report, _few_shot = analyze(Database().list_text2sql_logs(admin=True))
     print(report)
     del categories
 

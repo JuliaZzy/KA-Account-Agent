@@ -31,6 +31,11 @@ x-python: &python
     # Compose wins over a .env that still points Milvus at 127.0.0.1.
     MILVUS_URI: http://milvus:19530
     PYTHONPATH: /app
+    # Experiment switch: `legacy` runs the archived pick/write/repair/reflect workflow.
+    KA_TEXT2SQL_IMPL: ${KA_TEXT2SQL_IMPL:-react}
+    # Experiment switches for the SQL row caps (defaults 100 / 200).
+    KA_SQL_DEFAULT_LIMIT: ${KA_SQL_DEFAULT_LIMIT:-100}
+    KA_SQL_MAX_LIMIT: ${KA_SQL_MAX_LIMIT:-200}
     WATCHFILES_FORCE_POLLING: "true"
   extra_hosts:
     - "host.docker.internal:host-gateway"

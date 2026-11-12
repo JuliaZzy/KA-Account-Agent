@@ -337,7 +337,6 @@ def _child_spec(
             "images": payload.get("images") or [],
             "documents": payload.get("documents") or [],
             "attachments": payload.get("attachments") or [],
-            "model": payload.get("model"),
         },
         "started": {"tool_name": tool_name, "task_id": task.id, "display": tool_name},
     }

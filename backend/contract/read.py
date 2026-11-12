@@ -10,18 +10,20 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import re
 from typing import Any
 
-from ..db import Database
+from ..db import Database, InvalidRunTransition
 from ..documents import SUPPORTED_EXTS, load_pages, render_pdf_images
 from ..llm import DeepSeekClient, deepseek_client
 from ..llm import calls as model_calls
 from ..schemas import ContractChunk
+from ..services.run_names import RunStatus, StepStatus, StepType, step_name
 from .chunks import flatten_chunk_tree, split_chunks
-from .ingest import ingest_extraction, record_from_extraction
+from .ingest import record_from_extraction
 from .prompt import EXTRACT, REFLECT, SELECT
 
 MAX_SCAN_IMAGES = 6
@@ -257,16 +259,33 @@ def _chosen_chunks(raw: dict[str, Any], allowed: dict[str, dict]) -> list[dict]:
     return chosen
 
 
+@contextlib.contextmanager
+def _model_step(db: Database | None, run_id: str | None, purpose: str):
+    if db is None or not run_id:
+        yield None
+        return
+    step = db.insert_step(run_id, StepType.MODEL, step_name(StepType.MODEL, None), {"purpose": purpose})
+    if step is None:
+        raise ValueError("Cannot record contract model call: run is not running.")
+    try:
+        yield step["id"]
+    except Exception as exc:
+        db.finish_step(step["id"], StepStatus.FAILED, error={"message": str(exc)})
+        raise
+    db.finish_step(step["id"], StepStatus.SUCCEEDED)
+
+
 def _school_json(
     llm: Any, *, system: str, user: str,
     db: Database | None = None, run_id: str | None = None, purpose: str = "contract.select",
 ) -> dict[str, Any]:
     """Cheap official Qwen JSON. The selection is the message text."""
-    return model_calls.school_json(
-        client=llm, system=system,
-        messages=[{"role": "user", "content": user}], temperature=0,
-        db=db, run_id=run_id, purpose=purpose,
-    )
+    with _model_step(db, run_id, purpose) as step_id:
+        return model_calls.school_json(
+            client=llm, system=system,
+            messages=[{"role": "user", "content": user}], temperature=0,
+            db=db, run_id=run_id, step_id=step_id, purpose=purpose,
+        )
 
 
 def _select_chunks(
@@ -371,11 +390,12 @@ def read_agreement(
                 messages = content
             else:
                 messages = [{"role": "user", "content": content}]
-            raw = model_calls.flash_json(
-                client=llm, system=EXTRACT_SYSTEM, messages=messages,
-                schema=EXTRACT_SCHEMA, temperature=0,
-                db=db, run_id=run_id, purpose="contract.extract",
-            )
+            with _model_step(db, run_id, "contract.extract") as step_id:
+                raw = model_calls.flash_json(
+                    client=llm, system=EXTRACT_SYSTEM, messages=messages,
+                    schema=EXTRACT_SCHEMA, temperature=0,
+                    db=db, run_id=run_id, step_id=step_id, purpose="contract.extract",
+                )
             if not isinstance(raw, dict):
                 raise ValueError(f"Extraction for {chunk['id']} was not a JSON object.")
             parts.append(sanitize_extraction(raw, pages, image_pages))
@@ -409,15 +429,30 @@ def read_and_ingest(
     file_name: str,
     data: bytes,
     title: str | None = None,
+    user_id: str | None = None,
 ) -> Any:
     """Read the file and write the contract, its terms and the derived PO rules."""
-    extraction, tree = read_agreement(llm, file_name, data)
-    model = "deepseek-flash"
-    return ingest_extraction(
-        db, extraction, brand_id=brand_id, partnership_id=partnership_id,
-        title=title or file_name, file_name=file_name, file_sha256=hashlib.sha256(data).hexdigest(), model=model,
-        chunks=_chunk_models(tree),
-    )
+    partnership = db.partnership(partnership_id)
+    if partnership is None or partnership.brand_id != brand_id:
+        raise ValueError("Partnership does not match the brand.")
+    run = db.create_inline_contract_run(partnership.distributor_id, user_id or "system", file_name)
+    try:
+        extraction, tree = read_agreement(llm, file_name, data, db=db, run_id=run["id"])
+        rec = record_from_extraction(
+            extraction, brand_id=brand_id, partnership_id=partnership_id,
+            title=title or file_name, file_name=file_name, file_sha256=hashlib.sha256(data).hexdigest(),
+            model="deepseek-flash", chunks=_chunk_models(tree),
+        )
+        db.save_contract(rec, inline_run_id=run["id"])
+    except Exception as exc:
+        with contextlib.suppress(InvalidRunTransition):
+            db.transition_run(
+                partnership.distributor_id, run["id"], RunStatus.FAILED,
+                error={"message": str(exc)}, from_status=frozenset({RunStatus.RUNNING}),
+            )
+        raise
+    rec.ingestion_run_id = run["id"]
+    return rec
 
 
 def summarize(rec: Any) -> str:

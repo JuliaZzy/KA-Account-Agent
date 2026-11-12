@@ -320,6 +320,7 @@ class MonitorMetrics(BaseModel):
     cost_cents: int
     daily_cost_cents: int
     daily_tokens: int
+    daily_unknown_usage_calls: int = 0
 
 
 class MonitorHour(BaseModel):

@@ -165,13 +165,15 @@ Run 接口只认 `X-User-Id`。用它查出 `users` 行，`org_id` 取 `distribu
 
 没配 SMTP 在占座之前拒绝，code 是 `TOOL_UPSTREAM_ERROR`。
 
-`memory.fold` 和 `document.ocr` 不是模型选的工具，由 `backend/memory.py` 和 `backend/documents.py` 自己记轨迹。折叠大约按 2000 token 预算由代码触发。PDF 的 OCR 只在 `contract.read` 读到 PDF、且 run 仍是 `running` 时记成工具调用。
+`memory.fold` 和 `document.ocr` 不是模型选的工具，由 `backend/memory.py` 和 `backend/documents.py` 自己记轨迹。折叠大约按 2000 token 预算由代码触发。PDF OCR 同时写工具调用和模型账本；聊天合同读取关联当前 run，界面或命令行直接导入则创建独立的同步合同 run，不产生队列任务。界面上传带当前用户；未提供用户的调用记为 `system`。
 
 需要确认的工具在执行前把 run 停在 `waiting_for_user`。`resume` 把出站任务发出去并叫醒 worker。最近一次 `decision` 为 `skip` 时不调用；没有 `decision` 或为 `confirm` 时照常执行。
 
 ## 模型
 
 对话调用从 `backend/llm/calls.py` 的 `call_model` 进去。`client` 由调用方传入。一次调用一行 `model_calls`、一行 `usage_records`，挂上这次的 `run_id` 和 `step_id`。厂商给了 usage 时 `usage_source` 为 `actual`。两边都是 0，或根本没有 usage，按本地估算（一个汉字大约一个 token，其余大约四个字符一个），`usage_source` 为 `estimated`。估算不记成厂商数字。
+
+GLM-OCR 的 `layout_parsing` 使用厂商返回的输入和输出 token，输入、输出各按 0.2 元/百万 token 估算费用（智谱官方价表，2026-11-10 核对）。缺少有效 usage 或请求结果不确定时，标记 `usage_source=unknown`，不把文件大小、页数当 token；此时已记录的费用和预算用量只是下限，监控会显示未知次数并提示核对厂商账单。厂商成功返回后、本地解析失败的调用仍计入账本。已丢失的历史用量无法从现有数据补回。
 
 `max_model_calls` 或 `max_tokens` 有值且已经用满时，不打模型，写 `model.failed`，错误码 `COST_BUDGET_EXCEEDED`。这一步不把整条 run 改成失败。本地模型槽满、厂商 429/5xx/超时的重试、熔断和 `Retry-After` 见 [`retry.md`](retry.md)。
 
@@ -233,7 +235,7 @@ org 日预算看当天 `usage_records` 的 token 和费用。`KA_ACCOUNT_ORG_DAI
 | outbox 仍是 `pending` | `dispatch_pending` |
 | 已送出但 run 还在 `queued` 超过宽限期（默认 120 秒，`KA_ACCOUNT_REDISPATCH_AFTER_SECONDS`），**且它所在的队列在 Redis 里是空的** | 从 queued Run 主表先过滤，再按 `queued_at` 取最多 100 条；`FOR UPDATE SKIP LOCKED` 锁住后递增 `redispatch_count`，最多补投 3 次。队列非空（Run 只是在排队）或读不到队列深度时不补投 |
 | 补投次数已满且仍 queued | 标记 `failed`，错误码 `STUCK_REDISPATCH_EXHAUSTED`，并写入 `dead_letter_jobs` |
-| 排队超过 `KA_ACCOUNT_QUEUED_MAX_AGE_SECONDS`（默认 1 小时） | 保持 queued、停止自动补投，人工核对后处理 |
+| 排队超过 `KA_ACCOUNT_QUEUED_MAX_AGE_SECONDS`（默认 2 小时）且没有心跳 | `failed / STUCK_QUEUE_EXPIRED` 并进入死信，不补投、不重放；worker 在 SoftBusy 重试时写 `queue_heartbeat_at`，合法等待的 Run 不会被判超龄 |
 | 已派发且对应 Run 已终态、超过保留期 | 按批删除；默认保留 7 天，可用 `KA_ACCOUNT_OUTBOX_RETENTION_DAYS` 和 `KA_ACCOUNT_OUTBOX_CLEANUP_BATCH` 调整 |
 
 ## 回放、重试、重跑、修复

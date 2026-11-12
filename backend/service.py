@@ -44,11 +44,10 @@ def new_session(db: Database, partnership_id: str | None = None, user_id: str | 
 def handle_message(
     db: Database, llm: Any, session_id: str, text: str, images: list[str] | None = None,
     attachments: list[str] | None = None, documents: list[tuple[str, bytes]] | None = None,
-    model: str | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Enqueue one turn. The worker replies; a second send waits only while this enqueue holds the lock."""
     with hold_session(session_id):
-        yield from run_turn(db, llm, session_id, text, images, attachments, documents, model)
+        yield from run_turn(db, llm, session_id, text, images, attachments, documents)
 
 
 def archive_session(db: Database, session_id: str) -> None:

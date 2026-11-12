@@ -107,7 +107,7 @@ Checkpoint 保存工具循环、已完成工具、开放步骤、父 Run 任务�
 
 SSE 先读取已经落库的事件，再通过 `LISTEN` 和 sequence cursor 补齐后续事件。断线重连通过 `after` 继续读取，不依赖浏览器内存。
 
-Worker 消失、lease 过期或 outbox stale 时由 sweeper 和 outbox 机制重新投递。stale outbox 的查询以 `agent_runs(status='queued')` 为主表，并用 `queued_at` 部分索引和 `FOR UPDATE SKIP LOCKED` 避免旧终态 outbox 挤掉真正卡住的 Run。终态 Run 不重复执行；已经 claim 的副作用根据幂等键复用结果或进入人工复核。补投超过 3 次仍未被领取的 Run 进入 `failed` 和死信；排队超过 1 小时的 Run 保持 queued，停止自动补投并等待人工核对。
+Worker 消失、lease 过期或 outbox stale 时由 sweeper 和 outbox 机制重新投递。stale outbox 的查询以 `agent_runs(status='queued')` 为主表，并用 `queued_at` 部分索引和 `FOR UPDATE SKIP LOCKED` 避免旧终态 outbox 挤掉真正卡住的 Run。终态 Run 不重复执行；已经 claim 的副作用根据幂等键复用结果或进入人工复核。补投超过 3 次仍未被领取的 Run 进入 `failed` 和死信；排队超过 2 小时没有任何动静（`queued_at` 与 worker 重试心跳 `queue_heartbeat_at` 中较晚者）的 Run 以 `STUCK_QUEUE_EXPIRED` 失败并进入死信，不重放。
 
 ## 7. 当前运行时风险和优化项
 

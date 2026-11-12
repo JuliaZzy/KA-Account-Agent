@@ -202,7 +202,7 @@ def run_tool_calls(
 
 def handle_message(
     db: Database, llm: Any, session_id: str, text: str, images: list[str] | None = None, attachments: list[str] | None = None,
-    documents: list[tuple[str, bytes]] | None = None, model: str | None = None,
+    documents: list[tuple[str, bytes]] | None = None,
 ) -> Iterator[dict[str, Any]]:
     session = db.session(session_id)
     if not session:
@@ -215,6 +215,6 @@ def handle_message(
     names = [*(attachments or []), *[n for n, _ in documents], *[f"image-{i + 1}.jpg" for i in range(len(images))]]
 
     run = enqueue_chat_run(
-        db, session, text, images=images, documents=documents, model=model, attachments=names
+        db, session, text, images=images, documents=documents, attachments=names
     )
     yield {"type": "run", "run_id": run["id"]}

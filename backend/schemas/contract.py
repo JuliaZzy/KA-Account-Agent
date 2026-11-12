@@ -131,10 +131,10 @@ class Contract(BaseModel):
 
 
 class ContractRecord(BaseModel):
-    """Everything one ingestion writes, atomically: the contract, its raw extraction, the
-    normalized terms, and what was derived from them for the PO gate."""
+    """Contract, extraction and derived terms, plus the optional import run reference."""
 
     contract: Contract
+    ingestion_run_id: str | None = None
     extraction_raw: dict[str, Any]
     model: str | None = None
     confidence_score: float | None = None

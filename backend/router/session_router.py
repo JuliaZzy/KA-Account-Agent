@@ -12,6 +12,7 @@ from ..db import Database
 from ..deps import get_db
 from ..schemas import Confirm, ConfirmContract, ConfirmReport, DataFeedback, Inbound, InboundFile, NewSession
 from ..services.chat_run import enqueue_chat_run
+from ..turn_lock import hold_session
 from ._common import partnership_or_404, user_on_partnership
 
 router = APIRouter()
@@ -102,7 +103,7 @@ def message(
         raise HTTPException(400, "message required")
     run = enqueue_chat_run(
         db, session, body.message, images=images, documents=documents,
-        attachments=body.attachments, model=body.model,
+        attachments=body.attachments,
     )
     return {"run_id": str(run["id"])}
 
@@ -138,17 +139,20 @@ def confirm_report(sid: str, body: ConfirmReport, db: Database = Depends(get_db)
 @router.post("/api/sessions/{sid}/data-feedback")
 def data_feedback(sid: str, body: DataFeedback, db: Database = Depends(get_db)) -> dict[str, Any]:
     """Rate the query behind one assistant turn. The log must belong to this chat."""
-    session = db.session(sid)
-    if not session:
+    if not db.session(sid):
         raise HTTPException(404, "session not found")
-    try:
-        db.set_text2sql_feedback(
-            body.log_id, body.feedback, reason=body.reason, corrected_sql=body.corrected_sql,
-            partnership_id=session["partnership_id"], session_id=sid,
-        )
-    except KeyError as err:
-        raise HTTPException(404, "query log not found") from err
-    except ValueError as err:
-        raise HTTPException(400, str(err)) from err
-    db.stamp_text2sql_feedback(sid, body.log_id, body.feedback)
+    with hold_session(sid):
+        session = db.session(sid)
+        if not session:
+            raise HTTPException(404, "session not found")
+        try:
+            db.set_text2sql_feedback(
+                body.log_id, body.feedback, reason=body.reason, corrected_sql=body.corrected_sql,
+                partnership_id=session["partnership_id"], session_id=sid,
+            )
+        except KeyError as err:
+            raise HTTPException(404, "query log not found") from err
+        except ValueError as err:
+            raise HTTPException(400, str(err)) from err
+        db.stamp_text2sql_feedback(sid, body.log_id, body.feedback)
     return {"ok": True, "feedback": body.feedback}

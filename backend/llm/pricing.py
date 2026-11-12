@@ -1,4 +1,4 @@
-"""Official vendor token pricing in CNY (RMB) for ``qwen3.7-flash`` and ``deepseek-flash``.
+"""Official vendor token pricing in CNY (RMB) for supported models.
 
 Prices are per 1,000,000 tokens and follow the vendor billing pages checked on
 2026-11-09:
@@ -15,6 +15,7 @@ Prices are per 1,000,000 tokens and follow the vendor billing pages checked on
     cache hit input ¥0.04 / 1M, cache miss input ¥2.00 / 1M, output ¥8.00 / 1M.
   - Off-peak hours (all other weekday hours and all day Saturday/Sunday):
     cache hit input ¥0.02 / 1M, cache miss input ¥1.00 / 1M, output ¥4.00 / 1M.
+- Zhipu GLM-OCR: input and output ¥0.20 / 1M tokens, checked 2026-11-10.
 """
 
 from __future__ import annotations
@@ -90,6 +91,8 @@ def call_cost_cny(
         return 0.0
     prompt = max(0, int(prompt_tokens or 0))
     completion = max(0, int(completion_tokens or 0))
+    if name == "glm-ocr":
+        return (prompt + completion) * 0.20 / _PER_MILLION
     hit, miss, creation = _split_prompt_tokens(
         prompt, cache_hit_tokens, cache_miss_tokens, cache_creation_tokens,
     )

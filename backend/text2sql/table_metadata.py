@@ -2,8 +2,7 @@
 
 目录是一行一个表（用来选表）。列的细节只发给这个问题需要的表，再加上不连上就读不了这些表的父表。
 
-不包含 `sessions`：里面有确认令牌、草稿槽位和聊天记录。
-不包含 `users`：谁在用工作台不是业务数据。
+采购单按当前 partnership/distributor 归属。工作台的 users 和 sessions 属于会话与审计上下文，不是采购单的归属字段，因此不开放给 Text2SQL。
 不包含 `text2sql_logs`，这样查询不能读到或改写自己的审计。
 不包含 `narrative_reports`：那是确认后的叙述正文，不是可以相加的数字。动销仍在 `report_facts`。
 不包含 `brand_documents.file_bytes`；页面文本在 `brand_document_pages`。
@@ -349,7 +348,8 @@ TABLES: dict[str, dict[str, Any]] = {
     ),
     "purchase_orders": _table(
         "这个合作关系已提交的采购单。这张表上没有 quantity；行数量是 purchase_order_items 上的箱数。"
-        "金额列已经算好；求和，不要重新计价。"
+        "金额列已经算好；求和，不要重新计价。采购单按当前合作关系和经销商归属，"
+        "没有采购单用户归属字段；不要把工作台用户当成下单人。"
         "eta_date 是日历日。submitted_at 是 UTC 时刻。",
         {
             "id": _col("text", "主键。"),
@@ -358,21 +358,21 @@ TABLES: dict[str, dict[str, Any]] = {
             "distributor_id": _col("text", "对应 distributors.id。"),
             "partnership_id": _col("text", "对应 partnerships.id。"),
             "status": _col(
-                "text", "订单履行到哪一步。",
+                "text", "订单履行到哪一步。“已完成”的订单指 status = 'completed'。",
                 ["submitted", "awaiting_payment", "payment_claimed", "completed", "awaiting_refund", "claim_filed"],
             ),
             "currency": _col("text", "金额列的货币。", ["USD"]),
             "payment_terms": _col("text", "这张订单怎么付款。", ["50_50", "100_prepaid", "net_30", "net_60"]),
             "incoterms": _col("text", "贸易术语。", ["FOB", "CIF", "EXW", "DDP", "DAP", "CFR"]),
             "shipping_method": _col("text", "怎么运输。", ["sea", "air", "express", "land"]),
-            "eta_date": _col("text", "预计到达 YYYY-MM-DD，或 null。不是时间戳。"),
+            "eta_date": _col("text", "预计到达 YYYY-MM-DD，或 null。不是时间戳。“预计几月到货”按它算。"),
             "ship_to_country": _col("text", "收货国家，ISO alpha-2。"),
             "notes": _col("text", "订单上的自由文本备注。"),
             "discount_amount": _col("numeric", "货币金额的折扣，没有时为 null。"),
             "discount_percentage": _col("numeric", "折扣百分比；折扣是金额或没有折扣时为 null。"),
             "subtotal_amount": _col("numeric", "折扣前各行合计之和。"),
             "total_amount": _col("numeric", "subtotal_amount 减去 discount_amount。"),
-            "submitted_at": _col("timestamptz", "订单提交时间，UTC，或 null。"),
+            "submitted_at": _col("timestamptz", "订单提交（下单）时间，UTC，或 null。“几月下单”按它算。"),
             "submit_cycle_version": _col("integer", "这张订单提交过几次。"),
             "prepaid_amount": _col("numeric", "记为已预付的金额。"),
             "balance_paid": _col("numeric", "交货后记为已付的尾款。"),

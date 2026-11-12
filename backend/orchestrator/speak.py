@@ -67,7 +67,13 @@ def save_reply(
         assistant["sources"] = sources
     mark = extra.get("data_query")
     if isinstance(mark, dict) and mark.get("log_id"):
-        assistant["data_query"] = {"log_id": mark["log_id"], "ok": bool(mark.get("ok"))}
+        assistant["data_query"] = {
+            "log_id": mark["log_id"], "ok": bool(mark.get("ok")),
+            "columns": mark.get("columns") or [],
+            "missing_columns": mark.get("missing_columns") or [],
+            "truncated": bool(mark.get("truncated")),
+            "rows_handle": mark.get("rows_handle"),
+        }
     charts = extra.get("charts")
     if isinstance(charts, list) and charts:
         assistant["charts"] = charts

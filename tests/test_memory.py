@@ -223,20 +223,22 @@ def test_the_next_prompt_keeps_the_summary_with_the_raw_tail(db):
 
 
 def test_sql_prompt_includes_standing_memory(monkeypatch):
-    from backend.text2sql.text2sql import _write_sql
+    from backend.text2sql.text2sql import _next_action, _RunTrace
 
     calls: list[dict] = []
 
     class _DeepSeek:
         def response(self, **kwargs):
             calls.append(kwargs)
-            return type("Reply", (), {"output_text": '{"sql": "SELECT 1"}'})()
+            return type("Reply", (), {"output_text": '{"action":"finish","tables":[],"sql":"","score":0}'})()
 
     monkeypatch.setattr("backend.text2sql.text2sql.deepseek_client", lambda: _DeepSeek())
-    _write_sql("how many orders", "purchase_orders(id)", context="[fact] fiscal year starts in April")
+    _next_action(question="how many orders", context="[fact] fiscal year starts in April",
+                 history=None, folded_through=0, observations=[], trace=_RunTrace(), remaining={})
     assert "fiscal year" in calls[0]["instructions"]
     calls.clear()
-    _write_sql("how many orders", "purchase_orders(id)")
+    _next_action(question="how many orders", context="", history=None,
+                 folded_through=0, observations=[], trace=_RunTrace(), remaining={})
     assert "fiscal year" not in calls[0]["instructions"]
 
 

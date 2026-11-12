@@ -1,0 +1,3932 @@
+{
+ "history": [
+  {
+   "role": "user",
+   "content": "帮我起草一张采购单，Activia bifidus nature 125g x 4 订 3 箱，先不要提交，按协议折扣算一下应付总额。"
+  },
+  {
+   "role": "assistant",
+   "order": true,
+   "run_id": "run_701c8c62667644768590906a26857630",
+   "content": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110.43**\n\n请确认无误后点击标签上的确认按钮下单。",
+   "order_draft": {
+    "lines": [
+     {
+      "sku": "DAI-3033491147067",
+      "name": "Activia bifidus nature 125g x 4",
+      "cases": 3,
+      "ambiguous": false,
+      "below_moq": false,
+      "moq_cases": 3,
+      "reference": "Activia bifidus nature 125g x 4",
+      "candidates": [],
+      "case_price": 37.95,
+      "line_total": 113.85,
+      "unresolved": false,
+      "missing_price": false,
+      "partial_layer": true,
+      "cases_per_layer": 10,
+      "cases_to_full_layer": 7
+     }
+    ],
+    "notes": null,
+    "total": 110.43,
+    "currency": "USD",
+    "discount": {
+     "kind": "percent",
+     "note": "3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2",
+     "value": 3.0,
+     "source": "contract"
+    },
+    "eta_date": "2027-01-09",
+    "subtotal": 113.85,
+    "incoterms": "CIF",
+    "payment_terms": "50_50",
+    "discount_amount": 3.42,
+    "shipping_method": "sea"
+   }
+  }
+ ],
+ "trace": {
+  "run": {
+   "id": "run_701c8c62667644768590906a26857630",
+   "org_id": "dist-liancai",
+   "user_id": "user-liancai-chen",
+   "run_type": "chat",
+   "idempotency_key": "chat:cabd521da994459fbb449152df15f5d2:d24e348993684beb8153da315c59ca31",
+   "status": "succeeded",
+   "input_json": {
+    "model": null,
+    "images": [],
+    "message": "帮我起草一张采购单，Activia bifidus nature 125g x 4 订 3 箱，先不要提交，按协议折扣算一下应付总额。",
+    "documents": [],
+    "session_id": "cabd521da994459fbb449152df15f5d2",
+    "attachments": []
+   },
+   "output_json": {
+    "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110.43**\n\n请确认无误后点击标签上的确认按钮下单。"
+   },
+   "error_json": null,
+   "created_at": "2026-11-10T10:50:45.602994Z",
+   "queued_at": "2026-11-10T10:51:19.288043Z",
+   "started_at": "2026-11-10T10:50:45.609083Z",
+   "ended_at": "2026-11-10T10:51:23.068279Z",
+   "cancel_requested_at": null,
+   "updated_at": "2026-11-10T10:51:23.068279Z",
+   "lease_owner": "celery:11",
+   "lease_expires_at": "2026-11-10T11:01:19.298298Z",
+   "attempts": 2,
+   "redispatch_count": 0,
+   "parent_run_id": null,
+   "owner_run_id": null,
+   "trace_id": "24c23d584f344ba692c52b4aa580aafb",
+   "max_model_calls": 8,
+   "max_tokens": 32000,
+   "max_tool_calls": null,
+   "max_duration_seconds": null
+  },
+  "steps": [
+   {
+    "id": "step_acfc3243c174406d937c938e1c8ee1bb",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "step_index": 1,
+    "step_type": "model",
+    "name": "model",
+    "status": "succeeded",
+    "input_json": {
+     "purpose": "orchestrator.plan"
+    },
+    "output_json": {
+     "tasks": [
+      {
+       "id": "po_draft",
+       "kind": "agent",
+       "name": "po",
+       "input": {
+        "items": [
+         {
+          "sku": "Activia bifidus nature 125g x 4",
+          "unit": "box",
+          "quantity": 3
+         }
+        ],
+        "notes": "按协议折扣计算应付总额，先不提交",
+        "action": "draft"
+       },
+       "depends_on": []
+      }
+     ]
+    },
+    "error_json": null,
+    "started_at": "2026-11-10T10:50:45.619722Z",
+    "ended_at": "2026-11-10T10:50:49.020990Z"
+   },
+   {
+    "id": "step_8ab7b77e891c4bd6a4d8f809018c6e78",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "step_index": 2,
+    "step_type": "model",
+    "name": "model",
+    "status": "succeeded",
+    "input_json": {
+     "purpose": "orchestrator.answer"
+    },
+    "output_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110.43**\n\n请确认无误后点击标签上的确认按钮下单。"
+    },
+    "error_json": null,
+    "started_at": "2026-11-10T10:51:19.311314Z",
+    "ended_at": "2026-11-10T10:51:23.054286Z"
+   },
+   {
+    "id": "step_f84110675a8647fda9ac2a3a7d6bf734",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "step_index": 3,
+    "step_type": "model",
+    "name": "model",
+    "status": "succeeded",
+    "input_json": {
+     "purpose": "orchestrator.history"
+    },
+    "output_json": {
+     "saved": true
+    },
+    "error_json": null,
+    "started_at": "2026-11-10T10:51:23.059848Z",
+    "ended_at": "2026-11-10T10:51:23.064076Z"
+   }
+  ],
+  "events": [
+   {
+    "id": "evt_9fc4f3a216f64a938b5ac4c8dbf4430a",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 1,
+    "event_type": "run.created",
+    "payload_json": {
+     "status": "queued",
+     "display": "已开始"
+    },
+    "created_at": "2026-11-10T10:50:45.602994Z"
+   },
+   {
+    "id": "evt_6f3cf7febf4d4ceaa18b1f3b88a7ba1f",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 2,
+    "event_type": "run.enqueued",
+    "payload_json": {
+     "outbox_job_id": "obx_0e704c16b92046deae6964a7336d0c1e"
+    },
+    "created_at": "2026-11-10T10:50:45.606567Z"
+   },
+   {
+    "id": "evt_73e27f972e5f42e08dd8973558e8da45",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 3,
+    "event_type": "run.started",
+    "payload_json": {
+     "actor_id": "celery:11",
+     "to_status": "running",
+     "actor_type": "worker",
+     "from_status": "queued",
+     "lease_owner": "celery:11"
+    },
+    "created_at": "2026-11-10T10:50:45.609083Z"
+   },
+   {
+    "id": "evt_85140b88ab0d4b7fa4c41f12352a03a8",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 4,
+    "event_type": "step.started",
+    "payload_json": {
+     "name": "model",
+     "step_id": "step_acfc3243c174406d937c938e1c8ee1bb",
+     "step_type": "model",
+     "step_index": 1
+    },
+    "created_at": "2026-11-10T10:50:45.619722Z"
+   },
+   {
+    "id": "evt_730643401f81413ca282ea09ff43fe6d",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 5,
+    "event_type": "model.route_selected",
+    "payload_json": {
+     "reason": "policy_primary",
+     "decision": "primary",
+     "trace_id": "24c23d584f344ba692c52b4aa580aafb",
+     "max_tokens": 1200,
+     "route_task": "orchestrator.plan",
+     "quality_gate": "valid_task_plan",
+     "fallback_from": null,
+     "reason_detail": null,
+     "policy_version": "model-routing-v1",
+     "selected_model": "qwen3.7-flash",
+     "candidate_index": 0,
+     "max_model_calls": 2,
+     "selected_provider": "qwen",
+     "routing_policy_version": "model-routing-v1"
+    },
+    "created_at": "2026-11-10T10:50:45.625910Z"
+   },
+   {
+    "id": "evt_033b5c496a7a46ea8c8e1599f08332e8",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 6,
+    "event_type": "model.started",
+    "payload_json": {
+     "brand": "qwen",
+     "model": "qwen3.7-flash",
+     "display": "正在思考...",
+     "purpose": "orchestrator.plan",
+     "step_id": "step_acfc3243c174406d937c938e1c8ee1bb",
+     "trace_id": "24c23d584f344ba692c52b4aa580aafb"
+    },
+    "created_at": "2026-11-10T10:50:45.639341Z"
+   },
+   {
+    "id": "evt_553afb2b11d6432996108fbc313f316c",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 7,
+    "event_type": "model.completed",
+    "payload_json": {
+     "brand": "qwen",
+     "model": "qwen3.7-flash",
+     "status": "succeeded",
+     "purpose": "orchestrator.plan",
+     "step_id": "step_acfc3243c174406d937c938e1c8ee1bb",
+     "trace_id": "24c23d584f344ba692c52b4aa580aafb",
+     "usage_source": "actual",
+     "model_call_id": "mcall_6bf380e754d948a7b8bd5f989ff76edf",
+     "prompt_tokens": 2477,
+     "cache_hit_tokens": 2176,
+     "cache_miss_tokens": 301,
+     "completion_tokens": 88,
+     "cache_creation_tokens": null
+    },
+    "created_at": "2026-11-10T10:50:49.016716Z"
+   },
+   {
+    "id": "evt_25fc2069c46b42b3b06daafc1b73014a",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 8,
+    "event_type": "step.completed",
+    "payload_json": {
+     "status": "succeeded",
+     "step_id": "step_acfc3243c174406d937c938e1c8ee1bb",
+     "step_index": 1
+    },
+    "created_at": "2026-11-10T10:50:49.020990Z"
+   },
+   {
+    "id": "evt_2cb64e4676aa4a2f89864f8a24d35a7e",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 9,
+    "event_type": "tool.started",
+    "payload_json": {
+     "display": "po.draft",
+     "task_id": "po_draft",
+     "tool_name": "po.draft"
+    },
+    "created_at": "2026-11-10T10:50:49.027686Z"
+   },
+   {
+    "id": "evt_302254944e1340d481d61263fdae21d7",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 10,
+    "event_type": "run.waiting_for_tasks",
+    "payload_json": {
+     "display": "正在执行任务",
+     "wave_id": "a16e62b3325b41ee942703869bdf32f0",
+     "actor_id": "celery:11",
+     "task_ids": [
+      "po_draft"
+     ],
+     "to_status": "waiting_for_tasks",
+     "actor_type": "worker",
+     "from_status": "running"
+    },
+    "created_at": "2026-11-10T10:50:49.027686Z"
+   },
+   {
+    "id": "evt_8d6f37760ac24c0aa52d71a435d4bdee",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 11,
+    "event_type": "step.started",
+    "payload_json": {
+     "name": "po.draft",
+     "step_id": "step_beb7588c4e754414b5eda88986d67712",
+     "step_type": "tool",
+     "step_index": 1,
+     "child_run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+     "projected_from": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9"
+    },
+    "created_at": "2026-11-10T10:50:49.056861Z"
+   },
+   {
+    "id": "evt_6887f79297dd4ce5a4653339a278225f",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 12,
+    "event_type": "model.route_selected",
+    "payload_json": {
+     "reason": "policy_primary",
+     "decision": "primary",
+     "trace_id": "fb04f98d9df4404f8509a49f008b0a33",
+     "max_tokens": 1200,
+     "route_task": "po.extract",
+     "child_run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+     "quality_gate": "valid_po_slots",
+     "fallback_from": null,
+     "reason_detail": null,
+     "policy_version": "model-routing-v1",
+     "projected_from": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+     "selected_model": "deepseek-flash",
+     "candidate_index": 0,
+     "max_model_calls": 2,
+     "selected_provider": "deepseek",
+     "routing_policy_version": "model-routing-v1"
+    },
+    "created_at": "2026-11-10T10:50:49.067909Z"
+   },
+   {
+    "id": "evt_8e2f01cd4ca84cb9be3bf2f3f923a844",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 13,
+    "event_type": "model.started",
+    "payload_json": {
+     "brand": "deepseek",
+     "model": "deepseek-flash",
+     "display": "正在思考...",
+     "purpose": "po.extract",
+     "step_id": "step_beb7588c4e754414b5eda88986d67712",
+     "trace_id": "fb04f98d9df4404f8509a49f008b0a33",
+     "child_run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+     "projected_from": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9"
+    },
+    "created_at": "2026-11-10T10:50:49.084405Z"
+   },
+   {
+    "id": "evt_c475f849a3824b76b1fdc2297177e4ad",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 14,
+    "event_type": "model.completed",
+    "payload_json": {
+     "brand": "deepseek",
+     "model": "deepseek-flash",
+     "status": "succeeded",
+     "purpose": "po.extract",
+     "step_id": "step_beb7588c4e754414b5eda88986d67712",
+     "trace_id": "fb04f98d9df4404f8509a49f008b0a33",
+     "child_run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+     "usage_source": "actual",
+     "model_call_id": "mcall_a672fac883054178863d3bbcbf21f513",
+     "prompt_tokens": 1753,
+     "projected_from": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+     "cache_hit_tokens": 1536,
+     "cache_miss_tokens": 217,
+     "completion_tokens": 104,
+     "cache_creation_tokens": null
+    },
+    "created_at": "2026-11-10T10:51:19.275580Z"
+   },
+   {
+    "id": "evt_b6efe4bdeabb472c9abb902f5e70dab4",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 15,
+    "event_type": "step.completed",
+    "payload_json": {
+     "status": "succeeded",
+     "step_id": "step_beb7588c4e754414b5eda88986d67712",
+     "step_index": 1,
+     "child_run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+     "projected_from": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9"
+    },
+    "created_at": "2026-11-10T10:51:19.279335Z"
+   },
+   {
+    "id": "evt_5132f4a3a16841ff9388e53401c4c18f",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 16,
+    "event_type": "tool.completed",
+    "payload_json": {
+     "ok": true,
+     "task_id": "po_draft",
+     "tool_name": "po.draft"
+    },
+    "created_at": "2026-11-10T10:51:19.285352Z"
+   },
+   {
+    "id": "evt_53f85db3cc2345299077d1e4253de0ac",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 17,
+    "event_type": "run.resumed",
+    "payload_json": {
+     "wave_id": "a16e62b3325b41ee942703869bdf32f0",
+     "actor_id": "user-liancai-chen",
+     "to_status": "queued",
+     "actor_type": "worker",
+     "from_status": "waiting_for_tasks"
+    },
+    "created_at": "2026-11-10T10:51:19.288043Z"
+   },
+   {
+    "id": "evt_d10ab99cfb9642ab87866a50fe4d4d5c",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 18,
+    "event_type": "run.enqueued",
+    "payload_json": {
+     "outbox_job_id": "obx_7363713f23a44e01bb90dd2818f25058"
+    },
+    "created_at": "2026-11-10T10:51:19.291780Z"
+   },
+   {
+    "id": "evt_9885f7ed396d45428226c135644d2208",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 19,
+    "event_type": "run.started",
+    "payload_json": {
+     "actor_id": "celery:11",
+     "to_status": "running",
+     "actor_type": "worker",
+     "from_status": "queued",
+     "lease_owner": "celery:11"
+    },
+    "created_at": "2026-11-10T10:51:19.298303Z"
+   },
+   {
+    "id": "evt_59f025f4ff1043b092cd0f84cf30fe67",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 20,
+    "event_type": "step.started",
+    "payload_json": {
+     "name": "model",
+     "step_id": "step_8ab7b77e891c4bd6a4d8f809018c6e78",
+     "step_type": "model",
+     "step_index": 2
+    },
+    "created_at": "2026-11-10T10:51:19.311314Z"
+   },
+   {
+    "id": "evt_bbdbb18cad744441b3a5ab9145555e0c",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 21,
+    "event_type": "model.route_selected",
+    "payload_json": {
+     "reason": "policy_primary",
+     "decision": "primary",
+     "trace_id": "24c23d584f344ba692c52b4aa580aafb",
+     "max_tokens": 1600,
+     "route_task": "orchestrator.answer",
+     "quality_gate": "non_empty_answer",
+     "fallback_from": null,
+     "reason_detail": null,
+     "policy_version": "model-routing-v1",
+     "selected_model": "qwen3.7-flash",
+     "candidate_index": 0,
+     "max_model_calls": 2,
+     "selected_provider": "qwen",
+     "routing_policy_version": "model-routing-v1"
+    },
+    "created_at": "2026-11-10T10:51:19.317302Z"
+   },
+   {
+    "id": "evt_769971fb8e72411cbb009791cac3638b",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 22,
+    "event_type": "model.started",
+    "payload_json": {
+     "brand": "qwen",
+     "model": "qwen3.7-flash",
+     "display": "正在思考...",
+     "purpose": "orchestrator.answer",
+     "step_id": "step_8ab7b77e891c4bd6a4d8f809018c6e78",
+     "trace_id": "24c23d584f344ba692c52b4aa580aafb"
+    },
+    "created_at": "2026-11-10T10:51:19.331343Z"
+   },
+   {
+    "id": "evt_4420a136f72349349c19d798c67996d2",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 23,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.173684Z"
+   },
+   {
+    "id": "evt_f815dfa53a544010af0fd04320cbe1f2",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 24,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.191509Z"
+   },
+   {
+    "id": "evt_d7f9219f1aca448192e120691c804bd5",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 25,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.214230Z"
+   },
+   {
+    "id": "evt_4d4af243294440d18311eef83bdea95b",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 26,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.239035Z"
+   },
+   {
+    "id": "evt_e071822569124ac7bcc52da54f0b9873",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 27,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.283258Z"
+   },
+   {
+    "id": "evt_257038b3e235419491dd23fb01178fbc",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 28,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.395461Z"
+   },
+   {
+    "id": "evt_5d82558babcc4fdfa72a467f9b79bab3",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 29,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.401035Z"
+   },
+   {
+    "id": "evt_bed5553f1d55459e9df57cc8f475e60c",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 30,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.407359Z"
+   },
+   {
+    "id": "evt_f3f13da7c5a94106ace1802ace2c68d4",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 31,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.410863Z"
+   },
+   {
+    "id": "evt_76d320af87444d729a3c87245a585da5",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 32,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.458034Z"
+   },
+   {
+    "id": "evt_09350e1645a34721a77a0e5334ac1fb3",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 33,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.504040Z"
+   },
+   {
+    "id": "evt_967ec0710a7f48aa8d86cfd93cf144f4",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 34,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.507527Z"
+   },
+   {
+    "id": "evt_12529d8f4792464295f8a1afab8e5c29",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 35,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n-",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.510832Z"
+   },
+   {
+    "id": "evt_cf3ae5bd68c34ca9a496535620a2f218",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 36,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.527197Z"
+   },
+   {
+    "id": "evt_71b7d77e1c864b978e0e68c6caba8517",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 37,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 11",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.589398Z"
+   },
+   {
+    "id": "evt_db52a9dd3d7742fba93436779544506a",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 38,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.596764Z"
+   },
+   {
+    "id": "evt_dc70a093b38b4bff88c5a666649c8f5d",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 39,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.668669Z"
+   },
+   {
+    "id": "evt_a36ac942de5745489b26cc0e76ab658e",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 40,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- ",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.675918Z"
+   },
+   {
+    "id": "evt_08930fc3c68e4eebab8b939f8b27be81",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 41,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.680467Z"
+   },
+   {
+    "id": "evt_4cc2e6c21ee24ab0a546db5543aa95a3",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 42,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.684423Z"
+   },
+   {
+    "id": "evt_8e007892a87a49c2ade0a65811bb9fe8",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 43,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.739667Z"
+   },
+   {
+    "id": "evt_43f5fe5111b24d56b16a0674e8d49d62",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 44,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.784059Z"
+   },
+   {
+    "id": "evt_44b2449d275c4b88944b00fab0bf8db6",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 45,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.788099Z"
+   },
+   {
+    "id": "evt_d0572105a0564533bca622b6935dd8c4",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 46,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.791745Z"
+   },
+   {
+    "id": "evt_fa05c80bc29a4e9e948324a6d380631c",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 47,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110.43**",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.856184Z"
+   },
+   {
+    "id": "evt_deed351b0cd242f1b0d94ed12f286bf8",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 48,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110.43**\n\n请",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.948128Z"
+   },
+   {
+    "id": "evt_7022ff725cf146b48ffee9537fb53256",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 49,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110.43**\n\n请确认无误后点击",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.954550Z"
+   },
+   {
+    "id": "evt_513dedac60684b128c83a68481b38de0",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 50,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110.43**\n\n请确认无误后点击标签上的",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:22.959457Z"
+   },
+   {
+    "id": "evt_c13398fa84384e15a8c6904f2e951a53",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 51,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110.43**\n\n请确认无误后点击标签上的确认按钮下单。",
+     "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+    },
+    "created_at": "2026-11-10T10:51:23.027279Z"
+   },
+   {
+    "id": "evt_2bdd0ef5a77a4f249d13b2e7af0de213",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 52,
+    "event_type": "model.completed",
+    "payload_json": {
+     "brand": "qwen",
+     "model": "qwen3.7-flash",
+     "status": "succeeded",
+     "purpose": "orchestrator.answer",
+     "step_id": "step_8ab7b77e891c4bd6a4d8f809018c6e78",
+     "trace_id": "24c23d584f344ba692c52b4aa580aafb",
+     "usage_source": "actual",
+     "model_call_id": "mcall_baa0419167db4d66916f9a7b8b0316e8",
+     "prompt_tokens": 1117,
+     "cache_hit_tokens": 896,
+     "cache_miss_tokens": 221,
+     "completion_tokens": 83,
+     "cache_creation_tokens": null
+    },
+    "created_at": "2026-11-10T10:51:23.051598Z"
+   },
+   {
+    "id": "evt_a48a9b8688c745548c693afac6e4b8d1",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 53,
+    "event_type": "step.completed",
+    "payload_json": {
+     "status": "succeeded",
+     "step_id": "step_8ab7b77e891c4bd6a4d8f809018c6e78",
+     "step_index": 2
+    },
+    "created_at": "2026-11-10T10:51:23.054286Z"
+   },
+   {
+    "id": "evt_17c7656db88f41e1b24d10b2a3f51c8d",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 54,
+    "event_type": "step.started",
+    "payload_json": {
+     "name": "model",
+     "step_id": "step_f84110675a8647fda9ac2a3a7d6bf734",
+     "step_type": "model",
+     "step_index": 3
+    },
+    "created_at": "2026-11-10T10:51:23.059848Z"
+   },
+   {
+    "id": "evt_a4aa42d0040246aa8b1c388aa2db50ba",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 55,
+    "event_type": "step.completed",
+    "payload_json": {
+     "status": "succeeded",
+     "step_id": "step_f84110675a8647fda9ac2a3a7d6bf734",
+     "step_index": 3
+    },
+    "created_at": "2026-11-10T10:51:23.064076Z"
+   },
+   {
+    "id": "evt_8f80bf694a7d420795e915becb5deb81",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "sequence": 56,
+    "event_type": "run.completed",
+    "payload_json": {
+     "status": "succeeded",
+     "display": "回复结束",
+     "actor_id": "celery:11",
+     "to_status": "succeeded",
+     "actor_type": "worker",
+     "from_status": "running"
+    },
+    "created_at": "2026-11-10T10:51:23.068279Z"
+   }
+  ],
+  "model_calls": [
+   {
+    "id": "mcall_6bf380e754d948a7b8bd5f989ff76edf",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "step_id": "step_acfc3243c174406d937c938e1c8ee1bb",
+    "provider": "qwen",
+    "model": "qwen3.7-flash",
+    "request_json": {
+     "model": "qwen3.7-flash",
+     "schema": {
+      "name": "orchestrator_plan",
+      "schema": {
+       "type": "object",
+       "required": [
+        "tasks"
+       ],
+       "properties": {
+        "tasks": {
+         "type": "array",
+         "items": {
+          "type": "object",
+          "required": [
+           "id",
+           "kind",
+           "name",
+           "input",
+           "depends_on"
+          ],
+          "properties": {
+           "id": {
+            "type": "string"
+           },
+           "kind": {
+            "enum": [
+             "agent",
+             "tool"
+            ],
+            "type": "string"
+           },
+           "name": {
+            "type": "string"
+           },
+           "input": {
+            "type": "object"
+           },
+           "depends_on": {
+            "type": "array",
+            "items": {
+             "type": "string"
+            }
+           }
+          },
+          "additionalProperties": false
+         }
+        }
+       },
+       "additionalProperties": false
+      },
+      "strict": true
+     },
+     "system": "你是品牌经销商工作台的编排器。你不跟用户聊天或查询工具，只根据现在已有的工具（包含原生 tools，agent，MCP 等）输出运行时要执行的计划。\n\n## 可用工具（与 tools= 相同的 JSON；kind 用 \"tool\"，name 用 function.name，input 按 parameters 填）\n[\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"web_search\",\n      \"description\": \"检索公开网页，查找模型还不知道的当前信息、新闻或报告。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"query\": {\n            \"type\": \"string\",\n            \"description\": \"检索关键词\"\n          }\n        },\n        \"required\": [\n          \"query\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"translate\",\n      \"description\": \"用户要求翻译时，把文字译成另一种语言。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"target_language\": {\n            \"type\": \"string\",\n            \"description\": \"要译成的语言，例如英语、德语、中文\"\n          },\n          \"text\": {\n            \"type\": \"string\",\n            \"description\": \"要翻译的原话，当这些话就在这条用户消息里时填写\"\n          },\n          \"source\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"message\",\n              \"last_assistant\",\n              \"report\"\n            ],\n            \"description\": \"`text` 为空时，从哪里取文字\"\n          }\n        },\n        \"required\": [\n          \"target_language\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"exchange_rate\",\n      \"description\": \"查询汇率（欧洲央行，经由 Frankfurter）。用于货币换算的问题；不要编造汇率。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"base_currency\": {\n            \"type\": \"string\",\n            \"description\": \"源货币的 ISO 代码，例如 CNY、USD、EUR（也接受 RMB）\"\n          },\n          \"target_currency\": {\n            \"type\": \"string\",\n            \"description\": \"目标货币的 ISO 代码，例如 EUR、USD、CNY\"\n          },\n          \"amount\": {\n            \"type\": \"number\",\n            \"description\": \"要换算的源货币金额（默认 1）\"\n          }\n        },\n        \"required\": [\n          \"base_currency\",\n          \"target_currency\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"send_email\",\n      \"description\": \"用户明确要求给某人发邮件时发送。不要编造收件人。主题和正文尽量短、清楚。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"to\": {\n            \"type\": \"string\",\n            \"description\": \"收件人邮箱\"\n          },\n          \"subject\": {\n            \"type\": \"string\",\n            \"description\": \"邮件主题\"\n          },\n          \"body\": {\n            \"type\": \"string\",\n            \"description\": \"纯文本正文\"\n          },\n          \"cc\": {\n            \"type\": \"string\",\n            \"description\": \"可选的抄送地址\"\n          }\n        },\n        \"required\": [\n          \"to\",\n          \"subject\",\n          \"body\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_find\",\n      \"description\": \"Start here: a task in plain words -> the best endpoints (3 by default) of 733, each with the params the task supplies (URLs and @handles resolved), the params still missing, the credit cost and the exact call. With no task it lists platforms, or one platform's endpoints. Free; no key needed.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_endpoint\",\n      \"description\": \"Read before calling: one endpoint's purpose, params, where the rows are and up to 25 response fields, cost rule, paging, latency, timeout, next endpoints and a sample link. id (or platform+resource, path), a platform slug (its endpoints) or a guide topic. Free.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_estimate\",\n      \"description\": \"Exact credits before you spend: one call (id, platform+resource or path, plus the params you will send; calls for a job total; items for a walk) or a plan of several calls. Uses the API's estimator when available, else the bundled pricing. A platform slug gives its price table; no id gives the pricing overview. Free.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_request\",\n      \"description\": \"Call one endpoint (platform+resource, or id, or path). Validated locally first (a bad call is free), quoted, refused above max_credits and confirmed above the threshold. A large page is cut at row boundaries; socialcrawl_collect result_id reads the rest. Spends credits; needs SOCIALCRAWL_API_KEY.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_collect\",\n      \"description\": \"Walk a paged endpoint (id, platform+resource or path) to `items` unique rows, the last page or max_credits: cursors supplied, duplicates dropped, stops on a 402, refused free when one page exceeds max_credits. Small results come back whole. result_id (+offset, limit, format) reads a stored result, free. Spends credits.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_account\",\n      \"description\": \"Free: balance (default, with this session's spend), transactions (ledger), usage (per key per day; from/to YYYY-MM-DD, ≤92 days), status (health; check before retrying a 502/503), freshness (vs live catalogue), notifications (inbox).\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_manage\",\n      \"description\": \"By area + action: monitors, cohorts, web (scrape, crawl, agents, page monitors, sessions), jobs, discover, search_runs (search lists, watches), creator_runs, review_history, events (feed, webhooks). Wrong fields refused free. Managing is free; scrapes, jobs, queries, run_more/include, monitor runs bill.\\ndry_run: true quotes, creating nothing. rows_new alerts need track. Docs: discover-runs, search-runs.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  }\n]\n\n## 5 个 Agent 代理\n- po — 用户要求下采购单、修改采购单，或延续一张未完成的采购订单。\n- contract — 合同上传解析。用户上传合同文件后，你需要调用这个 agent。这里需要文件字节，不能只有文件名称。如果用户没有明确说要上传、解析合同（或相似含义），则不排这个任务。\n- report — 按标准大纲以及用户要求写一份报告草稿。Report Agent 自己会有调用工具的计划，因此你只需要调用 report 即可，即使判断需要有其他工具来辅助 report agent，也不需要调用。\n- brand — 关于品牌自有材料的问题（故事、规格、营销文案）。\n- data — 判断用户需要的内容需要从已有数据库中获取，比如关于这个合作关系的订单、付款、动销、合同条款或产品目录的问题。\n\n规则：\n- 先快速判断是否需要使用工具，如果不需要，直接返回空数组。空计划不会进工具循环，由作答模型直接回复。\n- 这一轮真正要做的事都写进 tasks，可以有多项，可以根据用户要求有串行或并行的逻辑，tasks之间需要判断是否有依赖关系，实际运行时会把没有依赖的任务交给不同的 worker 一起执行。\n- agent 的 name 只能是上面的代理 id。tool 的 name 只能是上一节「可用工具」里的函数名。\n- 写报表时只排 report，不要为同一份草稿再排 data。用户另外问了一个数字问题时，再排一个 data，并且不要放进 report 的 depends_on。\n- po、contract、report 这一轮只产出草稿。确认入库发生在各自的浮窗里，所以这三项可以同时出现。\n- 同一个会话里有未完成的采购单（收集中 / 待确认）时，计划里保留这一个 po，同时仍可排其它任务，但不要再排第二个 po。\n- 只有下一步要用上一步的结果时才填 depends_on。彼此独立的任务把 depends_on 留空。\n- 某一步依赖上一步的正文时，不要在 input 里编占位句。运行时会把依赖步骤的结果补进后续工具的参数（例如检索结果补进 translate 的 text）。\n- 只有用户明确要求发邮件时才排 send_email；若用户要「翻译后发邮件」，再排 send_email 并 depends_on 翻译，运行时可将译文补进 body。\n- 不要编造 SKU、价格、日期或国家。每个任务的 input 里只放用户说过的内容。\n\n只返回一个原始 JSON 对象：\n{\"tasks\": [{\"id\": string, \"kind\": \"agent\" | \"tool\", \"name\": string, \"input\": object, \"depends_on\": [string]}]}\n",
+     "messages": [
+      {
+       "role": "user",
+       "content": "=== 未完成采购单 ===\n有\n\n=== 附件 ===\n（无）\n\n=== 最近对话 ===\n（无）\n\n=== 消息 ===\n帮我起草一张采购单，Activia bifidus nature 125g x 4 订 3 箱，先不要提交，按协议折扣算一下应付总额。"
+      }
+     ]
+    },
+    "response_json": {
+     "json": {
+      "tasks": [
+       {
+        "id": "po_draft",
+        "kind": "agent",
+        "name": "po",
+        "input": {
+         "items": [
+          {
+           "sku": "Activia bifidus nature 125g x 4",
+           "unit": "box",
+           "quantity": 3
+          }
+         ],
+         "notes": "按协议折扣计算应付总额，先不提交",
+         "action": "draft"
+        },
+        "depends_on": []
+       }
+      ]
+     }
+    },
+    "prompt_tokens": 2477,
+    "completion_tokens": 88,
+    "latency_ms": 3370,
+    "status": "succeeded",
+    "cache_hit_tokens": 2176,
+    "cache_miss_tokens": 301,
+    "cache_creation_tokens": null,
+    "usage_source": "actual",
+    "error_json": {},
+    "created_at": "2026-11-10T10:50:49.010798Z"
+   },
+   {
+    "id": "mcall_baa0419167db4d66916f9a7b8b0316e8",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "step_id": "step_8ab7b77e891c4bd6a4d8f809018c6e78",
+    "provider": "qwen",
+    "model": "qwen3.7-flash",
+    "request_json": {
+     "model": "qwen3.7-flash",
+     "system": "你是品牌与已入驻经销商对话时的工作台助手。你只负责开口回复。请使用用户的语言。\n\n这一轮要跑的采购单、合同、报表、查数、检索和工具，如果已经执行，结果会放在给你的材料里。没有这些材料时，就直接回答用户这一句。\n\n规则：\n- 不要编造 SKU、价格、总额、汇率或合同折扣。数字、汇率、合同条款只引用材料里有的。品牌资料只根据给出的段落说。\n- 某一项失败或没有跑到，就说明没拿到，不要补一个听起来合理的数。\n- 采购单、合同、报表如果出了草稿，告诉用户在右侧对应标签里查看。点那个标签上的确认才会下单或入库。不要说已经下单、已经归档或已经保存报表。\n- 只有用户明确要求发邮件、并且材料里有发送结果时，才提发信。不要编造收件地址。\n- 寒暄、澄清或材料里没有可引用的事实时，短答即可。需要文件却没有附件时，请他们附上。\n- 回复要短，把这一轮的结果说清楚，不要重复材料原文。\n",
+     "messages": [
+      {
+       "role": "user",
+       "content": "=== 用户 ===\n帮我起草一张采购单，Activia bifidus nature 125g x 4 订 3 箱，先不要提交，按协议折扣算一下应付总额。\n\n=== 这一轮结果 ===\n[{\"id\": \"po_draft\", \"ok\": true, \"kind\": \"agent\", \"name\": \"po.draft\", \"error\": null, \"status\": \"succeeded\", \"payload\": {\"gaps\": [], \"draft\": {\"lines\": [{\"sku\": \"DAI-3033491147067\", \"name\": \"Activia bifidus nature 125g x 4\", \"cases\": 3, \"ambiguous\": false, \"below_moq\": false, \"moq_cases\": 3, \"reference\": \"Activia bifidus nature 125g x 4\", \"candidates\": [], \"case_price\": 37.95, \"line_total\": 113.85, \"unresolved\": false, \"missing_price\": false, \"partial_layer\": true, \"cases_per_layer\": 10, \"cases_to_full_layer\": 7}], \"notes\": null, \"total\": 110.43, \"currency\": \"USD\", \"discount\": {\"kind\": \"percent\", \"note\": \"3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2\", \"value\": 3.0, \"source\": \"contract\"}, \"eta_date\": \"2027-01-09\", \"subtotal\": 113.85, \"incoterms\": \"CIF\", \"payment_terms\": \"50_50\", \"discount_amount\": 3.42, \"shipping_method\": \"sea\"}, \"slots\": {\"notes\": null, \"discount\": {\"kind\": \"percent\", \"note\": \"3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2\", \"value\": 3.0, \"source\": \"contract\"}, \"eta_date\": null, \"incoterms\": null, \"line_items\": [{\"sku\": \"DAI-3033491147067\", \"cases\": 3, \"reference\": \"Activia bifidus nature 125g x 4\"}], \"payment_terms\": null, \"shipping_method\": null}, \"stage\": \"confirm\", \"summary\": \"3 箱 Activia bifidus nature 125g x 4。付款 50_50（下单时预付 50%，货到验收后再付 50% 尾款），CIF，sea，预计到货 2027-01-09，合同折扣 3%（3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2）。 小计 USD 113.85，折扣 USD 3.42，合计 USD 110.43。\", \"clear_po\": false, \"advisories\": [], \"gaps_detail\": [], \"confirm_hash\": \"789b1122a7a7aee7df3aeb73e810e86d7e074aeec91ae49879c6a9c5b095e1aa\", \"confirm_token\": \"Qye5XoanxFGEU6s5rPosOYAxdz434Kw5dAc6Kq2MdbU\", \"confirm_expires_at\": \"2026-11-11T10:51:19.279261+00:00\"}}]"
+      }
+     ]
+    },
+    "response_json": {
+     "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110.43**\n\n请确认无误后点击标签上的确认按钮下单。"
+    },
+    "prompt_tokens": 1117,
+    "completion_tokens": 83,
+    "latency_ms": 3715,
+    "status": "succeeded",
+    "cache_hit_tokens": 896,
+    "cache_miss_tokens": 221,
+    "cache_creation_tokens": null,
+    "usage_source": "actual",
+    "error_json": {},
+    "created_at": "2026-11-10T10:51:23.048504Z"
+   }
+  ],
+  "tool_calls": [],
+  "checkpoints": [
+   {
+    "id": "ckpt_6fc1f47a83554ef3bc39eb65d2ef2a6d",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "checkpoint_index": 1,
+    "state_json": {
+     "last": "user",
+     "context": [],
+     "orchestrator": {
+      "phase": "planned",
+      "tasks": [
+       {
+        "id": "po_draft",
+        "kind": "agent",
+        "name": "po",
+        "input": {
+         "items": [
+          {
+           "sku": "Activia bifidus nature 125g x 4",
+           "unit": "box",
+           "quantity": 3
+          }
+         ],
+         "notes": "按协议折扣计算应付总额，先不提交",
+         "action": "draft"
+        },
+        "depends_on": []
+       }
+      ],
+      "results": {},
+      "wave_id": null,
+      "finished": [],
+      "wave_ids": []
+     },
+     "completed_tool_calls": []
+    },
+    "created_at": "2026-11-10T10:50:49.020990Z"
+   },
+   {
+    "id": "ckpt_36f0adbd713b433f9eb217e2b1d56c42",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "checkpoint_index": 2,
+    "state_json": {
+     "last": "user",
+     "context": [],
+     "orchestrator": {
+      "tasks": [
+       {
+        "id": "po_draft",
+        "kind": "agent",
+        "name": "po",
+        "input": {
+         "items": [
+          {
+           "sku": "Activia bifidus nature 125g x 4",
+           "unit": "box",
+           "quantity": 3
+          }
+         ],
+         "notes": "按协议折扣计算应付总额，先不提交",
+         "action": "draft"
+        },
+        "depends_on": []
+       }
+      ],
+      "results": {},
+      "wave_id": "a16e62b3325b41ee942703869bdf32f0",
+      "finished": [],
+      "wave_ids": [
+       "po_draft"
+      ]
+     },
+     "completed_tool_calls": []
+    },
+    "created_at": "2026-11-10T10:50:49.027686Z"
+   },
+   {
+    "id": "ckpt_6166cbabccb04973aba3bf619a7cd9cf",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "checkpoint_index": 3,
+    "state_json": {
+     "last": "user",
+     "context": [],
+     "orchestrator": {
+      "tasks": [
+       {
+        "id": "po_draft",
+        "kind": "agent",
+        "name": "po",
+        "input": {
+         "items": [
+          {
+           "sku": "Activia bifidus nature 125g x 4",
+           "unit": "box",
+           "quantity": 3
+          }
+         ],
+         "notes": "按协议折扣计算应付总额，先不提交",
+         "action": "draft"
+        },
+        "depends_on": []
+       }
+      ],
+      "results": {
+       "po_draft": {
+        "id": "po_draft",
+        "ok": true,
+        "kind": "agent",
+        "name": "po.draft",
+        "error": null,
+        "status": "succeeded",
+        "payload": {
+         "gaps": [],
+         "draft": {
+          "lines": [
+           {
+            "sku": "DAI-3033491147067",
+            "name": "Activia bifidus nature 125g x 4",
+            "cases": 3,
+            "ambiguous": false,
+            "below_moq": false,
+            "moq_cases": 3,
+            "reference": "Activia bifidus nature 125g x 4",
+            "candidates": [],
+            "case_price": 37.95,
+            "line_total": 113.85,
+            "unresolved": false,
+            "missing_price": false,
+            "partial_layer": true,
+            "cases_per_layer": 10,
+            "cases_to_full_layer": 7
+           }
+          ],
+          "notes": null,
+          "total": 110.43,
+          "currency": "USD",
+          "discount": {
+           "kind": "percent",
+           "note": "3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2",
+           "value": 3.0,
+           "source": "contract"
+          },
+          "eta_date": "2027-01-09",
+          "subtotal": 113.85,
+          "incoterms": "CIF",
+          "payment_terms": "50_50",
+          "discount_amount": 3.42,
+          "shipping_method": "sea"
+         },
+         "slots": {
+          "notes": null,
+          "discount": {
+           "kind": "percent",
+           "note": "3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2",
+           "value": 3.0,
+           "source": "contract"
+          },
+          "eta_date": null,
+          "incoterms": null,
+          "line_items": [
+           {
+            "sku": "DAI-3033491147067",
+            "cases": 3,
+            "reference": "Activia bifidus nature 125g x 4"
+           }
+          ],
+          "payment_terms": null,
+          "shipping_method": null
+         },
+         "stage": "confirm",
+         "summary": "3 箱 Activia bifidus nature 125g x 4。付款 50_50（下单时预付 50%，货到验收后再付 50% 尾款），CIF，sea，预计到货 2027-01-09，合同折扣 3%（3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2）。 小计 USD 113.85，折扣 USD 3.42，合计 USD 110.43。",
+         "clear_po": false,
+         "advisories": [],
+         "gaps_detail": [],
+         "confirm_hash": "789b1122a7a7aee7df3aeb73e810e86d7e074aeec91ae49879c6a9c5b095e1aa",
+         "confirm_token": "Qye5XoanxFGEU6s5rPosOYAxdz434Kw5dAc6Kq2MdbU",
+         "confirm_expires_at": "2026-11-11T10:51:19.279261+00:00"
+        }
+       }
+      },
+      "wave_id": "a16e62b3325b41ee942703869bdf32f0",
+      "finished": [
+       "po_draft"
+      ],
+      "wave_ids": [
+       "po_draft"
+      ]
+     },
+     "completed_tool_calls": []
+    },
+    "created_at": "2026-11-10T10:51:19.285352Z"
+   },
+   {
+    "id": "ckpt_b36293ebc2844efbb160f58f64878764",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "checkpoint_index": 4,
+    "state_json": {
+     "last": "user",
+     "context": [],
+     "orchestrator": {
+      "phase": "answer_done",
+      "tasks": [
+       {
+        "id": "po_draft",
+        "kind": "agent",
+        "name": "po",
+        "input": {
+         "items": [
+          {
+           "sku": "Activia bifidus nature 125g x 4",
+           "unit": "box",
+           "quantity": 3
+          }
+         ],
+         "notes": "按协议折扣计算应付总额，先不提交",
+         "action": "draft"
+        },
+        "depends_on": []
+       }
+      ],
+      "answer": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110.43**\n\n请确认无误后点击标签上的确认按钮下单。",
+      "results": {
+       "po_draft": {
+        "id": "po_draft",
+        "ok": true,
+        "kind": "agent",
+        "name": "po.draft",
+        "error": null,
+        "status": "succeeded",
+        "payload": {
+         "gaps": [],
+         "draft": {
+          "lines": [
+           {
+            "sku": "DAI-3033491147067",
+            "name": "Activia bifidus nature 125g x 4",
+            "cases": 3,
+            "ambiguous": false,
+            "below_moq": false,
+            "moq_cases": 3,
+            "reference": "Activia bifidus nature 125g x 4",
+            "candidates": [],
+            "case_price": 37.95,
+            "line_total": 113.85,
+            "unresolved": false,
+            "missing_price": false,
+            "partial_layer": true,
+            "cases_per_layer": 10,
+            "cases_to_full_layer": 7
+           }
+          ],
+          "notes": null,
+          "total": 110.43,
+          "currency": "USD",
+          "discount": {
+           "kind": "percent",
+           "note": "3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2",
+           "value": 3.0,
+           "source": "contract"
+          },
+          "eta_date": "2027-01-09",
+          "subtotal": 113.85,
+          "incoterms": "CIF",
+          "payment_terms": "50_50",
+          "discount_amount": 3.42,
+          "shipping_method": "sea"
+         },
+         "slots": {
+          "notes": null,
+          "discount": {
+           "kind": "percent",
+           "note": "3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2",
+           "value": 3.0,
+           "source": "contract"
+          },
+          "eta_date": null,
+          "incoterms": null,
+          "line_items": [
+           {
+            "sku": "DAI-3033491147067",
+            "cases": 3,
+            "reference": "Activia bifidus nature 125g x 4"
+           }
+          ],
+          "payment_terms": null,
+          "shipping_method": null
+         },
+         "stage": "confirm",
+         "summary": "3 箱 Activia bifidus nature 125g x 4。付款 50_50（下单时预付 50%，货到验收后再付 50% 尾款），CIF，sea，预计到货 2027-01-09，合同折扣 3%（3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2）。 小计 USD 113.85，折扣 USD 3.42，合计 USD 110.43。",
+         "clear_po": false,
+         "advisories": [],
+         "gaps_detail": [],
+         "confirm_hash": "789b1122a7a7aee7df3aeb73e810e86d7e074aeec91ae49879c6a9c5b095e1aa",
+         "confirm_token": "Qye5XoanxFGEU6s5rPosOYAxdz434Kw5dAc6Kq2MdbU",
+         "confirm_expires_at": "2026-11-11T10:51:19.279261+00:00"
+        }
+       }
+      },
+      "wave_id": null,
+      "finished": [
+       "po_draft"
+      ],
+      "wave_ids": []
+     },
+     "completed_tool_calls": []
+    },
+    "created_at": "2026-11-10T10:51:23.054286Z"
+   }
+  ],
+  "usage_records": [
+   {
+    "id": "usage_fdd9166743614af892668bf01ae5acab",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "org_id": "dist-liancai",
+    "user_id": "user-liancai-chen",
+    "provider": "qwen",
+    "model": "qwen3.7-flash",
+    "prompt_tokens": 2477,
+    "completion_tokens": 88,
+    "total_tokens": 2565,
+    "estimated_cost_cents": 0,
+    "cache_hit_tokens": 2176,
+    "cache_miss_tokens": 301,
+    "cache_creation_tokens": null,
+    "usage_source": "actual",
+    "created_at": "2026-11-10T10:50:49.010798Z"
+   },
+   {
+    "id": "usage_eba18d8c0b6e4ba3aa591acbde9f258f",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "org_id": "dist-liancai",
+    "user_id": "user-liancai-chen",
+    "provider": "qwen",
+    "model": "qwen3.7-flash",
+    "prompt_tokens": 1117,
+    "completion_tokens": 83,
+    "total_tokens": 1200,
+    "estimated_cost_cents": 0,
+    "cache_hit_tokens": 896,
+    "cache_miss_tokens": 221,
+    "cache_creation_tokens": null,
+    "usage_source": "actual",
+    "created_at": "2026-11-10T10:51:23.048504Z"
+   }
+  ],
+  "audit_logs": [
+   {
+    "id": "aud_29e3cc10140244b6888db9677edf3c97",
+    "user_id": "celery:11",
+    "org_id": "dist-liancai",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "action": "run.transition",
+    "target_type": "agent_run",
+    "target_id": "run_701c8c62667644768590906a26857630",
+    "metadata_json": {
+     "actor_id": "celery:11",
+     "to_status": "running",
+     "actor_type": "worker",
+     "from_status": "queued",
+     "lease_owner": "celery:11"
+    },
+    "created_at": "2026-11-10T10:50:45.609083Z"
+   },
+   {
+    "id": "aud_db6229f205ea464ba3a5d6e3fd72ecbb",
+    "user_id": "celery:11",
+    "org_id": "dist-liancai",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "action": "run.transition",
+    "target_type": "agent_run",
+    "target_id": "run_701c8c62667644768590906a26857630",
+    "metadata_json": {
+     "wave_id": "a16e62b3325b41ee942703869bdf32f0",
+     "actor_id": "celery:11",
+     "task_ids": [
+      "po_draft"
+     ],
+     "to_status": "waiting_for_tasks",
+     "actor_type": "worker",
+     "from_status": "running"
+    },
+    "created_at": "2026-11-10T10:50:49.027686Z"
+   },
+   {
+    "id": "aud_232c70cabe58459ba2a5fed349c45271",
+    "user_id": "user-liancai-chen",
+    "org_id": "dist-liancai",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "action": "run.transition",
+    "target_type": "agent_run",
+    "target_id": "run_701c8c62667644768590906a26857630",
+    "metadata_json": {
+     "wave_id": "a16e62b3325b41ee942703869bdf32f0",
+     "actor_id": "user-liancai-chen",
+     "to_status": "queued",
+     "actor_type": "worker",
+     "from_status": "waiting_for_tasks"
+    },
+    "created_at": "2026-11-10T10:51:19.288043Z"
+   },
+   {
+    "id": "aud_ba38f026fb1d4974a9621c5178bbe674",
+    "user_id": "celery:11",
+    "org_id": "dist-liancai",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "action": "run.transition",
+    "target_type": "agent_run",
+    "target_id": "run_701c8c62667644768590906a26857630",
+    "metadata_json": {
+     "actor_id": "celery:11",
+     "to_status": "running",
+     "actor_type": "worker",
+     "from_status": "queued",
+     "lease_owner": "celery:11"
+    },
+    "created_at": "2026-11-10T10:51:19.298303Z"
+   },
+   {
+    "id": "aud_85fe7032ac81403eafbbb6acde38ee55",
+    "user_id": "celery:11",
+    "org_id": "dist-liancai",
+    "run_id": "run_701c8c62667644768590906a26857630",
+    "action": "run.transition",
+    "target_type": "agent_run",
+    "target_id": "run_701c8c62667644768590906a26857630",
+    "metadata_json": {
+     "status": "succeeded",
+     "actor_id": "celery:11",
+     "to_status": "succeeded",
+     "actor_type": "worker",
+     "from_status": "running"
+    },
+    "created_at": "2026-11-10T10:51:23.068279Z"
+   }
+  ],
+  "outbox": [
+   {
+    "id": "obx_0e704c16b92046deae6964a7336d0c1e",
+    "job_type": "execute_run",
+    "payload_json": {
+     "run_id": "run_701c8c62667644768590906a26857630",
+     "run_type": "chat",
+     "trace_id": "24c23d584f344ba692c52b4aa580aafb"
+    },
+    "status": "dispatched",
+    "attempts": 0,
+    "max_attempts": 10,
+    "next_attempt_at": "2026-11-10T10:50:45.602994Z",
+    "last_error_json": null,
+    "created_at": "2026-11-10T10:50:45.602994Z",
+    "dispatch_at": "2026-11-10T10:50:45.606567Z"
+   },
+   {
+    "id": "obx_7363713f23a44e01bb90dd2818f25058",
+    "job_type": "execute_run",
+    "payload_json": {
+     "run_id": "run_701c8c62667644768590906a26857630",
+     "run_type": "chat",
+     "trace_id": "24c23d584f344ba692c52b4aa580aafb"
+    },
+    "status": "dispatched",
+    "attempts": 0,
+    "max_attempts": 10,
+    "next_attempt_at": "2026-11-10T10:51:19.288043Z",
+    "last_error_json": null,
+    "created_at": "2026-11-10T10:51:19.288043Z",
+    "dispatch_at": "2026-11-10T10:51:19.291780Z"
+   }
+  ],
+  "dead_letters": []
+ },
+ "children": {
+  "run_701c8c62667644768590906a26857630": {
+   "run_type": "chat",
+   "status": "succeeded",
+   "trace": {
+    "run": {
+     "id": "run_701c8c62667644768590906a26857630",
+     "org_id": "dist-liancai",
+     "user_id": "user-liancai-chen",
+     "run_type": "chat",
+     "idempotency_key": "chat:cabd521da994459fbb449152df15f5d2:d24e348993684beb8153da315c59ca31",
+     "status": "succeeded",
+     "input_json": {
+      "model": null,
+      "images": [],
+      "message": "帮我起草一张采购单，Activia bifidus nature 125g x 4 订 3 箱，先不要提交，按协议折扣算一下应付总额。",
+      "documents": [],
+      "session_id": "cabd521da994459fbb449152df15f5d2",
+      "attachments": []
+     },
+     "output_json": {
+      "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110.43**\n\n请确认无误后点击标签上的确认按钮下单。"
+     },
+     "error_json": null,
+     "created_at": "2026-11-10 10:50:45.602994+00:00",
+     "queued_at": "2026-11-10 10:51:19.288043+00:00",
+     "queue_heartbeat_at": null,
+     "started_at": "2026-11-10 10:50:45.609083+00:00",
+     "ended_at": "2026-11-10 10:51:23.068279+00:00",
+     "cancel_requested_at": null,
+     "updated_at": "2026-11-10 10:51:23.068279+00:00",
+     "lease_owner": "celery:11",
+     "lease_expires_at": "2026-11-10 11:01:19.298298+00:00",
+     "attempts": 2,
+     "redispatch_count": 0,
+     "parent_run_id": null,
+     "owner_run_id": null,
+     "trace_id": "24c23d584f344ba692c52b4aa580aafb",
+     "max_model_calls": 8,
+     "max_tokens": 32000,
+     "max_tool_calls": null,
+     "max_duration_seconds": null
+    },
+    "steps": [
+     {
+      "id": "step_acfc3243c174406d937c938e1c8ee1bb",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "step_index": 1,
+      "step_type": "model",
+      "name": "model",
+      "status": "succeeded",
+      "input_json": {
+       "purpose": "orchestrator.plan"
+      },
+      "output_json": {
+       "tasks": [
+        {
+         "id": "po_draft",
+         "kind": "agent",
+         "name": "po",
+         "input": {
+          "items": [
+           {
+            "sku": "Activia bifidus nature 125g x 4",
+            "unit": "box",
+            "quantity": 3
+           }
+          ],
+          "notes": "按协议折扣计算应付总额，先不提交",
+          "action": "draft"
+         },
+         "depends_on": []
+        }
+       ]
+      },
+      "error_json": null,
+      "started_at": "2026-11-10 10:50:45.619722+00:00",
+      "ended_at": "2026-11-10 10:50:49.020990+00:00"
+     },
+     {
+      "id": "step_8ab7b77e891c4bd6a4d8f809018c6e78",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "step_index": 2,
+      "step_type": "model",
+      "name": "model",
+      "status": "succeeded",
+      "input_json": {
+       "purpose": "orchestrator.answer"
+      },
+      "output_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110.43**\n\n请确认无误后点击标签上的确认按钮下单。"
+      },
+      "error_json": null,
+      "started_at": "2026-11-10 10:51:19.311314+00:00",
+      "ended_at": "2026-11-10 10:51:23.054286+00:00"
+     },
+     {
+      "id": "step_f84110675a8647fda9ac2a3a7d6bf734",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "step_index": 3,
+      "step_type": "model",
+      "name": "model",
+      "status": "succeeded",
+      "input_json": {
+       "purpose": "orchestrator.history"
+      },
+      "output_json": {
+       "saved": true
+      },
+      "error_json": null,
+      "started_at": "2026-11-10 10:51:23.059848+00:00",
+      "ended_at": "2026-11-10 10:51:23.064076+00:00"
+     }
+    ],
+    "events": [
+     {
+      "id": "evt_9fc4f3a216f64a938b5ac4c8dbf4430a",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 1,
+      "event_type": "run.created",
+      "payload_json": {
+       "status": "queued",
+       "display": "已开始"
+      },
+      "created_at": "2026-11-10 10:50:45.602994+00:00"
+     },
+     {
+      "id": "evt_6f3cf7febf4d4ceaa18b1f3b88a7ba1f",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 2,
+      "event_type": "run.enqueued",
+      "payload_json": {
+       "outbox_job_id": "obx_0e704c16b92046deae6964a7336d0c1e"
+      },
+      "created_at": "2026-11-10 10:50:45.606567+00:00"
+     },
+     {
+      "id": "evt_73e27f972e5f42e08dd8973558e8da45",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 3,
+      "event_type": "run.started",
+      "payload_json": {
+       "actor_id": "celery:11",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:11"
+      },
+      "created_at": "2026-11-10 10:50:45.609083+00:00"
+     },
+     {
+      "id": "evt_85140b88ab0d4b7fa4c41f12352a03a8",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 4,
+      "event_type": "step.started",
+      "payload_json": {
+       "name": "model",
+       "step_id": "step_acfc3243c174406d937c938e1c8ee1bb",
+       "step_type": "model",
+       "step_index": 1
+      },
+      "created_at": "2026-11-10 10:50:45.619722+00:00"
+     },
+     {
+      "id": "evt_730643401f81413ca282ea09ff43fe6d",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 5,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "24c23d584f344ba692c52b4aa580aafb",
+       "max_tokens": 1200,
+       "route_task": "orchestrator.plan",
+       "quality_gate": "valid_task_plan",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "selected_model": "qwen3.7-flash",
+       "candidate_index": 0,
+       "max_model_calls": 2,
+       "selected_provider": "qwen",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-10 10:50:45.625910+00:00"
+     },
+     {
+      "id": "evt_033b5c496a7a46ea8c8e1599f08332e8",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 6,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "qwen",
+       "model": "qwen3.7-flash",
+       "display": "正在思考...",
+       "purpose": "orchestrator.plan",
+       "step_id": "step_acfc3243c174406d937c938e1c8ee1bb",
+       "trace_id": "24c23d584f344ba692c52b4aa580aafb"
+      },
+      "created_at": "2026-11-10 10:50:45.639341+00:00"
+     },
+     {
+      "id": "evt_553afb2b11d6432996108fbc313f316c",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 7,
+      "event_type": "model.completed",
+      "payload_json": {
+       "brand": "qwen",
+       "model": "qwen3.7-flash",
+       "status": "succeeded",
+       "purpose": "orchestrator.plan",
+       "step_id": "step_acfc3243c174406d937c938e1c8ee1bb",
+       "trace_id": "24c23d584f344ba692c52b4aa580aafb",
+       "usage_source": "actual",
+       "model_call_id": "mcall_6bf380e754d948a7b8bd5f989ff76edf",
+       "prompt_tokens": 2477,
+       "cache_hit_tokens": 2176,
+       "cache_miss_tokens": 301,
+       "completion_tokens": 88,
+       "cache_creation_tokens": null
+      },
+      "created_at": "2026-11-10 10:50:49.016716+00:00"
+     },
+     {
+      "id": "evt_25fc2069c46b42b3b06daafc1b73014a",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 8,
+      "event_type": "step.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "step_id": "step_acfc3243c174406d937c938e1c8ee1bb",
+       "step_index": 1
+      },
+      "created_at": "2026-11-10 10:50:49.020990+00:00"
+     },
+     {
+      "id": "evt_2cb64e4676aa4a2f89864f8a24d35a7e",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 9,
+      "event_type": "tool.started",
+      "payload_json": {
+       "display": "po.draft",
+       "task_id": "po_draft",
+       "tool_name": "po.draft"
+      },
+      "created_at": "2026-11-10 10:50:49.027686+00:00"
+     },
+     {
+      "id": "evt_302254944e1340d481d61263fdae21d7",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 10,
+      "event_type": "run.waiting_for_tasks",
+      "payload_json": {
+       "display": "正在执行任务",
+       "wave_id": "a16e62b3325b41ee942703869bdf32f0",
+       "actor_id": "celery:11",
+       "task_ids": [
+        "po_draft"
+       ],
+       "to_status": "waiting_for_tasks",
+       "actor_type": "worker",
+       "from_status": "running"
+      },
+      "created_at": "2026-11-10 10:50:49.027686+00:00"
+     },
+     {
+      "id": "evt_8d6f37760ac24c0aa52d71a435d4bdee",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 11,
+      "event_type": "step.started",
+      "payload_json": {
+       "name": "po.draft",
+       "step_id": "step_beb7588c4e754414b5eda88986d67712",
+       "step_type": "tool",
+       "step_index": 1,
+       "child_run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+       "projected_from": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9"
+      },
+      "created_at": "2026-11-10 10:50:49.056861+00:00"
+     },
+     {
+      "id": "evt_6887f79297dd4ce5a4653339a278225f",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 12,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "fb04f98d9df4404f8509a49f008b0a33",
+       "max_tokens": 1200,
+       "route_task": "po.extract",
+       "child_run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+       "quality_gate": "valid_po_slots",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "projected_from": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+       "selected_model": "deepseek-flash",
+       "candidate_index": 0,
+       "max_model_calls": 2,
+       "selected_provider": "deepseek",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-10 10:50:49.067909+00:00"
+     },
+     {
+      "id": "evt_8e2f01cd4ca84cb9be3bf2f3f923a844",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 13,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "display": "正在思考...",
+       "purpose": "po.extract",
+       "step_id": "step_beb7588c4e754414b5eda88986d67712",
+       "trace_id": "fb04f98d9df4404f8509a49f008b0a33",
+       "child_run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+       "projected_from": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9"
+      },
+      "created_at": "2026-11-10 10:50:49.084405+00:00"
+     },
+     {
+      "id": "evt_c475f849a3824b76b1fdc2297177e4ad",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 14,
+      "event_type": "model.completed",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "status": "succeeded",
+       "purpose": "po.extract",
+       "step_id": "step_beb7588c4e754414b5eda88986d67712",
+       "trace_id": "fb04f98d9df4404f8509a49f008b0a33",
+       "child_run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+       "usage_source": "actual",
+       "model_call_id": "mcall_a672fac883054178863d3bbcbf21f513",
+       "prompt_tokens": 1753,
+       "projected_from": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+       "cache_hit_tokens": 1536,
+       "cache_miss_tokens": 217,
+       "completion_tokens": 104,
+       "cache_creation_tokens": null
+      },
+      "created_at": "2026-11-10 10:51:19.275580+00:00"
+     },
+     {
+      "id": "evt_b6efe4bdeabb472c9abb902f5e70dab4",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 15,
+      "event_type": "step.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "step_id": "step_beb7588c4e754414b5eda88986d67712",
+       "step_index": 1,
+       "child_run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+       "projected_from": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9"
+      },
+      "created_at": "2026-11-10 10:51:19.279335+00:00"
+     },
+     {
+      "id": "evt_5132f4a3a16841ff9388e53401c4c18f",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 16,
+      "event_type": "tool.completed",
+      "payload_json": {
+       "ok": true,
+       "task_id": "po_draft",
+       "tool_name": "po.draft"
+      },
+      "created_at": "2026-11-10 10:51:19.285352+00:00"
+     },
+     {
+      "id": "evt_53f85db3cc2345299077d1e4253de0ac",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 17,
+      "event_type": "run.resumed",
+      "payload_json": {
+       "wave_id": "a16e62b3325b41ee942703869bdf32f0",
+       "actor_id": "user-liancai-chen",
+       "to_status": "queued",
+       "actor_type": "worker",
+       "from_status": "waiting_for_tasks"
+      },
+      "created_at": "2026-11-10 10:51:19.288043+00:00"
+     },
+     {
+      "id": "evt_d10ab99cfb9642ab87866a50fe4d4d5c",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 18,
+      "event_type": "run.enqueued",
+      "payload_json": {
+       "outbox_job_id": "obx_7363713f23a44e01bb90dd2818f25058"
+      },
+      "created_at": "2026-11-10 10:51:19.291780+00:00"
+     },
+     {
+      "id": "evt_9885f7ed396d45428226c135644d2208",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 19,
+      "event_type": "run.started",
+      "payload_json": {
+       "actor_id": "celery:11",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:11"
+      },
+      "created_at": "2026-11-10 10:51:19.298303+00:00"
+     },
+     {
+      "id": "evt_59f025f4ff1043b092cd0f84cf30fe67",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 20,
+      "event_type": "step.started",
+      "payload_json": {
+       "name": "model",
+       "step_id": "step_8ab7b77e891c4bd6a4d8f809018c6e78",
+       "step_type": "model",
+       "step_index": 2
+      },
+      "created_at": "2026-11-10 10:51:19.311314+00:00"
+     },
+     {
+      "id": "evt_bbdbb18cad744441b3a5ab9145555e0c",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 21,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "24c23d584f344ba692c52b4aa580aafb",
+       "max_tokens": 1600,
+       "route_task": "orchestrator.answer",
+       "quality_gate": "non_empty_answer",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "selected_model": "qwen3.7-flash",
+       "candidate_index": 0,
+       "max_model_calls": 2,
+       "selected_provider": "qwen",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-10 10:51:19.317302+00:00"
+     },
+     {
+      "id": "evt_769971fb8e72411cbb009791cac3638b",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 22,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "qwen",
+       "model": "qwen3.7-flash",
+       "display": "正在思考...",
+       "purpose": "orchestrator.answer",
+       "step_id": "step_8ab7b77e891c4bd6a4d8f809018c6e78",
+       "trace_id": "24c23d584f344ba692c52b4aa580aafb"
+      },
+      "created_at": "2026-11-10 10:51:19.331343+00:00"
+     },
+     {
+      "id": "evt_4420a136f72349349c19d798c67996d2",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 23,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.173684+00:00"
+     },
+     {
+      "id": "evt_f815dfa53a544010af0fd04320cbe1f2",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 24,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.191509+00:00"
+     },
+     {
+      "id": "evt_d7f9219f1aca448192e120691c804bd5",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 25,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.214230+00:00"
+     },
+     {
+      "id": "evt_4d4af243294440d18311eef83bdea95b",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 26,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.239035+00:00"
+     },
+     {
+      "id": "evt_e071822569124ac7bcc52da54f0b9873",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 27,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.283258+00:00"
+     },
+     {
+      "id": "evt_257038b3e235419491dd23fb01178fbc",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 28,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.395461+00:00"
+     },
+     {
+      "id": "evt_5d82558babcc4fdfa72a467f9b79bab3",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 29,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.401035+00:00"
+     },
+     {
+      "id": "evt_bed5553f1d55459e9df57cc8f475e60c",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 30,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.407359+00:00"
+     },
+     {
+      "id": "evt_f3f13da7c5a94106ace1802ace2c68d4",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 31,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.410863+00:00"
+     },
+     {
+      "id": "evt_76d320af87444d729a3c87245a585da5",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 32,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.458034+00:00"
+     },
+     {
+      "id": "evt_09350e1645a34721a77a0e5334ac1fb3",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 33,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.504040+00:00"
+     },
+     {
+      "id": "evt_967ec0710a7f48aa8d86cfd93cf144f4",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 34,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.507527+00:00"
+     },
+     {
+      "id": "evt_12529d8f4792464295f8a1afab8e5c29",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 35,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n-",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.510832+00:00"
+     },
+     {
+      "id": "evt_cf3ae5bd68c34ca9a496535620a2f218",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 36,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.527197+00:00"
+     },
+     {
+      "id": "evt_71b7d77e1c864b978e0e68c6caba8517",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 37,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 11",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.589398+00:00"
+     },
+     {
+      "id": "evt_db52a9dd3d7742fba93436779544506a",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 38,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.596764+00:00"
+     },
+     {
+      "id": "evt_dc70a093b38b4bff88c5a666649c8f5d",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 39,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.668669+00:00"
+     },
+     {
+      "id": "evt_a36ac942de5745489b26cc0e76ab658e",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 40,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- ",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.675918+00:00"
+     },
+     {
+      "id": "evt_08930fc3c68e4eebab8b939f8b27be81",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 41,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.680467+00:00"
+     },
+     {
+      "id": "evt_4cc2e6c21ee24ab0a546db5543aa95a3",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 42,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.684423+00:00"
+     },
+     {
+      "id": "evt_8e007892a87a49c2ade0a65811bb9fe8",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 43,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.739667+00:00"
+     },
+     {
+      "id": "evt_43f5fe5111b24d56b16a0674e8d49d62",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 44,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.784059+00:00"
+     },
+     {
+      "id": "evt_44b2449d275c4b88944b00fab0bf8db6",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 45,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.788099+00:00"
+     },
+     {
+      "id": "evt_d0572105a0564533bca622b6935dd8c4",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 46,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.791745+00:00"
+     },
+     {
+      "id": "evt_fa05c80bc29a4e9e948324a6d380631c",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 47,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110.43**",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.856184+00:00"
+     },
+     {
+      "id": "evt_deed351b0cd242f1b0d94ed12f286bf8",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 48,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110.43**\n\n请",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.948128+00:00"
+     },
+     {
+      "id": "evt_7022ff725cf146b48ffee9537fb53256",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 49,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110.43**\n\n请确认无误后点击",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.954550+00:00"
+     },
+     {
+      "id": "evt_513dedac60684b128c83a68481b38de0",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 50,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110.43**\n\n请确认无误后点击标签上的",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:22.959457+00:00"
+     },
+     {
+      "id": "evt_c13398fa84384e15a8c6904f2e951a53",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 51,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110.43**\n\n请确认无误后点击标签上的确认按钮下单。",
+       "generation_id": "0834c578c2d24f278a592195c2f3ce22"
+      },
+      "created_at": "2026-11-10 10:51:23.027279+00:00"
+     },
+     {
+      "id": "evt_2bdd0ef5a77a4f249d13b2e7af0de213",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 52,
+      "event_type": "model.completed",
+      "payload_json": {
+       "brand": "qwen",
+       "model": "qwen3.7-flash",
+       "status": "succeeded",
+       "purpose": "orchestrator.answer",
+       "step_id": "step_8ab7b77e891c4bd6a4d8f809018c6e78",
+       "trace_id": "24c23d584f344ba692c52b4aa580aafb",
+       "usage_source": "actual",
+       "model_call_id": "mcall_baa0419167db4d66916f9a7b8b0316e8",
+       "prompt_tokens": 1117,
+       "cache_hit_tokens": 896,
+       "cache_miss_tokens": 221,
+       "completion_tokens": 83,
+       "cache_creation_tokens": null
+      },
+      "created_at": "2026-11-10 10:51:23.051598+00:00"
+     },
+     {
+      "id": "evt_a48a9b8688c745548c693afac6e4b8d1",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 53,
+      "event_type": "step.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "step_id": "step_8ab7b77e891c4bd6a4d8f809018c6e78",
+       "step_index": 2
+      },
+      "created_at": "2026-11-10 10:51:23.054286+00:00"
+     },
+     {
+      "id": "evt_17c7656db88f41e1b24d10b2a3f51c8d",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 54,
+      "event_type": "step.started",
+      "payload_json": {
+       "name": "model",
+       "step_id": "step_f84110675a8647fda9ac2a3a7d6bf734",
+       "step_type": "model",
+       "step_index": 3
+      },
+      "created_at": "2026-11-10 10:51:23.059848+00:00"
+     },
+     {
+      "id": "evt_a4aa42d0040246aa8b1c388aa2db50ba",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 55,
+      "event_type": "step.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "step_id": "step_f84110675a8647fda9ac2a3a7d6bf734",
+       "step_index": 3
+      },
+      "created_at": "2026-11-10 10:51:23.064076+00:00"
+     },
+     {
+      "id": "evt_8f80bf694a7d420795e915becb5deb81",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "sequence": 56,
+      "event_type": "run.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "display": "回复结束",
+       "actor_id": "celery:11",
+       "to_status": "succeeded",
+       "actor_type": "worker",
+       "from_status": "running"
+      },
+      "created_at": "2026-11-10 10:51:23.068279+00:00"
+     }
+    ],
+    "model_calls": [
+     {
+      "id": "mcall_6bf380e754d948a7b8bd5f989ff76edf",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "step_id": "step_acfc3243c174406d937c938e1c8ee1bb",
+      "provider": "qwen",
+      "model": "qwen3.7-flash",
+      "request_json": {
+       "model": "qwen3.7-flash",
+       "schema": {
+        "name": "orchestrator_plan",
+        "schema": {
+         "type": "object",
+         "required": [
+          "tasks"
+         ],
+         "properties": {
+          "tasks": {
+           "type": "array",
+           "items": {
+            "type": "object",
+            "required": [
+             "id",
+             "kind",
+             "name",
+             "input",
+             "depends_on"
+            ],
+            "properties": {
+             "id": {
+              "type": "string"
+             },
+             "kind": {
+              "enum": [
+               "agent",
+               "tool"
+              ],
+              "type": "string"
+             },
+             "name": {
+              "type": "string"
+             },
+             "input": {
+              "type": "object"
+             },
+             "depends_on": {
+              "type": "array",
+              "items": {
+               "type": "string"
+              }
+             }
+            },
+            "additionalProperties": false
+           }
+          }
+         },
+         "additionalProperties": false
+        },
+        "strict": true
+       },
+       "system": "你是品牌经销商工作台的编排器。你不跟用户聊天或查询工具，只根据现在已有的工具（包含原生 tools，agent，MCP 等）输出运行时要执行的计划。\n\n## 可用工具（与 tools= 相同的 JSON；kind 用 \"tool\"，name 用 function.name，input 按 parameters 填）\n[\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"web_search\",\n      \"description\": \"检索公开网页，查找模型还不知道的当前信息、新闻或报告。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"query\": {\n            \"type\": \"string\",\n            \"description\": \"检索关键词\"\n          }\n        },\n        \"required\": [\n          \"query\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"translate\",\n      \"description\": \"用户要求翻译时，把文字译成另一种语言。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"target_language\": {\n            \"type\": \"string\",\n            \"description\": \"要译成的语言，例如英语、德语、中文\"\n          },\n          \"text\": {\n            \"type\": \"string\",\n            \"description\": \"要翻译的原话，当这些话就在这条用户消息里时填写\"\n          },\n          \"source\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"message\",\n              \"last_assistant\",\n              \"report\"\n            ],\n            \"description\": \"`text` 为空时，从哪里取文字\"\n          }\n        },\n        \"required\": [\n          \"target_language\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"exchange_rate\",\n      \"description\": \"查询汇率（欧洲央行，经由 Frankfurter）。用于货币换算的问题；不要编造汇率。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"base_currency\": {\n            \"type\": \"string\",\n            \"description\": \"源货币的 ISO 代码，例如 CNY、USD、EUR（也接受 RMB）\"\n          },\n          \"target_currency\": {\n            \"type\": \"string\",\n            \"description\": \"目标货币的 ISO 代码，例如 EUR、USD、CNY\"\n          },\n          \"amount\": {\n            \"type\": \"number\",\n            \"description\": \"要换算的源货币金额（默认 1）\"\n          }\n        },\n        \"required\": [\n          \"base_currency\",\n          \"target_currency\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"send_email\",\n      \"description\": \"用户明确要求给某人发邮件时发送。不要编造收件人。主题和正文尽量短、清楚。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"to\": {\n            \"type\": \"string\",\n            \"description\": \"收件人邮箱\"\n          },\n          \"subject\": {\n            \"type\": \"string\",\n            \"description\": \"邮件主题\"\n          },\n          \"body\": {\n            \"type\": \"string\",\n            \"description\": \"纯文本正文\"\n          },\n          \"cc\": {\n            \"type\": \"string\",\n            \"description\": \"可选的抄送地址\"\n          }\n        },\n        \"required\": [\n          \"to\",\n          \"subject\",\n          \"body\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_find\",\n      \"description\": \"Start here: a task in plain words -> the best endpoints (3 by default) of 733, each with the params the task supplies (URLs and @handles resolved), the params still missing, the credit cost and the exact call. With no task it lists platforms, or one platform's endpoints. Free; no key needed.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_endpoint\",\n      \"description\": \"Read before calling: one endpoint's purpose, params, where the rows are and up to 25 response fields, cost rule, paging, latency, timeout, next endpoints and a sample link. id (or platform+resource, path), a platform slug (its endpoints) or a guide topic. Free.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_estimate\",\n      \"description\": \"Exact credits before you spend: one call (id, platform+resource or path, plus the params you will send; calls for a job total; items for a walk) or a plan of several calls. Uses the API's estimator when available, else the bundled pricing. A platform slug gives its price table; no id gives the pricing overview. Free.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_request\",\n      \"description\": \"Call one endpoint (platform+resource, or id, or path). Validated locally first (a bad call is free), quoted, refused above max_credits and confirmed above the threshold. A large page is cut at row boundaries; socialcrawl_collect result_id reads the rest. Spends credits; needs SOCIALCRAWL_API_KEY.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_collect\",\n      \"description\": \"Walk a paged endpoint (id, platform+resource or path) to `items` unique rows, the last page or max_credits: cursors supplied, duplicates dropped, stops on a 402, refused free when one page exceeds max_credits. Small results come back whole. result_id (+offset, limit, format) reads a stored result, free. Spends credits.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_account\",\n      \"description\": \"Free: balance (default, with this session's spend), transactions (ledger), usage (per key per day; from/to YYYY-MM-DD, ≤92 days), status (health; check before retrying a 502/503), freshness (vs live catalogue), notifications (inbox).\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_manage\",\n      \"description\": \"By area + action: monitors, cohorts, web (scrape, crawl, agents, page monitors, sessions), jobs, discover, search_runs (search lists, watches), creator_runs, review_history, events (feed, webhooks). Wrong fields refused free. Managing is free; scrapes, jobs, queries, run_more/include, monitor runs bill.\\ndry_run: true quotes, creating nothing. rows_new alerts need track. Docs: discover-runs, search-runs.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  }\n]\n\n## 5 个 Agent 代理\n- po — 用户要求下采购单、修改采购单，或延续一张未完成的采购订单。\n- contract — 合同上传解析。用户上传合同文件后，你需要调用这个 agent。这里需要文件字节，不能只有文件名称。如果用户没有明确说要上传、解析合同（或相似含义），则不排这个任务。\n- report — 按标准大纲以及用户要求写一份报告草稿。Report Agent 自己会有调用工具的计划，因此你只需要调用 report 即可，即使判断需要有其他工具来辅助 report agent，也不需要调用。\n- brand — 关于品牌自有材料的问题（故事、规格、营销文案）。\n- data — 判断用户需要的内容需要从已有数据库中获取，比如关于这个合作关系的订单、付款、动销、合同条款或产品目录的问题。\n\n规则：\n- 先快速判断是否需要使用工具，如果不需要，直接返回空数组。空计划不会进工具循环，由作答模型直接回复。\n- 这一轮真正要做的事都写进 tasks，可以有多项，可以根据用户要求有串行或并行的逻辑，tasks之间需要判断是否有依赖关系，实际运行时会把没有依赖的任务交给不同的 worker 一起执行。\n- agent 的 name 只能是上面的代理 id。tool 的 name 只能是上一节「可用工具」里的函数名。\n- 写报表时只排 report，不要为同一份草稿再排 data。用户另外问了一个数字问题时，再排一个 data，并且不要放进 report 的 depends_on。\n- po、contract、report 这一轮只产出草稿。确认入库发生在各自的浮窗里，所以这三项可以同时出现。\n- 同一个会话里有未完成的采购单（收集中 / 待确认）时，计划里保留这一个 po，同时仍可排其它任务，但不要再排第二个 po。\n- 只有下一步要用上一步的结果时才填 depends_on。彼此独立的任务把 depends_on 留空。\n- 某一步依赖上一步的正文时，不要在 input 里编占位句。运行时会把依赖步骤的结果补进后续工具的参数（例如检索结果补进 translate 的 text）。\n- 只有用户明确要求发邮件时才排 send_email；若用户要「翻译后发邮件」，再排 send_email 并 depends_on 翻译，运行时可将译文补进 body。\n- 不要编造 SKU、价格、日期或国家。每个任务的 input 里只放用户说过的内容。\n\n只返回一个原始 JSON 对象：\n{\"tasks\": [{\"id\": string, \"kind\": \"agent\" | \"tool\", \"name\": string, \"input\": object, \"depends_on\": [string]}]}\n",
+       "messages": [
+        {
+         "role": "user",
+         "content": "=== 未完成采购单 ===\n有\n\n=== 附件 ===\n（无）\n\n=== 最近对话 ===\n（无）\n\n=== 消息 ===\n帮我起草一张采购单，Activia bifidus nature 125g x 4 订 3 箱，先不要提交，按协议折扣算一下应付总额。"
+        }
+       ]
+      },
+      "response_json": {
+       "json": {
+        "tasks": [
+         {
+          "id": "po_draft",
+          "kind": "agent",
+          "name": "po",
+          "input": {
+           "items": [
+            {
+             "sku": "Activia bifidus nature 125g x 4",
+             "unit": "box",
+             "quantity": 3
+            }
+           ],
+           "notes": "按协议折扣计算应付总额，先不提交",
+           "action": "draft"
+          },
+          "depends_on": []
+         }
+        ]
+       }
+      },
+      "prompt_tokens": 2477,
+      "completion_tokens": 88,
+      "cache_hit_tokens": 2176,
+      "cache_miss_tokens": 301,
+      "cache_creation_tokens": null,
+      "usage_source": "actual",
+      "latency_ms": 3370,
+      "status": "succeeded",
+      "error_json": {},
+      "created_at": "2026-11-10 10:50:49.010798+00:00"
+     },
+     {
+      "id": "mcall_baa0419167db4d66916f9a7b8b0316e8",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "step_id": "step_8ab7b77e891c4bd6a4d8f809018c6e78",
+      "provider": "qwen",
+      "model": "qwen3.7-flash",
+      "request_json": {
+       "model": "qwen3.7-flash",
+       "system": "你是品牌与已入驻经销商对话时的工作台助手。你只负责开口回复。请使用用户的语言。\n\n这一轮要跑的采购单、合同、报表、查数、检索和工具，如果已经执行，结果会放在给你的材料里。没有这些材料时，就直接回答用户这一句。\n\n规则：\n- 不要编造 SKU、价格、总额、汇率或合同折扣。数字、汇率、合同条款只引用材料里有的。品牌资料只根据给出的段落说。\n- 某一项失败或没有跑到，就说明没拿到，不要补一个听起来合理的数。\n- 采购单、合同、报表如果出了草稿，告诉用户在右侧对应标签里查看。点那个标签上的确认才会下单或入库。不要说已经下单、已经归档或已经保存报表。\n- 只有用户明确要求发邮件、并且材料里有发送结果时，才提发信。不要编造收件地址。\n- 寒暄、澄清或材料里没有可引用的事实时，短答即可。需要文件却没有附件时，请他们附上。\n- 回复要短，把这一轮的结果说清楚，不要重复材料原文。\n",
+       "messages": [
+        {
+         "role": "user",
+         "content": "=== 用户 ===\n帮我起草一张采购单，Activia bifidus nature 125g x 4 订 3 箱，先不要提交，按协议折扣算一下应付总额。\n\n=== 这一轮结果 ===\n[{\"id\": \"po_draft\", \"ok\": true, \"kind\": \"agent\", \"name\": \"po.draft\", \"error\": null, \"status\": \"succeeded\", \"payload\": {\"gaps\": [], \"draft\": {\"lines\": [{\"sku\": \"DAI-3033491147067\", \"name\": \"Activia bifidus nature 125g x 4\", \"cases\": 3, \"ambiguous\": false, \"below_moq\": false, \"moq_cases\": 3, \"reference\": \"Activia bifidus nature 125g x 4\", \"candidates\": [], \"case_price\": 37.95, \"line_total\": 113.85, \"unresolved\": false, \"missing_price\": false, \"partial_layer\": true, \"cases_per_layer\": 10, \"cases_to_full_layer\": 7}], \"notes\": null, \"total\": 110.43, \"currency\": \"USD\", \"discount\": {\"kind\": \"percent\", \"note\": \"3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2\", \"value\": 3.0, \"source\": \"contract\"}, \"eta_date\": \"2027-01-09\", \"subtotal\": 113.85, \"incoterms\": \"CIF\", \"payment_terms\": \"50_50\", \"discount_amount\": 3.42, \"shipping_method\": \"sea\"}, \"slots\": {\"notes\": null, \"discount\": {\"kind\": \"percent\", \"note\": \"3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2\", \"value\": 3.0, \"source\": \"contract\"}, \"eta_date\": null, \"incoterms\": null, \"line_items\": [{\"sku\": \"DAI-3033491147067\", \"cases\": 3, \"reference\": \"Activia bifidus nature 125g x 4\"}], \"payment_terms\": null, \"shipping_method\": null}, \"stage\": \"confirm\", \"summary\": \"3 箱 Activia bifidus nature 125g x 4。付款 50_50（下单时预付 50%，货到验收后再付 50% 尾款），CIF，sea，预计到货 2027-01-09，合同折扣 3%（3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2）。 小计 USD 113.85，折扣 USD 3.42，合计 USD 110.43。\", \"clear_po\": false, \"advisories\": [], \"gaps_detail\": [], \"confirm_hash\": \"789b1122a7a7aee7df3aeb73e810e86d7e074aeec91ae49879c6a9c5b095e1aa\", \"confirm_token\": \"Qye5XoanxFGEU6s5rPosOYAxdz434Kw5dAc6Kq2MdbU\", \"confirm_expires_at\": \"2026-11-11T10:51:19.279261+00:00\"}}]"
+        }
+       ]
+      },
+      "response_json": {
+       "text": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110.43**\n\n请确认无误后点击标签上的确认按钮下单。"
+      },
+      "prompt_tokens": 1117,
+      "completion_tokens": 83,
+      "cache_hit_tokens": 896,
+      "cache_miss_tokens": 221,
+      "cache_creation_tokens": null,
+      "usage_source": "actual",
+      "latency_ms": 3715,
+      "status": "succeeded",
+      "error_json": {},
+      "created_at": "2026-11-10 10:51:23.048504+00:00"
+     }
+    ],
+    "tool_calls": [],
+    "checkpoints": [
+     {
+      "id": "ckpt_6fc1f47a83554ef3bc39eb65d2ef2a6d",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "checkpoint_index": 1,
+      "state_json": {
+       "last": "user",
+       "context": [],
+       "orchestrator": {
+        "phase": "planned",
+        "tasks": [
+         {
+          "id": "po_draft",
+          "kind": "agent",
+          "name": "po",
+          "input": {
+           "items": [
+            {
+             "sku": "Activia bifidus nature 125g x 4",
+             "unit": "box",
+             "quantity": 3
+            }
+           ],
+           "notes": "按协议折扣计算应付总额，先不提交",
+           "action": "draft"
+          },
+          "depends_on": []
+         }
+        ],
+        "results": {},
+        "wave_id": null,
+        "finished": [],
+        "wave_ids": []
+       },
+       "completed_tool_calls": []
+      },
+      "created_at": "2026-11-10 10:50:49.020990+00:00"
+     },
+     {
+      "id": "ckpt_36f0adbd713b433f9eb217e2b1d56c42",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "checkpoint_index": 2,
+      "state_json": {
+       "last": "user",
+       "context": [],
+       "orchestrator": {
+        "tasks": [
+         {
+          "id": "po_draft",
+          "kind": "agent",
+          "name": "po",
+          "input": {
+           "items": [
+            {
+             "sku": "Activia bifidus nature 125g x 4",
+             "unit": "box",
+             "quantity": 3
+            }
+           ],
+           "notes": "按协议折扣计算应付总额，先不提交",
+           "action": "draft"
+          },
+          "depends_on": []
+         }
+        ],
+        "results": {},
+        "wave_id": "a16e62b3325b41ee942703869bdf32f0",
+        "finished": [],
+        "wave_ids": [
+         "po_draft"
+        ]
+       },
+       "completed_tool_calls": []
+      },
+      "created_at": "2026-11-10 10:50:49.027686+00:00"
+     },
+     {
+      "id": "ckpt_6166cbabccb04973aba3bf619a7cd9cf",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "checkpoint_index": 3,
+      "state_json": {
+       "last": "user",
+       "context": [],
+       "orchestrator": {
+        "tasks": [
+         {
+          "id": "po_draft",
+          "kind": "agent",
+          "name": "po",
+          "input": {
+           "items": [
+            {
+             "sku": "Activia bifidus nature 125g x 4",
+             "unit": "box",
+             "quantity": 3
+            }
+           ],
+           "notes": "按协议折扣计算应付总额，先不提交",
+           "action": "draft"
+          },
+          "depends_on": []
+         }
+        ],
+        "results": {
+         "po_draft": {
+          "id": "po_draft",
+          "ok": true,
+          "kind": "agent",
+          "name": "po.draft",
+          "error": null,
+          "status": "succeeded",
+          "payload": {
+           "gaps": [],
+           "draft": {
+            "lines": [
+             {
+              "sku": "DAI-3033491147067",
+              "name": "Activia bifidus nature 125g x 4",
+              "cases": 3,
+              "ambiguous": false,
+              "below_moq": false,
+              "moq_cases": 3,
+              "reference": "Activia bifidus nature 125g x 4",
+              "candidates": [],
+              "case_price": 37.95,
+              "line_total": 113.85,
+              "unresolved": false,
+              "missing_price": false,
+              "partial_layer": true,
+              "cases_per_layer": 10,
+              "cases_to_full_layer": 7
+             }
+            ],
+            "notes": null,
+            "total": 110.43,
+            "currency": "USD",
+            "discount": {
+             "kind": "percent",
+             "note": "3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2",
+             "value": 3.0,
+             "source": "contract"
+            },
+            "eta_date": "2027-01-09",
+            "subtotal": 113.85,
+            "incoterms": "CIF",
+            "payment_terms": "50_50",
+            "discount_amount": 3.42,
+            "shipping_method": "sea"
+           },
+           "slots": {
+            "notes": null,
+            "discount": {
+             "kind": "percent",
+             "note": "3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2",
+             "value": 3.0,
+             "source": "contract"
+            },
+            "eta_date": null,
+            "incoterms": null,
+            "line_items": [
+             {
+              "sku": "DAI-3033491147067",
+              "cases": 3,
+              "reference": "Activia bifidus nature 125g x 4"
+             }
+            ],
+            "payment_terms": null,
+            "shipping_method": null
+           },
+           "stage": "confirm",
+           "summary": "3 箱 Activia bifidus nature 125g x 4。付款 50_50（下单时预付 50%，货到验收后再付 50% 尾款），CIF，sea，预计到货 2027-01-09，合同折扣 3%（3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2）。 小计 USD 113.85，折扣 USD 3.42，合计 USD 110.43。",
+           "clear_po": false,
+           "advisories": [],
+           "gaps_detail": [],
+           "confirm_hash": "789b1122a7a7aee7df3aeb73e810e86d7e074aeec91ae49879c6a9c5b095e1aa",
+           "confirm_token": "Qye5XoanxFGEU6s5rPosOYAxdz434Kw5dAc6Kq2MdbU",
+           "confirm_expires_at": "2026-11-11T10:51:19.279261+00:00"
+          }
+         }
+        },
+        "wave_id": "a16e62b3325b41ee942703869bdf32f0",
+        "finished": [
+         "po_draft"
+        ],
+        "wave_ids": [
+         "po_draft"
+        ]
+       },
+       "completed_tool_calls": []
+      },
+      "created_at": "2026-11-10 10:51:19.285352+00:00"
+     },
+     {
+      "id": "ckpt_b36293ebc2844efbb160f58f64878764",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "checkpoint_index": 4,
+      "state_json": {
+       "last": "user",
+       "context": [],
+       "orchestrator": {
+        "phase": "answer_done",
+        "tasks": [
+         {
+          "id": "po_draft",
+          "kind": "agent",
+          "name": "po",
+          "input": {
+           "items": [
+            {
+             "sku": "Activia bifidus nature 125g x 4",
+             "unit": "box",
+             "quantity": 3
+            }
+           ],
+           "notes": "按协议折扣计算应付总额，先不提交",
+           "action": "draft"
+          },
+          "depends_on": []
+         }
+        ],
+        "answer": "采购单草稿已生成，请在右侧“采购单”标签中查看。\n\n按协议折扣（首柜 3% off）计算：\n- 小计：USD 113.85\n- 折扣金额：USD 3.42\n- **应付总额：USD 110.43**\n\n请确认无误后点击标签上的确认按钮下单。",
+        "results": {
+         "po_draft": {
+          "id": "po_draft",
+          "ok": true,
+          "kind": "agent",
+          "name": "po.draft",
+          "error": null,
+          "status": "succeeded",
+          "payload": {
+           "gaps": [],
+           "draft": {
+            "lines": [
+             {
+              "sku": "DAI-3033491147067",
+              "name": "Activia bifidus nature 125g x 4",
+              "cases": 3,
+              "ambiguous": false,
+              "below_moq": false,
+              "moq_cases": 3,
+              "reference": "Activia bifidus nature 125g x 4",
+              "candidates": [],
+              "case_price": 37.95,
+              "line_total": 113.85,
+              "unresolved": false,
+              "missing_price": false,
+              "partial_layer": true,
+              "cases_per_layer": 10,
+              "cases_to_full_layer": 7
+             }
+            ],
+            "notes": null,
+            "total": 110.43,
+            "currency": "USD",
+            "discount": {
+             "kind": "percent",
+             "note": "3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2",
+             "value": 3.0,
+             "source": "contract"
+            },
+            "eta_date": "2027-01-09",
+            "subtotal": 113.85,
+            "incoterms": "CIF",
+            "payment_terms": "50_50",
+            "discount_amount": 3.42,
+            "shipping_method": "sea"
+           },
+           "slots": {
+            "notes": null,
+            "discount": {
+             "kind": "percent",
+             "note": "3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2",
+             "value": 3.0,
+             "source": "contract"
+            },
+            "eta_date": null,
+            "incoterms": null,
+            "line_items": [
+             {
+              "sku": "DAI-3033491147067",
+              "cases": 3,
+              "reference": "Activia bifidus nature 125g x 4"
+             }
+            ],
+            "payment_terms": null,
+            "shipping_method": null
+           },
+           "stage": "confirm",
+           "summary": "3 箱 Activia bifidus nature 125g x 4。付款 50_50（下单时预付 50%，货到验收后再付 50% 尾款），CIF，sea，预计到货 2027-01-09，合同折扣 3%（3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2）。 小计 USD 113.85，折扣 USD 3.42，合计 USD 110.43。",
+           "clear_po": false,
+           "advisories": [],
+           "gaps_detail": [],
+           "confirm_hash": "789b1122a7a7aee7df3aeb73e810e86d7e074aeec91ae49879c6a9c5b095e1aa",
+           "confirm_token": "Qye5XoanxFGEU6s5rPosOYAxdz434Kw5dAc6Kq2MdbU",
+           "confirm_expires_at": "2026-11-11T10:51:19.279261+00:00"
+          }
+         }
+        },
+        "wave_id": null,
+        "finished": [
+         "po_draft"
+        ],
+        "wave_ids": []
+       },
+       "completed_tool_calls": []
+      },
+      "created_at": "2026-11-10 10:51:23.054286+00:00"
+     }
+    ],
+    "usage_records": [
+     {
+      "id": "usage_fdd9166743614af892668bf01ae5acab",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "org_id": "dist-liancai",
+      "user_id": "user-liancai-chen",
+      "provider": "qwen",
+      "model": "qwen3.7-flash",
+      "prompt_tokens": 2477,
+      "completion_tokens": 88,
+      "cache_hit_tokens": 2176,
+      "cache_miss_tokens": 301,
+      "cache_creation_tokens": null,
+      "total_tokens": 2565,
+      "estimated_cost_cents": 0,
+      "usage_source": "actual",
+      "created_at": "2026-11-10 10:50:49.010798+00:00"
+     },
+     {
+      "id": "usage_eba18d8c0b6e4ba3aa591acbde9f258f",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "org_id": "dist-liancai",
+      "user_id": "user-liancai-chen",
+      "provider": "qwen",
+      "model": "qwen3.7-flash",
+      "prompt_tokens": 1117,
+      "completion_tokens": 83,
+      "cache_hit_tokens": 896,
+      "cache_miss_tokens": 221,
+      "cache_creation_tokens": null,
+      "total_tokens": 1200,
+      "estimated_cost_cents": 0,
+      "usage_source": "actual",
+      "created_at": "2026-11-10 10:51:23.048504+00:00"
+     }
+    ],
+    "audit_logs": [
+     {
+      "id": "aud_29e3cc10140244b6888db9677edf3c97",
+      "user_id": "celery:11",
+      "org_id": "dist-liancai",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_701c8c62667644768590906a26857630",
+      "metadata_json": {
+       "actor_id": "celery:11",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:11"
+      },
+      "created_at": "2026-11-10 10:50:45.609083+00:00"
+     },
+     {
+      "id": "aud_db6229f205ea464ba3a5d6e3fd72ecbb",
+      "user_id": "celery:11",
+      "org_id": "dist-liancai",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_701c8c62667644768590906a26857630",
+      "metadata_json": {
+       "wave_id": "a16e62b3325b41ee942703869bdf32f0",
+       "actor_id": "celery:11",
+       "task_ids": [
+        "po_draft"
+       ],
+       "to_status": "waiting_for_tasks",
+       "actor_type": "worker",
+       "from_status": "running"
+      },
+      "created_at": "2026-11-10 10:50:49.027686+00:00"
+     },
+     {
+      "id": "aud_232c70cabe58459ba2a5fed349c45271",
+      "user_id": "user-liancai-chen",
+      "org_id": "dist-liancai",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_701c8c62667644768590906a26857630",
+      "metadata_json": {
+       "wave_id": "a16e62b3325b41ee942703869bdf32f0",
+       "actor_id": "user-liancai-chen",
+       "to_status": "queued",
+       "actor_type": "worker",
+       "from_status": "waiting_for_tasks"
+      },
+      "created_at": "2026-11-10 10:51:19.288043+00:00"
+     },
+     {
+      "id": "aud_ba38f026fb1d4974a9621c5178bbe674",
+      "user_id": "celery:11",
+      "org_id": "dist-liancai",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_701c8c62667644768590906a26857630",
+      "metadata_json": {
+       "actor_id": "celery:11",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:11"
+      },
+      "created_at": "2026-11-10 10:51:19.298303+00:00"
+     },
+     {
+      "id": "aud_85fe7032ac81403eafbbb6acde38ee55",
+      "user_id": "celery:11",
+      "org_id": "dist-liancai",
+      "run_id": "run_701c8c62667644768590906a26857630",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_701c8c62667644768590906a26857630",
+      "metadata_json": {
+       "status": "succeeded",
+       "actor_id": "celery:11",
+       "to_status": "succeeded",
+       "actor_type": "worker",
+       "from_status": "running"
+      },
+      "created_at": "2026-11-10 10:51:23.068279+00:00"
+     }
+    ],
+    "outbox": [
+     {
+      "id": "obx_0e704c16b92046deae6964a7336d0c1e",
+      "job_type": "execute_run",
+      "payload_json": {
+       "run_id": "run_701c8c62667644768590906a26857630",
+       "run_type": "chat",
+       "trace_id": "24c23d584f344ba692c52b4aa580aafb"
+      },
+      "status": "dispatched",
+      "attempts": 0,
+      "max_attempts": 10,
+      "next_attempt_at": "2026-11-10 10:50:45.602994+00:00",
+      "last_error_json": null,
+      "created_at": "2026-11-10 10:50:45.602994+00:00",
+      "dispatch_at": "2026-11-10 10:50:45.606567+00:00"
+     },
+     {
+      "id": "obx_7363713f23a44e01bb90dd2818f25058",
+      "job_type": "execute_run",
+      "payload_json": {
+       "run_id": "run_701c8c62667644768590906a26857630",
+       "run_type": "chat",
+       "trace_id": "24c23d584f344ba692c52b4aa580aafb"
+      },
+      "status": "dispatched",
+      "attempts": 0,
+      "max_attempts": 10,
+      "next_attempt_at": "2026-11-10 10:51:19.288043+00:00",
+      "last_error_json": null,
+      "created_at": "2026-11-10 10:51:19.288043+00:00",
+      "dispatch_at": "2026-11-10 10:51:19.291780+00:00"
+     }
+    ],
+    "dead_letters": []
+   }
+  },
+  "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9": {
+   "run_type": "po",
+   "status": "succeeded",
+   "trace": {
+    "run": {
+     "id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+     "org_id": "dist-liancai",
+     "user_id": "user-liancai-chen",
+     "run_type": "po",
+     "idempotency_key": "chat:cabd521da994459fbb449152df15f5d2:run_701c8c62667644768590906a26857630:po_draft",
+     "status": "succeeded",
+     "input_json": {
+      "kind": "agent",
+      "name": "po",
+      "input": {
+       "items": [
+        {
+         "sku": "Activia bifidus nature 125g x 4",
+         "unit": "box",
+         "quantity": 3
+        }
+       ],
+       "notes": "按协议折扣计算应付总额，先不提交",
+       "action": "draft"
+      },
+      "model": null,
+      "prior": [],
+      "images": [],
+      "message": "帮我起草一张采购单，Activia bifidus nature 125g x 4 订 3 箱，先不要提交，按协议折扣算一下应付总额。",
+      "task_id": "po_draft",
+      "wave_id": "a16e62b3325b41ee942703869bdf32f0",
+      "documents": [],
+      "tool_name": "po.draft",
+      "session_id": "cabd521da994459fbb449152df15f5d2",
+      "attachments": [],
+      "owner_run_id": "run_701c8c62667644768590906a26857630"
+     },
+     "output_json": {
+      "id": "po_draft",
+      "ok": true,
+      "kind": "agent",
+      "name": "po.draft",
+      "error": null,
+      "status": "succeeded",
+      "payload": {
+       "gaps": [],
+       "draft": {
+        "lines": [
+         {
+          "sku": "DAI-3033491147067",
+          "name": "Activia bifidus nature 125g x 4",
+          "cases": 3,
+          "ambiguous": false,
+          "below_moq": false,
+          "moq_cases": 3,
+          "reference": "Activia bifidus nature 125g x 4",
+          "candidates": [],
+          "case_price": 37.95,
+          "line_total": 113.85,
+          "unresolved": false,
+          "missing_price": false,
+          "partial_layer": true,
+          "cases_per_layer": 10,
+          "cases_to_full_layer": 7
+         }
+        ],
+        "notes": null,
+        "total": 110.43,
+        "currency": "USD",
+        "discount": {
+         "kind": "percent",
+         "note": "3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2",
+         "value": 3.0,
+         "source": "contract"
+        },
+        "eta_date": "2027-01-09",
+        "subtotal": 113.85,
+        "incoterms": "CIF",
+        "payment_terms": "50_50",
+        "discount_amount": 3.42,
+        "shipping_method": "sea"
+       },
+       "slots": {
+        "notes": null,
+        "discount": {
+         "kind": "percent",
+         "note": "3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2",
+         "value": 3.0,
+         "source": "contract"
+        },
+        "eta_date": null,
+        "incoterms": null,
+        "line_items": [
+         {
+          "sku": "DAI-3033491147067",
+          "cases": 3,
+          "reference": "Activia bifidus nature 125g x 4"
+         }
+        ],
+        "payment_terms": null,
+        "shipping_method": null
+       },
+       "stage": "confirm",
+       "summary": "3 箱 Activia bifidus nature 125g x 4。付款 50_50（下单时预付 50%，货到验收后再付 50% 尾款），CIF，sea，预计到货 2027-01-09，合同折扣 3%（3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2）。 小计 USD 113.85，折扣 USD 3.42，合计 USD 110.43。",
+       "clear_po": false,
+       "advisories": [],
+       "gaps_detail": [],
+       "confirm_hash": "789b1122a7a7aee7df3aeb73e810e86d7e074aeec91ae49879c6a9c5b095e1aa",
+       "confirm_token": "Qye5XoanxFGEU6s5rPosOYAxdz434Kw5dAc6Kq2MdbU",
+       "confirm_expires_at": "2026-11-11T10:51:19.279261+00:00"
+      }
+     },
+     "error_json": null,
+     "created_at": "2026-11-10 10:50:49.027686+00:00",
+     "queued_at": "2026-11-10 10:50:49.027686+00:00",
+     "queue_heartbeat_at": null,
+     "started_at": "2026-11-10 10:50:49.043563+00:00",
+     "ended_at": "2026-11-10 10:51:19.295331+00:00",
+     "cancel_requested_at": null,
+     "updated_at": "2026-11-10 10:51:19.295331+00:00",
+     "lease_owner": "celery:12",
+     "lease_expires_at": "2026-11-10 11:00:49.043559+00:00",
+     "attempts": 1,
+     "redispatch_count": 0,
+     "parent_run_id": null,
+     "owner_run_id": "run_701c8c62667644768590906a26857630",
+     "trace_id": "fb04f98d9df4404f8509a49f008b0a33",
+     "max_model_calls": null,
+     "max_tokens": null,
+     "max_tool_calls": null,
+     "max_duration_seconds": null
+    },
+    "steps": [
+     {
+      "id": "step_beb7588c4e754414b5eda88986d67712",
+      "run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+      "step_index": 1,
+      "step_type": "tool",
+      "name": "po.draft",
+      "status": "succeeded",
+      "input_json": {
+       "items": [
+        {
+         "sku": "Activia bifidus nature 125g x 4",
+         "unit": "box",
+         "quantity": 3
+        }
+       ],
+       "notes": "按协议折扣计算应付总额，先不提交",
+       "action": "draft",
+       "message": "帮我起草一张采购单，Activia bifidus nature 125g x 4 订 3 箱，先不要提交，按协议折扣算一下应付总额。"
+      },
+      "output_json": {
+       "gaps": [],
+       "draft": {
+        "lines": [
+         {
+          "sku": "DAI-3033491147067",
+          "name": "Activia bifidus nature 125g x 4",
+          "cases": 3,
+          "ambiguous": false,
+          "below_moq": false,
+          "moq_cases": 3,
+          "reference": "Activia bifidus nature 125g x 4",
+          "candidates": [],
+          "case_price": 37.95,
+          "line_total": 113.85,
+          "unresolved": false,
+          "missing_price": false,
+          "partial_layer": true,
+          "cases_per_layer": 10,
+          "cases_to_full_layer": 7
+         }
+        ],
+        "notes": null,
+        "total": 110.43,
+        "currency": "USD",
+        "discount": {
+         "kind": "percent",
+         "note": "3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2",
+         "value": 3.0,
+         "source": "contract"
+        },
+        "eta_date": "2027-01-09",
+        "subtotal": 113.85,
+        "incoterms": "CIF",
+        "payment_terms": "50_50",
+        "discount_amount": 3.42,
+        "shipping_method": "sea"
+       },
+       "slots": {
+        "notes": null,
+        "discount": {
+         "kind": "percent",
+         "note": "3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2",
+         "value": 3.0,
+         "source": "contract"
+        },
+        "eta_date": null,
+        "incoterms": null,
+        "line_items": [
+         {
+          "sku": "DAI-3033491147067",
+          "cases": 3,
+          "reference": "Activia bifidus nature 125g x 4"
+         }
+        ],
+        "payment_terms": null,
+        "shipping_method": null
+       },
+       "stage": "confirm",
+       "summary": "3 箱 Activia bifidus nature 125g x 4。付款 50_50（下单时预付 50%，货到验收后再付 50% 尾款），CIF，sea，预计到货 2027-01-09，合同折扣 3%（3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2）。 小计 USD 113.85，折扣 USD 3.42，合计 USD 110.43。",
+       "clear_po": false,
+       "advisories": [],
+       "gaps_detail": [],
+       "confirm_hash": "789b1122a7a7aee7df3aeb73e810e86d7e074aeec91ae49879c6a9c5b095e1aa",
+       "confirm_token": "Qye5XoanxFGEU6s5rPosOYAxdz434Kw5dAc6Kq2MdbU",
+       "confirm_expires_at": "2026-11-11T10:51:19.279261+00:00"
+      },
+      "error_json": null,
+      "started_at": "2026-11-10 10:50:49.056861+00:00",
+      "ended_at": "2026-11-10 10:51:19.279335+00:00"
+     }
+    ],
+    "events": [
+     {
+      "id": "evt_ab3f72f4caa7466e897ac0ffa034c182",
+      "run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+      "sequence": 1,
+      "event_type": "run.created",
+      "payload_json": {
+       "status": "queued",
+       "display": "已开始",
+       "owner_run_id": "run_701c8c62667644768590906a26857630"
+      },
+      "created_at": "2026-11-10 10:50:49.027686+00:00"
+     },
+     {
+      "id": "evt_3b794f81c796439c9f1fc9889ee52519",
+      "run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+      "sequence": 2,
+      "event_type": "run.enqueued",
+      "payload_json": {
+       "outbox_job_id": "obx_6881b050c9a74ef0ac42a9a39ac4cf1d"
+      },
+      "created_at": "2026-11-10 10:50:49.039353+00:00"
+     },
+     {
+      "id": "evt_ca569f0b34cf417eb9b3b40122b051fa",
+      "run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+      "sequence": 3,
+      "event_type": "run.started",
+      "payload_json": {
+       "actor_id": "celery:12",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:12"
+      },
+      "created_at": "2026-11-10 10:50:49.043563+00:00"
+     },
+     {
+      "id": "evt_6076c787f96c44cfa65e74ff711d60ce",
+      "run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+      "sequence": 4,
+      "event_type": "step.started",
+      "payload_json": {
+       "name": "po.draft",
+       "step_id": "step_beb7588c4e754414b5eda88986d67712",
+       "step_type": "tool",
+       "step_index": 1
+      },
+      "created_at": "2026-11-10 10:50:49.056861+00:00"
+     },
+     {
+      "id": "evt_ba041cf0d1094454b35a8ab1a87f2706",
+      "run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+      "sequence": 5,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "fb04f98d9df4404f8509a49f008b0a33",
+       "max_tokens": 1200,
+       "route_task": "po.extract",
+       "quality_gate": "valid_po_slots",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "selected_model": "deepseek-flash",
+       "candidate_index": 0,
+       "max_model_calls": 2,
+       "selected_provider": "deepseek",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-10 10:50:49.067909+00:00"
+     },
+     {
+      "id": "evt_0e48778d209243cd85eca92f523f0723",
+      "run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+      "sequence": 6,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "display": "正在思考...",
+       "purpose": "po.extract",
+       "step_id": "step_beb7588c4e754414b5eda88986d67712",
+       "trace_id": "fb04f98d9df4404f8509a49f008b0a33"
+      },
+      "created_at": "2026-11-10 10:50:49.084405+00:00"
+     },
+     {
+      "id": "evt_4d9234bee4514c4599dcbe522a934fe2",
+      "run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+      "sequence": 7,
+      "event_type": "model.completed",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "status": "succeeded",
+       "purpose": "po.extract",
+       "step_id": "step_beb7588c4e754414b5eda88986d67712",
+       "trace_id": "fb04f98d9df4404f8509a49f008b0a33",
+       "usage_source": "actual",
+       "model_call_id": "mcall_a672fac883054178863d3bbcbf21f513",
+       "prompt_tokens": 1753,
+       "cache_hit_tokens": 1536,
+       "cache_miss_tokens": 217,
+       "completion_tokens": 104,
+       "cache_creation_tokens": null
+      },
+      "created_at": "2026-11-10 10:51:19.275580+00:00"
+     },
+     {
+      "id": "evt_6e9d8e27aa624838b720d74f447a996a",
+      "run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+      "sequence": 8,
+      "event_type": "tool.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "step_id": "step_beb7588c4e754414b5eda88986d67712",
+       "tool_name": "po.draft",
+       "tool_call_id": "tcall_dd7074263eb84a0990512b304d85ee16"
+      },
+      "created_at": "2026-11-10 10:51:19.279335+00:00"
+     },
+     {
+      "id": "evt_b2d15994496d49f1986d678f5517926a",
+      "run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+      "sequence": 9,
+      "event_type": "step.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "step_id": "step_beb7588c4e754414b5eda88986d67712",
+       "step_index": 1
+      },
+      "created_at": "2026-11-10 10:51:19.279335+00:00"
+     },
+     {
+      "id": "evt_725cba10ea0d462c8e4e45189cc46afc",
+      "run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+      "sequence": 10,
+      "event_type": "run.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "display": "回复结束",
+       "actor_id": "celery:12",
+       "to_status": "succeeded",
+       "actor_type": "worker",
+       "from_status": "running"
+      },
+      "created_at": "2026-11-10 10:51:19.295331+00:00"
+     }
+    ],
+    "model_calls": [
+     {
+      "id": "mcall_a672fac883054178863d3bbcbf21f513",
+      "run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+      "step_id": "step_beb7588c4e754414b5eda88986d67712",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "request_json": {
+       "model": "deepseek-flash",
+       "schema": {
+        "name": "po_turn_extraction",
+        "schema": {
+         "type": "object",
+         "required": [
+          "line_items",
+          "user_confirmed",
+          "reply_language"
+         ],
+         "properties": {
+          "notes": {
+           "type": [
+            "string",
+            "null"
+           ]
+          },
+          "eta_date": {
+           "type": [
+            "string",
+            "null"
+           ]
+          },
+          "incoterms": {
+           "type": [
+            "string",
+            "null"
+           ]
+          },
+          "line_items": {
+           "type": "array",
+           "items": {
+            "type": "object",
+            "required": [
+             "reference",
+             "cases",
+             "sku"
+            ],
+            "properties": {
+             "sku": {
+              "type": [
+               "string",
+               "null"
+              ]
+             },
+             "cases": {
+              "type": "number"
+             },
+             "reference": {
+              "type": "string"
+             }
+            }
+           }
+          },
+          "discount_kind": {
+           "type": [
+            "string",
+            "null"
+           ]
+          },
+          "payment_terms": {
+           "type": [
+            "string",
+            "null"
+           ]
+          },
+          "discount_value": {
+           "type": [
+            "number",
+            "null"
+           ]
+          },
+          "reply_language": {
+           "type": "string"
+          },
+          "user_confirmed": {
+           "type": "boolean"
+          },
+          "shipping_method": {
+           "type": [
+            "string",
+            "null"
+           ]
+          }
+         }
+        },
+        "strict": false
+       },
+       "system": "你是品牌经销商的采购单助手。你在这里的唯一工作，是阅读最新一条消息（连同历史），并把它合并进下面的订单槽位。你不决定采购单需要哪些字段（模板是固定的），也不做任何校验。绝不要编造产品、SKU、数量或价格。\n\n=== 目录（SKU ▸ 名称 ▸ 箱规/价格/起订量） ===\nDAI-3033491147067 ▸ Activia bifidus nature 125g x 4 ▸ 500 g Single ▸ 12/箱，$37.95/箱，起订量 36 件，Dairy ▸ 10 箱/层, 120 件/层, 8 层/托, 80 箱/托, 7.2 千克/箱\nDAI-3033491235375 ▸ Activia bifidus cereales 120 g x 4 muesli ▸ 480 g Single ▸ 12/箱，$35.62/箱，起订量 120 件，Dairy ▸ 10 箱/层, 120 件/层, 8 层/托, 80 箱/托, 7 千克/箱\nDAI-3033491235382 ▸ Activia bifidus cereales saveur noix 120 g x 4 ▸ 480 g Single ▸ 12/箱，$24.21/箱，起订量 120 件，Dairy ▸ 10 箱/层, 120 件/层, 8 层/托, 80 箱/托, 7 千克/箱\nDAI-3033491325243 ▸ Cerise ▸ 500 g Single ▸ 12/箱，$40.34/箱，起订量 240 件，Dairy ▸ 10 箱/层, 120 件/层, 8 层/托, 80 箱/托, 7.2 千克/箱\nDAI-3033491350689 ▸ Activia bifidus saveur vanille sans arome artificiel 125 g x 12 ▸ 1.5 kg Single ▸ 8/箱，$43.52/箱，起订量 24 件，Dairy ▸ 8 箱/层, 64 件/层, 7 层/托, 56 箱/托, 14.1 千克/箱\nDAI-3033491402807 ▸ Activia muesli graines de chia framboise ▸ 170 g Single ▸ 20/箱，$25.76/箱，起订量 100 件，Dairy ▸ 12 箱/层, 240 件/层, 8 层/托, 96 箱/托, 4.3 千克/箱\nDAI-3033491592867 ▸ Yogurt Muesli Cacao & Noisettes ▸ 170 g Single ▸ 20/箱，$25.94/箱，起订量 400 件，Dairy ▸ 12 箱/层, 240 件/层, 8 层/托, 96 箱/托, 4.3 千克/箱\nDAI-3033491993176 ▸ Kéfir Saveur myrtille ▸ 280 ml Single ▸ 20/箱，$32.89/箱，起订量 210 件，Dairy ▸ 10 箱/层, 200 件/层, 8 层/托, 80 箱/托, 6.8 千克/箱\n\n=== 已经收集到的订单槽位 ===\n{\n  \"line_items\": [],\n  \"payment_terms\": null,\n  \"incoterms\": null,\n  \"shipping_method\": null,\n  \"eta_date\": null,\n  \"discount\": {\n    \"kind\": \"percent\",\n    \"value\": 3.0,\n    \"source\": \"contract\",\n    \"note\": \"3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2\"\n  },\n  \"notes\": null\n}\n\n=== 合同折扣（已经在这张单上——由代码确定） ===\n3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2\n除非客户明确说出另一个折扣，或明确说不要折扣，否则 discount_kind 保持 null。不要让他们去申请或谈判这个费率。\n\n只根据用户实际说的话填写槽位：\n- line_items：[{\"reference\": string, \"cases\": number, \"sku\": string|null}] — reference 是用户自己对产品的说法（「鱼油」「那款精华」）。不要为一个含糊的说法编造或猜测 SKU——sku 留 null，由系统去解析（多个产品都匹配时再问用户）。某一行已经解析过时，保留已收集槽位里的 sku（不要丢掉）。cases 是箱数。与已收集的内容合并（按用户的意思新增、调整或删除）；返回完整的最新列表。\n- payment_terms：\"50_50\" | \"100_prepaid\" | \"net_30\" | \"net_60\" | null\n- incoterms：\"FOB\" | \"CIF\" | \"EXW\" | \"DDP\" | \"DAP\" | \"CFR\" | null\n- shipping_method：\"sea\" | \"air\" | \"express\" | \"land\" | null\n- eta_date：\"YYYY-MM-DD\" | null\n- discount_kind：只有用户明确表示不要折扣时才填 \"none\"；他们要求折扣时填 \"amount\" 或 \"percent\"；从未提及时填 null。discount_value：number | null\n- notes：string | null\n- user_confirmed：只有用户明确同意提交这张完整订单时才为 true（例如「好的，提交」「确认」「就这么下」）。否则为 false。\n- reply_language：客户整段对话使用的语言，写成中文名称（例如「英语」「中文」「西班牙语」）。一句很短的「好的」也要沿用已经确立的语言。\n\n只返回一个原始 JSON 对象（不要 markdown 代码围栏）：\n{\"line_items\": [{\"reference\": string, \"cases\": number, \"sku\": string|null}], \"payment_terms\": string|null, \"incoterms\": string|null, \"shipping_method\": string|null, \"eta_date\": string|null, \"discount_kind\": \"none\"|\"amount\"|\"percent\"|null, \"discount_value\": number|null, \"notes\": string|null, \"user_confirmed\": boolean, \"reply_language\": string}\n",
+       "messages": [
+        {
+         "role": "user",
+         "content": "帮我起草一张采购单，Activia bifidus nature 125g x 4 订 3 箱，先不要提交，按协议折扣算一下应付总额。"
+        }
+       ]
+      },
+      "response_json": {
+       "json": {
+        "notes": null,
+        "eta_date": null,
+        "incoterms": null,
+        "line_items": [
+         {
+          "sku": "DAI-3033491147067",
+          "cases": 3,
+          "reference": "Activia bifidus nature 125g x 4"
+         }
+        ],
+        "discount_kind": null,
+        "payment_terms": null,
+        "discount_value": null,
+        "reply_language": "中文",
+        "user_confirmed": false,
+        "shipping_method": null
+       }
+      },
+      "prompt_tokens": 1753,
+      "completion_tokens": 104,
+      "cache_hit_tokens": 1536,
+      "cache_miss_tokens": 217,
+      "cache_creation_tokens": null,
+      "usage_source": "actual",
+      "latency_ms": 30178,
+      "status": "succeeded",
+      "error_json": {},
+      "created_at": "2026-11-10 10:51:19.266319+00:00"
+     }
+    ],
+    "tool_calls": [
+     {
+      "id": "tcall_dd7074263eb84a0990512b304d85ee16",
+      "run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+      "org_id": "dist-liancai",
+      "user_id": "user-liancai-chen",
+      "step_id": "step_beb7588c4e754414b5eda88986d67712",
+      "tool_name": "po.draft",
+      "args_json": {
+       "items": [
+        {
+         "sku": "Activia bifidus nature 125g x 4",
+         "unit": "box",
+         "quantity": 3
+        }
+       ],
+       "notes": "按协议折扣计算应付总额，先不提交",
+       "action": "draft",
+       "message": "帮我起草一张采购单，Activia bifidus nature 125g x 4 订 3 箱，先不要提交，按协议折扣算一下应付总额。"
+      },
+      "result_json": {
+       "gaps": [],
+       "draft": {
+        "lines": [
+         {
+          "sku": "DAI-3033491147067",
+          "name": "Activia bifidus nature 125g x 4",
+          "cases": 3,
+          "ambiguous": false,
+          "below_moq": false,
+          "moq_cases": 3,
+          "reference": "Activia bifidus nature 125g x 4",
+          "candidates": [],
+          "case_price": 37.95,
+          "line_total": 113.85,
+          "unresolved": false,
+          "missing_price": false,
+          "partial_layer": true,
+          "cases_per_layer": 10,
+          "cases_to_full_layer": 7
+         }
+        ],
+        "notes": null,
+        "total": 110.43,
+        "currency": "USD",
+        "discount": {
+         "kind": "percent",
+         "note": "3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2",
+         "value": 3.0,
+         "source": "contract"
+        },
+        "eta_date": "2027-01-09",
+        "subtotal": 113.85,
+        "incoterms": "CIF",
+        "payment_terms": "50_50",
+        "discount_amount": 3.42,
+        "shipping_method": "sea"
+       },
+       "slots": {
+        "notes": null,
+        "discount": {
+         "kind": "percent",
+         "note": "3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2",
+         "value": 3.0,
+         "source": "contract"
+        },
+        "eta_date": null,
+        "incoterms": null,
+        "line_items": [
+         {
+          "sku": "DAI-3033491147067",
+          "cases": 3,
+          "reference": "Activia bifidus nature 125g x 4"
+         }
+        ],
+        "payment_terms": null,
+        "shipping_method": null
+       },
+       "stage": "confirm",
+       "summary": "3 箱 Activia bifidus nature 125g x 4。付款 50_50（下单时预付 50%，货到验收后再付 50% 尾款），CIF，sea，预计到货 2027-01-09，合同折扣 3%（3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2）。 小计 USD 113.85，折扣 USD 3.42，合计 USD 110.43。",
+       "clear_po": false,
+       "advisories": [],
+       "gaps_detail": [],
+       "confirm_hash": "789b1122a7a7aee7df3aeb73e810e86d7e074aeec91ae49879c6a9c5b095e1aa",
+       "confirm_token": "Qye5XoanxFGEU6s5rPosOYAxdz434Kw5dAc6Kq2MdbU",
+       "confirm_expires_at": "2026-11-11T10:51:19.279261+00:00"
+      },
+      "status": "succeeded",
+      "idempotency_key": "po.draft:run_2e8d8bb2df2b42ff91ed304c4c4e8aa9:po_draft",
+      "latency_ms": 0,
+      "error_json": {},
+      "created_at": "2026-11-10 10:51:19.279335+00:00",
+      "started_at": "2026-11-10 10:51:19.279335+00:00",
+      "ended_at": "2026-11-10 10:51:19.279335+00:00"
+     }
+    ],
+    "checkpoints": [
+     {
+      "id": "ckpt_bcd06e23164d4791afda69e6d212cf36",
+      "run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+      "checkpoint_index": 1,
+      "state_json": {
+       "last": "user",
+       "context": [],
+       "orchestrator": {
+        "phase": "tool_done",
+        "tasks": [],
+        "result": {
+         "id": "po_draft",
+         "ok": true,
+         "kind": "agent",
+         "name": "po.draft",
+         "error": null,
+         "payload": {
+          "gaps": [],
+          "draft": {
+           "lines": [
+            {
+             "sku": "DAI-3033491147067",
+             "name": "Activia bifidus nature 125g x 4",
+             "cases": 3,
+             "ambiguous": false,
+             "below_moq": false,
+             "moq_cases": 3,
+             "reference": "Activia bifidus nature 125g x 4",
+             "candidates": [],
+             "case_price": 37.95,
+             "line_total": 113.85,
+             "unresolved": false,
+             "missing_price": false,
+             "partial_layer": true,
+             "cases_per_layer": 10,
+             "cases_to_full_layer": 7
+            }
+           ],
+           "notes": null,
+           "total": 110.43,
+           "currency": "USD",
+           "discount": {
+            "kind": "percent",
+            "note": "3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2",
+            "value": 3.0,
+            "source": "contract"
+           },
+           "eta_date": "2027-01-09",
+           "subtotal": 113.85,
+           "incoterms": "CIF",
+           "payment_terms": "50_50",
+           "discount_amount": 3.42,
+           "shipping_method": "sea"
+          },
+          "slots": {
+           "notes": null,
+           "discount": {
+            "kind": "percent",
+            "note": "3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2",
+            "value": 3.0,
+            "source": "contract"
+           },
+           "eta_date": null,
+           "incoterms": null,
+           "line_items": [
+            {
+             "sku": "DAI-3033491147067",
+             "cases": 3,
+             "reference": "Activia bifidus nature 125g x 4"
+            }
+           ],
+           "payment_terms": null,
+           "shipping_method": null
+          },
+          "stage": "confirm",
+          "summary": "3 箱 Activia bifidus nature 125g x 4。付款 50_50（下单时预付 50%，货到验收后再付 50% 尾款），CIF，sea，预计到货 2027-01-09，合同折扣 3%（3% off — 1st container of the contract period from 2026-10-01 §第十条 / 10 / 10.2）。 小计 USD 113.85，折扣 USD 3.42，合计 USD 110.43。",
+          "clear_po": false,
+          "advisories": [],
+          "gaps_detail": [],
+          "confirm_hash": "789b1122a7a7aee7df3aeb73e810e86d7e074aeec91ae49879c6a9c5b095e1aa",
+          "confirm_token": "Qye5XoanxFGEU6s5rPosOYAxdz434Kw5dAc6Kq2MdbU",
+          "confirm_expires_at": "2026-11-11T10:51:19.279261+00:00"
+         }
+        },
+        "results": {},
+        "wave_id": null,
+        "finished": [],
+        "wave_ids": []
+       },
+       "completed_tool_calls": []
+      },
+      "created_at": "2026-11-10 10:51:19.279335+00:00"
+     }
+    ],
+    "usage_records": [
+     {
+      "id": "usage_bf7e88efc21b4b8eb9c8c4d25daaf70c",
+      "run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+      "org_id": "dist-liancai",
+      "user_id": "user-liancai-chen",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "prompt_tokens": 1753,
+      "completion_tokens": 104,
+      "cache_hit_tokens": 1536,
+      "cache_miss_tokens": 217,
+      "cache_creation_tokens": null,
+      "total_tokens": 1857,
+      "estimated_cost_cents": 0,
+      "usage_source": "actual",
+      "created_at": "2026-11-10 10:51:19.266319+00:00"
+     }
+    ],
+    "audit_logs": [
+     {
+      "id": "aud_7ed2aa8fb29c4cba8c50d5b7382df5eb",
+      "user_id": "celery:12",
+      "org_id": "dist-liancai",
+      "run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+      "metadata_json": {
+       "actor_id": "celery:12",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:12"
+      },
+      "created_at": "2026-11-10 10:50:49.043563+00:00"
+     },
+     {
+      "id": "aud_6c1204d5fae140e993d4e4091b3ec06d",
+      "user_id": "celery:12",
+      "org_id": "dist-liancai",
+      "run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+      "metadata_json": {
+       "status": "succeeded",
+       "actor_id": "celery:12",
+       "to_status": "succeeded",
+       "actor_type": "worker",
+       "from_status": "running"
+      },
+      "created_at": "2026-11-10 10:51:19.295331+00:00"
+     }
+    ],
+    "outbox": [
+     {
+      "id": "obx_6881b050c9a74ef0ac42a9a39ac4cf1d",
+      "job_type": "execute_run",
+      "payload_json": {
+       "run_id": "run_2e8d8bb2df2b42ff91ed304c4c4e8aa9",
+       "run_type": "po",
+       "trace_id": "fb04f98d9df4404f8509a49f008b0a33"
+      },
+      "status": "dispatched",
+      "attempts": 0,
+      "max_attempts": 10,
+      "next_attempt_at": "2026-11-10 10:50:49.027686+00:00",
+      "last_error_json": null,
+      "created_at": "2026-11-10 10:50:49.027686+00:00",
+      "dispatch_at": "2026-11-10 10:50:49.039353+00:00"
+     }
+    ],
+    "dead_letters": []
+   }
+  },
+  "run_52592e076856480e9e9813e3e453e94a": {
+   "run_type": "open",
+   "status": "running",
+   "trace": {
+    "run": {
+     "id": "run_52592e076856480e9e9813e3e453e94a",
+     "org_id": "dist-liancai",
+     "user_id": "user-liancai-chen",
+     "run_type": "open",
+     "idempotency_key": "title:cabd521da994459fbb449152df15f5d2",
+     "status": "running",
+     "input_json": {
+      "message": "帮我起草一张采购单，Activia bifidus nature 125g x 4 订 3 箱，先不要提交，按协议折扣算一下应付总额。",
+      "session_id": "cabd521da994459fbb449152df15f5d2",
+      "attachments": [],
+      "chat_run_id": "run_701c8c62667644768590906a26857630",
+      "provisional_title": "帮我起草一张采购单，Activia bifidus nature 125g x 4 订 3 箱，先不要提交，按协议折扣算一下应付总额。"
+     },
+     "output_json": null,
+     "error_json": null,
+     "created_at": "2026-11-10 10:51:23.071867+00:00",
+     "queued_at": "2026-11-10 10:51:23.071867+00:00",
+     "queue_heartbeat_at": null,
+     "started_at": "2026-11-10 10:51:23.084784+00:00",
+     "ended_at": null,
+     "cancel_requested_at": null,
+     "updated_at": "2026-11-10 10:51:23.084784+00:00",
+     "lease_owner": "celery:9",
+     "lease_expires_at": "2026-11-10 11:01:23.084779+00:00",
+     "attempts": 1,
+     "redispatch_count": 0,
+     "parent_run_id": null,
+     "owner_run_id": "run_701c8c62667644768590906a26857630",
+     "trace_id": "c13d57744ab344328da7a7c1a609eacb",
+     "max_model_calls": 2,
+     "max_tokens": 8000,
+     "max_tool_calls": null,
+     "max_duration_seconds": null
+    },
+    "steps": [
+     {
+      "id": "step_7d8facecae06445f81240e66edd31194",
+      "run_id": "run_52592e076856480e9e9813e3e453e94a",
+      "step_index": 1,
+      "step_type": "model",
+      "name": "model",
+      "status": "running",
+      "input_json": {},
+      "output_json": null,
+      "error_json": null,
+      "started_at": "2026-11-10 10:51:23.089259+00:00",
+      "ended_at": null
+     }
+    ],
+    "events": [
+     {
+      "id": "evt_c76c4be851e946c589daa3ddf1c1834b",
+      "run_id": "run_52592e076856480e9e9813e3e453e94a",
+      "sequence": 1,
+      "event_type": "run.created",
+      "payload_json": {
+       "status": "queued",
+       "display": "已开始",
+       "owner_run_id": "run_701c8c62667644768590906a26857630"
+      },
+      "created_at": "2026-11-10 10:51:23.071867+00:00"
+     },
+     {
+      "id": "evt_a6798985c7bd408a9d04a4ee1b9070bc",
+      "run_id": "run_52592e076856480e9e9813e3e453e94a",
+      "sequence": 2,
+      "event_type": "run.enqueued",
+      "payload_json": {
+       "outbox_job_id": "obx_208cc4da0c684ff4967e6760ea10f1a8"
+      },
+      "created_at": "2026-11-10 10:51:23.075771+00:00"
+     },
+     {
+      "id": "evt_47e9e18ba0bf4712ab990563340ce83b",
+      "run_id": "run_52592e076856480e9e9813e3e453e94a",
+      "sequence": 3,
+      "event_type": "run.started",
+      "payload_json": {
+       "actor_id": "celery:9",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:9"
+      },
+      "created_at": "2026-11-10 10:51:23.084784+00:00"
+     },
+     {
+      "id": "evt_6a616e6c56204c9296da98c66f9a6fbc",
+      "run_id": "run_52592e076856480e9e9813e3e453e94a",
+      "sequence": 4,
+      "event_type": "step.started",
+      "payload_json": {
+       "name": "model",
+       "step_id": "step_7d8facecae06445f81240e66edd31194",
+       "step_type": "model",
+       "step_index": 1
+      },
+      "created_at": "2026-11-10 10:51:23.089259+00:00"
+     },
+     {
+      "id": "evt_ce1d2a88de4942ceb1cc3cb506a13b9a",
+      "run_id": "run_52592e076856480e9e9813e3e453e94a",
+      "sequence": 5,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "c13d57744ab344328da7a7c1a609eacb",
+       "max_tokens": 800,
+       "route_task": "session.title",
+       "quality_gate": "response_parsed",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "selected_model": "qwen3.7-flash",
+       "candidate_index": 0,
+       "max_model_calls": 2,
+       "selected_provider": "qwen",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-10 10:51:23.096460+00:00"
+     },
+     {
+      "id": "evt_d1d14c616b734ea6b85656b7d35b25a3",
+      "run_id": "run_52592e076856480e9e9813e3e453e94a",
+      "sequence": 6,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "qwen",
+       "model": "qwen3.7-flash",
+       "display": "正在思考...",
+       "purpose": "session.title",
+       "step_id": "step_7d8facecae06445f81240e66edd31194",
+       "trace_id": "c13d57744ab344328da7a7c1a609eacb"
+      },
+      "created_at": "2026-11-10 10:51:23.110829+00:00"
+     }
+    ],
+    "model_calls": [],
+    "tool_calls": [],
+    "checkpoints": [],
+    "usage_records": [],
+    "audit_logs": [
+     {
+      "id": "aud_ef6d54318eea4a91a0bc32ed723f297a",
+      "user_id": "celery:9",
+      "org_id": "dist-liancai",
+      "run_id": "run_52592e076856480e9e9813e3e453e94a",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_52592e076856480e9e9813e3e453e94a",
+      "metadata_json": {
+       "actor_id": "celery:9",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:9"
+      },
+      "created_at": "2026-11-10 10:51:23.084784+00:00"
+     }
+    ],
+    "outbox": [
+     {
+      "id": "obx_208cc4da0c684ff4967e6760ea10f1a8",
+      "job_type": "execute_run",
+      "payload_json": {
+       "run_id": "run_52592e076856480e9e9813e3e453e94a",
+       "run_type": "open",
+       "trace_id": "c13d57744ab344328da7a7c1a609eacb"
+      },
+      "status": "dispatched",
+      "attempts": 0,
+      "max_attempts": 10,
+      "next_attempt_at": "2026-11-10 10:51:23.071867+00:00",
+      "last_error_json": null,
+      "created_at": "2026-11-10 10:51:23.071867+00:00",
+      "dispatch_at": "2026-11-10 10:51:23.075771+00:00"
+     }
+    ],
+    "dead_letters": []
+   }
+  }
+ }
+}

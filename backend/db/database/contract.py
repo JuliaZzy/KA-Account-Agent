@@ -20,17 +20,27 @@ from ...schemas import (
     ContractTerms,
     ContractTerritory,
 )
+from ...services.run_names import RunStatus
 from .. import orm
 from .support import _row_dict, utcnow
 
 
 class ContractMixin:
-    def save_contract(self, rec: ContractRecord) -> str:
+    def save_contract(self, rec: ContractRecord, *, inline_run_id: str | None = None) -> str:
         """One transaction: supersede the partnership's active contract, write the contract +
         raw extraction + normalized terms, then the derived rules and product MOQs. Returns
         the contract id."""
         c, ts = rec.contract, utcnow()
         with self.tx() as s:
+            run = self._lock_run(s, inline_run_id) if inline_run_id else None
+            if inline_run_id and (
+                run is None or run.status != RunStatus.RUNNING or run.cancel_requested_at is not None
+            ):
+                raise ValueError("Contract import run is no longer active.")
+            if run is not None:
+                partnership = s.get(orm.Partnership, c.partnership_id)
+                if partnership is None or partnership.distributor_id != run.org_id:
+                    raise ValueError("Contract import run belongs to another distributor.")
             for old in s.scalars(select(orm.Contract).where(orm.Contract.partnership_id == c.partnership_id, orm.Contract.status == "active", orm.Contract.id != c.id)):
                 old.status, old.updated_at = "superseded", ts
             self._upsert(s, orm.Contract, c.id, {**c.model_dump(exclude={"created_at"}), "status": "active"})
@@ -73,6 +83,8 @@ class ContractMixin:
                 for p in s.scalars(select(orm.Product).where(orm.Product.brand_id == c.brand_id)):
                     if p.sku in rec.product_moq_units:
                         p.moq_units, p.updated_at = rec.product_moq_units[p.sku], ts
+            if run is not None:
+                self._transition(s, run, RunStatus.SUCCEEDED, {}, utcnow(), actor_type="api", actor_id=run.user_id)
         return c.id
 
     def contract(self, id: str) -> Contract | None:

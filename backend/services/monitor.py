@@ -165,6 +165,7 @@ def monitor(db: Database, org_id: str) -> dict[str, Any]:
             "cost_cents": facts["cost_cents"],
             "daily_cost_cents": facts["daily_cost_cents"],
             "daily_tokens": facts["daily_tokens"],
+            "daily_unknown_usage_calls": facts["daily_unknown_usage_calls"],
         },
     }
 
@@ -283,6 +284,12 @@ def _alerts(facts: dict[str, Any], daily_tokens: int, daily_cost: int) -> list[d
             "action": "看 max_model_calls，必要时拒绝新调用。",
             "runbook": None,
         })
+    if facts.get("daily_unknown_usage_calls", 0):
+        found.append({
+            "signal": "模型用量不完整",
+            "action": "核对厂商账单；已记录的费用和预算消耗可能偏低。",
+            "runbook": None,
+        })
     return found
 
 
@@ -343,9 +350,11 @@ def _budget_target(tokens: int, cost: int) -> str:
 
 
 def _budget_value(facts: dict[str, Any], tokens: int, cost: int) -> str:
+    unknown = facts.get("daily_unknown_usage_calls", 0)
+    suffix = f"；{unknown} 次用量未知（实际费用可能更高）" if unknown else ""
     if tokens <= 0 and cost <= 0:
-        return f"今日 {facts['daily_tokens']} token，{facts['daily_cost_cents']} 分"
-    return f"今日 {facts['daily_tokens']} token，{facts['daily_cost_cents']} 分"
+        return f"今日 {facts['daily_tokens']} token，{facts['daily_cost_cents']} 分{suffix}"
+    return f"今日 {facts['daily_tokens']} token，{facts['daily_cost_cents']} 分{suffix}"
 
 
 def _budget_ok(facts: dict[str, Any], tokens: int, cost: int) -> bool:

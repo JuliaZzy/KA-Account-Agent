@@ -70,7 +70,9 @@ Celery 消息已经标成 `dispatched` 但 worker 没有把 Run 从 `queued` 领
 
 **补投之前先看队列深度。** 聊天 Run 看 `ka_account`，标题（OPEN）Run 看 `ka_account.title`，各队列分别判断：Redis 里该队列还有消息，就说明 Run 只是在排队而不是丢了，不补投也不判耗尽；读不到 Redis 也跳过。否则一个积压的队列会被补出更多重复消息而更深（A3 r2：标题队列积压 p50 244 秒，补投事件 3083 次，24 个健康 Run 被误判 `STUCK_REDISPATCH_EXHAUSTED`）。真丢消息的 Run 由「超龄关闭」兜底。
 
-一条 Run 最多补投 3 次。仍没有 worker 领取时，sweeper 将它转为 `failed`，错误码为 `STUCK_REDISPATCH_EXHAUSTED`，同时写入死信，避免无限重复投递。排队超过 `KA_ACCOUNT_QUEUED_MAX_AGE_SECONDS`（默认 1 小时）的 Run 保持 queued，停止自动补投并等待人工核对。补投耗尽时状态机经过 `running` 再进入 `failed`。清理任务每轮最多删除 1000 条超过保留期、且对应 Run 已终态的 `dispatched` outbox；默认保留 7 天。仍 queued 的 outbox 不会被清掉，以免丢失补投依据。
+**SoftBusy 重试要打心跳。** Celery 的 `self.retry` 把任务当作带 ETA 的消息放在 worker 内存里，此时 Redis 队列可以是空的，而 Run 其实在合法等待（会话里另一个 Run 还在跑、运行闸门没有空位、队列被关闭、标题队列高峰重试）。如果不留痕，sweeper 会把它当成丢了去补投，等久了还会按超龄关掉。所以每次重试之前 worker 把 `agent_runs.queue_heartbeat_at` 写成当前时间；补投和超龄都以「`queued_at` 与心跳较晚者」判断。心跳单独存一列，不动 `queued_at`：监控里「排队多久了」仍是真实的入队时间，过载时看得出来。写心跳失败不会阻止重试。
+
+一条 Run 最多补投 3 次。仍没有 worker 领取时，sweeper 将它转为 `failed`，错误码为 `STUCK_REDISPATCH_EXHAUSTED`，同时写入死信，避免无限重复投递。排队超过 `KA_ACCOUNT_QUEUED_MAX_AGE_SECONDS`（默认 2 小时）仍没有任何动静的 Run 以 `STUCK_QUEUE_EXPIRED` 失败并进入死信，不补投、不重放：发消息的人早已不在等，重跑只会为没人读的回复付模型费。这一步不依赖 Redis，Redis 读不到时孤儿 Run 也照样被关闭。「有动静」取 `queued_at`（入队或补投时间）与 `queue_heartbeat_at`（worker 对 SoftBusy 重试的心跳）中较晚的一个。补投耗尽时状态机经过 `running` 再进入 `failed`。清理任务每轮最多删除 1000 条超过保留期、且对应 Run 已终态的 `dispatched` outbox；默认保留 7 天。仍 queued 的 outbox 不会被清掉，以免丢失补投依据。
 
 ## 重试顺序是不是 FIFO？
 

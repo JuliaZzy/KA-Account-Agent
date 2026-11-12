@@ -11,6 +11,7 @@ from ..llm import calls as model_calls
 from ..memory import attach, prompt_context, prompt_turns, standing_block, summary_block
 from ..repositories.run_repository import latest_checkpoint, note_running_reply
 from ..services.run_names import StepStatus, StepType, step_name
+from ..text2sql.text2sql import prompt_view
 from .gather import checkpoint_state, collect_wave, dispatch_wave, load_state, recovered_plan
 from .plan import InvalidPlan, graph_error, make_plan, parse_tasks
 from .prompt import ANSWER
@@ -185,4 +186,16 @@ def _materials(results: list[dict[str, Any]]) -> str:
     """Every child result reaches ANSWER, including failed and skipped ones."""
     if not results:
         return ""
-    return json.dumps(results, ensure_ascii=False, default=str)
+    rendered: list[dict[str, Any]] = []
+    for result in results:
+        item = dict(result)
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else None
+        if payload is not None and isinstance(payload.get("rows"), list):
+            # Same view as every other prose model; the full rows stay behind `rows_handle`.
+            payload = {**payload, **prompt_view(
+                payload["rows"], columns=payload.get("columns"),
+                row_count=payload.get("row_count"), truncated=bool(payload.get("truncated")),
+            )}
+            item["payload"] = payload
+        rendered.append(item)
+    return json.dumps(rendered, ensure_ascii=False, default=str)

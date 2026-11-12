@@ -1,0 +1,3940 @@
+{
+ "history": [
+  {
+   "role": "user",
+   "content": "2026年9月采购金额比8月变化了多少？百分比是多少？"
+  },
+  {
+   "role": "assistant",
+   "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+   "content": "查询失败，缺少必要字段（month, purchase_amount），无法提供数据。"
+  }
+ ],
+ "trace": {
+  "run": {
+   "id": "run_76fccc6449064b0d893831e24c36bb44",
+   "org_id": "dist-liancai",
+   "user_id": "user-liancai-chen",
+   "run_type": "chat",
+   "idempotency_key": "chat:02ae5bf8392e42d78e8ec9ad38829924:ae3b1b83df8f4112b233f538c411986e",
+   "status": "succeeded",
+   "input_json": {
+    "images": [],
+    "message": "2026年9月采购金额比8月变化了多少？百分比是多少？",
+    "documents": [],
+    "session_id": "02ae5bf8392e42d78e8ec9ad38829924",
+    "attachments": []
+   },
+   "output_json": {
+    "text": "查询失败，缺少必要字段（month, purchase_amount），无法提供数据。"
+   },
+   "error_json": null,
+   "created_at": "2026-11-11T14:07:37.697041Z",
+   "queued_at": "2026-11-11T14:07:47.718429Z",
+   "started_at": "2026-11-11T14:07:37.702604Z",
+   "ended_at": "2026-11-11T14:07:54.490255Z",
+   "cancel_requested_at": null,
+   "updated_at": "2026-11-11T14:07:54.490255Z",
+   "lease_owner": "celery:10",
+   "lease_expires_at": "2026-11-11T14:17:47.724978Z",
+   "attempts": 2,
+   "redispatch_count": 0,
+   "parent_run_id": null,
+   "owner_run_id": null,
+   "trace_id": "4bef37edd53a48e6afa4e4b027bca9a1",
+   "max_model_calls": 8,
+   "max_tokens": 32000,
+   "max_tool_calls": null,
+   "max_duration_seconds": null
+  },
+  "steps": [
+   {
+    "id": "step_3f8287a93f054a6c95fba174406a87e5",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "step_index": 1,
+    "step_type": "model",
+    "name": "model",
+    "status": "succeeded",
+    "input_json": {
+     "purpose": "orchestrator.plan"
+    },
+    "output_json": {
+     "tasks": [
+      {
+       "id": "data_1",
+       "kind": "agent",
+       "name": "data",
+       "input": {
+        "columns": [
+         "month",
+         "purchase_amount"
+        ],
+        "deliver": "answer",
+        "question": "2026年9月采购金额比8月变化了多少？百分比是多少？"
+       },
+       "depends_on": []
+      }
+     ]
+    },
+    "error_json": null,
+    "started_at": "2026-11-11T14:07:37.712095Z",
+    "ended_at": "2026-11-11T14:07:41.254959Z"
+   },
+   {
+    "id": "step_994734e9f9744386879823d6af530452",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "step_index": 2,
+    "step_type": "model",
+    "name": "model",
+    "status": "succeeded",
+    "input_json": {
+     "purpose": "orchestrator.answer"
+    },
+    "output_json": {
+     "text": "查询失败，缺少必要字段（month, purchase_amount），无法提供数据。"
+    },
+    "error_json": null,
+    "started_at": "2026-11-11T14:07:47.738551Z",
+    "ended_at": "2026-11-11T14:07:54.475829Z"
+   },
+   {
+    "id": "step_6a69e513412045279544da79faf5a16c",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "step_index": 3,
+    "step_type": "model",
+    "name": "model",
+    "status": "succeeded",
+    "input_json": {
+     "purpose": "orchestrator.history"
+    },
+    "output_json": {
+     "saved": true
+    },
+    "error_json": null,
+    "started_at": "2026-11-11T14:07:54.483038Z",
+    "ended_at": "2026-11-11T14:07:54.487002Z"
+   }
+  ],
+  "events": [
+   {
+    "id": "evt_8af63671505745e2a293fa7231598771",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 1,
+    "event_type": "run.created",
+    "payload_json": {
+     "status": "queued",
+     "display": "已开始"
+    },
+    "created_at": "2026-11-11T14:07:37.697041Z"
+   },
+   {
+    "id": "evt_bf9366aac5bf46a68b479bd7f68bdb34",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 2,
+    "event_type": "run.enqueued",
+    "payload_json": {
+     "outbox_job_id": "obx_9c3a4069ba0d455a9b30d7e7f5c30528"
+    },
+    "created_at": "2026-11-11T14:07:37.700287Z"
+   },
+   {
+    "id": "evt_739bddcb91724427a6164e38e50f8437",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 3,
+    "event_type": "run.started",
+    "payload_json": {
+     "actor_id": "celery:10",
+     "to_status": "running",
+     "actor_type": "worker",
+     "from_status": "queued",
+     "lease_owner": "celery:10"
+    },
+    "created_at": "2026-11-11T14:07:37.702604Z"
+   },
+   {
+    "id": "evt_105b6005e610457d960f10c329c843af",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 4,
+    "event_type": "step.started",
+    "payload_json": {
+     "name": "model",
+     "step_id": "step_3f8287a93f054a6c95fba174406a87e5",
+     "step_type": "model",
+     "step_index": 1
+    },
+    "created_at": "2026-11-11T14:07:37.712095Z"
+   },
+   {
+    "id": "evt_74754eb978c845f09abab1ef1a384508",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 5,
+    "event_type": "model.route_selected",
+    "payload_json": {
+     "reason": "policy_primary",
+     "decision": "primary",
+     "trace_id": "4bef37edd53a48e6afa4e4b027bca9a1",
+     "max_tokens": 1200,
+     "route_task": "orchestrator.plan",
+     "quality_gate": "valid_task_plan",
+     "fallback_from": null,
+     "reason_detail": null,
+     "policy_version": "model-routing-v1",
+     "selected_model": "qwen3.7-flash",
+     "candidate_index": 0,
+     "max_model_calls": 2,
+     "selected_provider": "qwen",
+     "routing_policy_version": "model-routing-v1"
+    },
+    "created_at": "2026-11-11T14:07:37.717606Z"
+   },
+   {
+    "id": "evt_46b8e3ad12e34aa7a713fc24de93e6b5",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 6,
+    "event_type": "model.started",
+    "payload_json": {
+     "brand": "qwen",
+     "model": "qwen3.7-flash",
+     "display": "正在思考...",
+     "purpose": "orchestrator.plan",
+     "step_id": "step_3f8287a93f054a6c95fba174406a87e5",
+     "trace_id": "4bef37edd53a48e6afa4e4b027bca9a1"
+    },
+    "created_at": "2026-11-11T14:07:37.730760Z"
+   },
+   {
+    "id": "evt_d90e7b95d152455f8ce0bcdcb882cefc",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 7,
+    "event_type": "model.completed",
+    "payload_json": {
+     "brand": "qwen",
+     "model": "qwen3.7-flash",
+     "status": "succeeded",
+     "purpose": "orchestrator.plan",
+     "step_id": "step_3f8287a93f054a6c95fba174406a87e5",
+     "trace_id": "4bef37edd53a48e6afa4e4b027bca9a1",
+     "usage_source": "actual",
+     "model_call_id": "mcall_ac5d564d434c4391baed96091589253c",
+     "prompt_tokens": 2588,
+     "cache_hit_tokens": 2560,
+     "cache_miss_tokens": 28,
+     "completion_tokens": 106,
+     "cache_creation_tokens": null
+    },
+    "created_at": "2026-11-11T14:07:41.250956Z"
+   },
+   {
+    "id": "evt_1774e07968514daf93ba349f90d69e07",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 8,
+    "event_type": "step.completed",
+    "payload_json": {
+     "status": "succeeded",
+     "step_id": "step_3f8287a93f054a6c95fba174406a87e5",
+     "step_index": 1
+    },
+    "created_at": "2026-11-11T14:07:41.254959Z"
+   },
+   {
+    "id": "evt_7770b4e2e08e49188c28b0d597e3cfca",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 9,
+    "event_type": "tool.started",
+    "payload_json": {
+     "display": "data.query",
+     "task_id": "data_1",
+     "tool_name": "data.query"
+    },
+    "created_at": "2026-11-11T14:07:41.261087Z"
+   },
+   {
+    "id": "evt_04259ce7caec45f18cf6f36b961a3f7c",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 10,
+    "event_type": "run.waiting_for_tasks",
+    "payload_json": {
+     "display": "正在执行任务",
+     "wave_id": "175cfc655fcf4e9eb5f798762dae1685",
+     "actor_id": "celery:10",
+     "task_ids": [
+      "data_1"
+     ],
+     "to_status": "waiting_for_tasks",
+     "actor_type": "worker",
+     "from_status": "running"
+    },
+    "created_at": "2026-11-11T14:07:41.261087Z"
+   },
+   {
+    "id": "evt_4eb7ea7ee2fb432a80784ae303f3112f",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 11,
+    "event_type": "step.started",
+    "payload_json": {
+     "name": "data.query",
+     "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+     "step_type": "tool",
+     "step_index": 1,
+     "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+     "projected_from": "run_15ff6e3b5eed45138354baaefa214a33"
+    },
+    "created_at": "2026-11-11T14:07:41.290674Z"
+   },
+   {
+    "id": "evt_c5b34b54bea0422b830217392e0e948d",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 12,
+    "event_type": "model.route_selected",
+    "payload_json": {
+     "reason": "policy_primary",
+     "decision": "primary",
+     "trace_id": "c917198526164645b02679766cd0cdf5",
+     "max_tokens": null,
+     "route_task": "data.pick",
+     "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+     "quality_gate": "response_parsed",
+     "fallback_from": null,
+     "reason_detail": null,
+     "policy_version": "model-routing-v1",
+     "projected_from": "run_15ff6e3b5eed45138354baaefa214a33",
+     "selected_model": "deepseek-flash",
+     "candidate_index": 0,
+     "max_model_calls": null,
+     "selected_provider": "deepseek",
+     "routing_policy_version": "model-routing-v1"
+    },
+    "created_at": "2026-11-11T14:07:41.312988Z"
+   },
+   {
+    "id": "evt_da27753c90a84b32ae90f79d5634394d",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 13,
+    "event_type": "model.started",
+    "payload_json": {
+     "brand": "deepseek",
+     "model": "deepseek-flash",
+     "display": "正在思考...",
+     "purpose": "data.pick",
+     "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+     "trace_id": "c917198526164645b02679766cd0cdf5",
+     "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+     "projected_from": "run_15ff6e3b5eed45138354baaefa214a33"
+    },
+    "created_at": "2026-11-11T14:07:41.316138Z"
+   },
+   {
+    "id": "evt_fcb12b6893704a449c633f55ad3dc8ee",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 14,
+    "event_type": "model.completed",
+    "payload_json": {
+     "brand": "deepseek",
+     "model": "deepseek-flash",
+     "status": "succeeded",
+     "purpose": "data.pick",
+     "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+     "trace_id": "c917198526164645b02679766cd0cdf5",
+     "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+     "usage_source": "actual",
+     "model_call_id": "mcall_f0a31188530b463ea0011e854b47d41a",
+     "prompt_tokens": 983,
+     "projected_from": "run_15ff6e3b5eed45138354baaefa214a33",
+     "cache_hit_tokens": 768,
+     "cache_miss_tokens": 215,
+     "completion_tokens": 11,
+     "cache_creation_tokens": null
+    },
+    "created_at": "2026-11-11T14:07:42.194972Z"
+   },
+   {
+    "id": "evt_0b5fc5e794e84480b5b4c75aab1c8472",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 15,
+    "event_type": "model.route_selected",
+    "payload_json": {
+     "reason": "policy_primary",
+     "decision": "primary",
+     "trace_id": "c917198526164645b02679766cd0cdf5",
+     "max_tokens": null,
+     "route_task": "data.sql",
+     "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+     "quality_gate": "response_parsed",
+     "fallback_from": null,
+     "reason_detail": null,
+     "policy_version": "model-routing-v1",
+     "projected_from": "run_15ff6e3b5eed45138354baaefa214a33",
+     "selected_model": "deepseek-flash",
+     "candidate_index": 0,
+     "max_model_calls": null,
+     "selected_provider": "deepseek",
+     "routing_policy_version": "model-routing-v1"
+    },
+    "created_at": "2026-11-11T14:07:42.226683Z"
+   },
+   {
+    "id": "evt_864a986ddd644dd98adeb93cf11e52a5",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 16,
+    "event_type": "model.started",
+    "payload_json": {
+     "brand": "deepseek",
+     "model": "deepseek-flash",
+     "display": "正在思考...",
+     "purpose": "data.sql",
+     "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+     "trace_id": "c917198526164645b02679766cd0cdf5",
+     "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+     "projected_from": "run_15ff6e3b5eed45138354baaefa214a33"
+    },
+    "created_at": "2026-11-11T14:07:42.230176Z"
+   },
+   {
+    "id": "evt_74b2bfaf9b9e44b58968313751942a59",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 17,
+    "event_type": "model.completed",
+    "payload_json": {
+     "brand": "deepseek",
+     "model": "deepseek-flash",
+     "status": "succeeded",
+     "purpose": "data.sql",
+     "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+     "trace_id": "c917198526164645b02679766cd0cdf5",
+     "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+     "usage_source": "actual",
+     "model_call_id": "mcall_a33dd167a5d74ae7b8374f569c9728d3",
+     "prompt_tokens": 1193,
+     "projected_from": "run_15ff6e3b5eed45138354baaefa214a33",
+     "cache_hit_tokens": 1024,
+     "cache_miss_tokens": 169,
+     "completion_tokens": 148,
+     "cache_creation_tokens": null
+    },
+    "created_at": "2026-11-11T14:07:43.537372Z"
+   },
+   {
+    "id": "evt_4a967209fbd546b5a74aafcfdc395fc1",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 18,
+    "event_type": "model.route_selected",
+    "payload_json": {
+     "reason": "policy_primary",
+     "decision": "primary",
+     "trace_id": "c917198526164645b02679766cd0cdf5",
+     "max_tokens": null,
+     "route_task": "data.sql.revise",
+     "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+     "quality_gate": "response_parsed",
+     "fallback_from": null,
+     "reason_detail": null,
+     "policy_version": "model-routing-v1",
+     "projected_from": "run_15ff6e3b5eed45138354baaefa214a33",
+     "selected_model": "deepseek-flash",
+     "candidate_index": 0,
+     "max_model_calls": null,
+     "selected_provider": "deepseek",
+     "routing_policy_version": "model-routing-v1"
+    },
+    "created_at": "2026-11-11T14:07:43.582878Z"
+   },
+   {
+    "id": "evt_32c6d56fcbb445cd9a1c751aeda4dc95",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 19,
+    "event_type": "model.started",
+    "payload_json": {
+     "brand": "deepseek",
+     "model": "deepseek-flash",
+     "display": "正在思考...",
+     "purpose": "data.sql.revise",
+     "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+     "trace_id": "c917198526164645b02679766cd0cdf5",
+     "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+     "projected_from": "run_15ff6e3b5eed45138354baaefa214a33"
+    },
+    "created_at": "2026-11-11T14:07:43.586496Z"
+   },
+   {
+    "id": "evt_156c79a429d347cb9df054dd7d9add26",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 20,
+    "event_type": "model.completed",
+    "payload_json": {
+     "brand": "deepseek",
+     "model": "deepseek-flash",
+     "status": "succeeded",
+     "purpose": "data.sql.revise",
+     "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+     "trace_id": "c917198526164645b02679766cd0cdf5",
+     "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+     "usage_source": "actual",
+     "model_call_id": "mcall_20b0ec54c1a34831b46898d8b3cb9e81",
+     "prompt_tokens": 1369,
+     "projected_from": "run_15ff6e3b5eed45138354baaefa214a33",
+     "cache_hit_tokens": 1152,
+     "cache_miss_tokens": 217,
+     "completion_tokens": 155,
+     "cache_creation_tokens": null
+    },
+    "created_at": "2026-11-11T14:07:44.927291Z"
+   },
+   {
+    "id": "evt_b80dce0e893d42aa974802322a40a654",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 21,
+    "event_type": "model.route_selected",
+    "payload_json": {
+     "reason": "policy_primary",
+     "decision": "primary",
+     "trace_id": "c917198526164645b02679766cd0cdf5",
+     "max_tokens": null,
+     "route_task": "data.sql.revise",
+     "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+     "quality_gate": "response_parsed",
+     "fallback_from": null,
+     "reason_detail": null,
+     "policy_version": "model-routing-v1",
+     "projected_from": "run_15ff6e3b5eed45138354baaefa214a33",
+     "selected_model": "deepseek-flash",
+     "candidate_index": 0,
+     "max_model_calls": null,
+     "selected_provider": "deepseek",
+     "routing_policy_version": "model-routing-v1"
+    },
+    "created_at": "2026-11-11T14:07:44.970522Z"
+   },
+   {
+    "id": "evt_abef82a6d8b94263b466950abf25c2b0",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 22,
+    "event_type": "model.started",
+    "payload_json": {
+     "brand": "deepseek",
+     "model": "deepseek-flash",
+     "display": "正在思考...",
+     "purpose": "data.sql.revise",
+     "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+     "trace_id": "c917198526164645b02679766cd0cdf5",
+     "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+     "projected_from": "run_15ff6e3b5eed45138354baaefa214a33"
+    },
+    "created_at": "2026-11-11T14:07:44.974387Z"
+   },
+   {
+    "id": "evt_51deea92c7d0486dbebed1bbd60f17cb",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 23,
+    "event_type": "model.completed",
+    "payload_json": {
+     "brand": "deepseek",
+     "model": "deepseek-flash",
+     "status": "succeeded",
+     "purpose": "data.sql.revise",
+     "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+     "trace_id": "c917198526164645b02679766cd0cdf5",
+     "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+     "usage_source": "actual",
+     "model_call_id": "mcall_48277458ef3e4a5290b764eebefd7bdf",
+     "prompt_tokens": 1376,
+     "projected_from": "run_15ff6e3b5eed45138354baaefa214a33",
+     "cache_hit_tokens": 1152,
+     "cache_miss_tokens": 224,
+     "completion_tokens": 221,
+     "cache_creation_tokens": null
+    },
+    "created_at": "2026-11-11T14:07:46.679956Z"
+   },
+   {
+    "id": "evt_814955bea757474797aa3faa28770cbc",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 24,
+    "event_type": "model.route_selected",
+    "payload_json": {
+     "reason": "policy_primary",
+     "decision": "primary",
+     "trace_id": "c917198526164645b02679766cd0cdf5",
+     "max_tokens": null,
+     "route_task": "data.score",
+     "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+     "quality_gate": "response_parsed",
+     "fallback_from": null,
+     "reason_detail": null,
+     "policy_version": "model-routing-v1",
+     "projected_from": "run_15ff6e3b5eed45138354baaefa214a33",
+     "selected_model": "deepseek-flash",
+     "candidate_index": 0,
+     "max_model_calls": null,
+     "selected_provider": "deepseek",
+     "routing_policy_version": "model-routing-v1"
+    },
+    "created_at": "2026-11-11T14:07:46.739503Z"
+   },
+   {
+    "id": "evt_85bcc5674c0e46a0afa5513525ea960b",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 25,
+    "event_type": "model.started",
+    "payload_json": {
+     "brand": "deepseek",
+     "model": "deepseek-flash",
+     "display": "正在思考...",
+     "purpose": "data.score",
+     "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+     "trace_id": "c917198526164645b02679766cd0cdf5",
+     "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+     "projected_from": "run_15ff6e3b5eed45138354baaefa214a33"
+    },
+    "created_at": "2026-11-11T14:07:46.743269Z"
+   },
+   {
+    "id": "evt_caefcda32f184f4da0b1c939327291ba",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 26,
+    "event_type": "model.completed",
+    "payload_json": {
+     "brand": "deepseek",
+     "model": "deepseek-flash",
+     "status": "succeeded",
+     "purpose": "data.score",
+     "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+     "trace_id": "c917198526164645b02679766cd0cdf5",
+     "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+     "usage_source": "actual",
+     "model_call_id": "mcall_3d3534d60c37470d8129f9bf1a88dc90",
+     "prompt_tokens": 616,
+     "projected_from": "run_15ff6e3b5eed45138354baaefa214a33",
+     "cache_hit_tokens": 0,
+     "cache_miss_tokens": 616,
+     "completion_tokens": 14,
+     "cache_creation_tokens": null
+    },
+    "created_at": "2026-11-11T14:07:47.700523Z"
+   },
+   {
+    "id": "evt_92271b8366fa425685ea134108838206",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 27,
+    "event_type": "step.failed",
+    "payload_json": {
+     "status": "failed",
+     "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+     "step_index": 1,
+     "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+     "projected_from": "run_15ff6e3b5eed45138354baaefa214a33"
+    },
+    "created_at": "2026-11-11T14:07:47.707757Z"
+   },
+   {
+    "id": "evt_31ea7738168f44afad60291b42e065d2",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 28,
+    "event_type": "tool.failed",
+    "payload_json": {
+     "ok": false,
+     "task_id": "data_1",
+     "tool_name": "data.query"
+    },
+    "created_at": "2026-11-11T14:07:47.715176Z"
+   },
+   {
+    "id": "evt_71c617c818d84f71a335514fcc6cec2e",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 29,
+    "event_type": "run.resumed",
+    "payload_json": {
+     "wave_id": "175cfc655fcf4e9eb5f798762dae1685",
+     "actor_id": "user-liancai-chen",
+     "to_status": "queued",
+     "actor_type": "worker",
+     "from_status": "waiting_for_tasks"
+    },
+    "created_at": "2026-11-11T14:07:47.718429Z"
+   },
+   {
+    "id": "evt_6533070fa06e49b2b3761e73bd855f1e",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 30,
+    "event_type": "run.enqueued",
+    "payload_json": {
+     "outbox_job_id": "obx_6ab94bb5949a45019d110ff62bc921f8"
+    },
+    "created_at": "2026-11-11T14:07:47.722425Z"
+   },
+   {
+    "id": "evt_7dd392783d52426db5b37593f0b42c41",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 31,
+    "event_type": "run.started",
+    "payload_json": {
+     "actor_id": "celery:10",
+     "to_status": "running",
+     "actor_type": "worker",
+     "from_status": "queued",
+     "lease_owner": "celery:10"
+    },
+    "created_at": "2026-11-11T14:07:47.724981Z"
+   },
+   {
+    "id": "evt_4bd8d93cda184d32a2c6f13db88c6c5f",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 32,
+    "event_type": "step.started",
+    "payload_json": {
+     "name": "model",
+     "step_id": "step_994734e9f9744386879823d6af530452",
+     "step_type": "model",
+     "step_index": 2
+    },
+    "created_at": "2026-11-11T14:07:47.738551Z"
+   },
+   {
+    "id": "evt_966f3e3a2001433db5572aca89a52fce",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 33,
+    "event_type": "model.route_selected",
+    "payload_json": {
+     "reason": "policy_primary",
+     "decision": "primary",
+     "trace_id": "4bef37edd53a48e6afa4e4b027bca9a1",
+     "max_tokens": 1600,
+     "route_task": "orchestrator.answer",
+     "quality_gate": "non_empty_answer",
+     "fallback_from": null,
+     "reason_detail": null,
+     "policy_version": "model-routing-v1",
+     "selected_model": "qwen3.7-flash",
+     "candidate_index": 0,
+     "max_model_calls": 2,
+     "selected_provider": "qwen",
+     "routing_policy_version": "model-routing-v1"
+    },
+    "created_at": "2026-11-11T14:07:47.744909Z"
+   },
+   {
+    "id": "evt_1dd169351671415092a3cc0993da573f",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 34,
+    "event_type": "model.started",
+    "payload_json": {
+     "brand": "qwen",
+     "model": "qwen3.7-flash",
+     "display": "正在思考...",
+     "purpose": "orchestrator.answer",
+     "step_id": "step_994734e9f9744386879823d6af530452",
+     "trace_id": "4bef37edd53a48e6afa4e4b027bca9a1"
+    },
+    "created_at": "2026-11-11T14:07:47.759301Z"
+   },
+   {
+    "id": "evt_5de28abb369049d6bee3b2490c45e3a0",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 35,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "查询",
+     "generation_id": "d0267a096e4b47e3b90e5f7e6121c44a"
+    },
+    "created_at": "2026-11-11T14:07:53.192924Z"
+   },
+   {
+    "id": "evt_fb90c8715f104921b310c2869e70d9a7",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 36,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "查询失败",
+     "generation_id": "d0267a096e4b47e3b90e5f7e6121c44a"
+    },
+    "created_at": "2026-11-11T14:07:53.230640Z"
+   },
+   {
+    "id": "evt_8dd4933f02c2488c8fa53f0826baaead",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 37,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "查询失败，缺少",
+     "generation_id": "d0267a096e4b47e3b90e5f7e6121c44a"
+    },
+    "created_at": "2026-11-11T14:07:53.235500Z"
+   },
+   {
+    "id": "evt_7e0457dde472487aa2d62258bd8122f2",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 38,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "查询失败，缺少必要",
+     "generation_id": "d0267a096e4b47e3b90e5f7e6121c44a"
+    },
+    "created_at": "2026-11-11T14:07:53.371961Z"
+   },
+   {
+    "id": "evt_41a68f59f1b94c9bb6a47e0c03b49bbe",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 39,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "查询失败，缺少必要字段（month,",
+     "generation_id": "d0267a096e4b47e3b90e5f7e6121c44a"
+    },
+    "created_at": "2026-11-11T14:07:53.378308Z"
+   },
+   {
+    "id": "evt_161c02e1c36f41cab25a825c442fa7a9",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 40,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "查询失败，缺少必要字段（month, purchase_amount），无法",
+     "generation_id": "d0267a096e4b47e3b90e5f7e6121c44a"
+    },
+    "created_at": "2026-11-11T14:07:54.453402Z"
+   },
+   {
+    "id": "evt_378309adcc4e4f4da36d9e5e7cb454ea",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 41,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "查询失败，缺少必要字段（month, purchase_amount），无法提供",
+     "generation_id": "d0267a096e4b47e3b90e5f7e6121c44a"
+    },
+    "created_at": "2026-11-11T14:07:54.460398Z"
+   },
+   {
+    "id": "evt_21afd59139fd41eca876fd756cd3cbc2",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 42,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "查询失败，缺少必要字段（month, purchase_amount），无法提供数据。",
+     "generation_id": "d0267a096e4b47e3b90e5f7e6121c44a"
+    },
+    "created_at": "2026-11-11T14:07:54.464120Z"
+   },
+   {
+    "id": "evt_6e4749f9d9e6404e8379f5653ce21531",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 43,
+    "event_type": "model.completed",
+    "payload_json": {
+     "brand": "qwen",
+     "model": "qwen3.7-flash",
+     "status": "succeeded",
+     "purpose": "orchestrator.answer",
+     "step_id": "step_994734e9f9744386879823d6af530452",
+     "trace_id": "4bef37edd53a48e6afa4e4b027bca9a1",
+     "usage_source": "actual",
+     "model_call_id": "mcall_6458f1d6a27a43758c57b52c0305990f",
+     "prompt_tokens": 996,
+     "cache_hit_tokens": 0,
+     "cache_miss_tokens": 996,
+     "completion_tokens": 16,
+     "cache_creation_tokens": null
+    },
+    "created_at": "2026-11-11T14:07:54.472027Z"
+   },
+   {
+    "id": "evt_d96fb434ebd541fcaf33d3b1aebed522",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 44,
+    "event_type": "step.completed",
+    "payload_json": {
+     "status": "succeeded",
+     "step_id": "step_994734e9f9744386879823d6af530452",
+     "step_index": 2
+    },
+    "created_at": "2026-11-11T14:07:54.475829Z"
+   },
+   {
+    "id": "evt_89aed13dd42b4942ae3ca4b0199c99a0",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 45,
+    "event_type": "step.started",
+    "payload_json": {
+     "name": "model",
+     "step_id": "step_6a69e513412045279544da79faf5a16c",
+     "step_type": "model",
+     "step_index": 3
+    },
+    "created_at": "2026-11-11T14:07:54.483038Z"
+   },
+   {
+    "id": "evt_ceb2134278794e499e65751fc5a69fcf",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 46,
+    "event_type": "step.completed",
+    "payload_json": {
+     "status": "succeeded",
+     "step_id": "step_6a69e513412045279544da79faf5a16c",
+     "step_index": 3
+    },
+    "created_at": "2026-11-11T14:07:54.487002Z"
+   },
+   {
+    "id": "evt_4a4aeacc7505443bbce33ddc0cae8cd0",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "sequence": 47,
+    "event_type": "run.completed",
+    "payload_json": {
+     "status": "succeeded",
+     "display": "回复结束",
+     "actor_id": "celery:10",
+     "to_status": "succeeded",
+     "actor_type": "worker",
+     "from_status": "running"
+    },
+    "created_at": "2026-11-11T14:07:54.490255Z"
+   }
+  ],
+  "model_calls": [
+   {
+    "id": "mcall_ac5d564d434c4391baed96091589253c",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "step_id": "step_3f8287a93f054a6c95fba174406a87e5",
+    "provider": "qwen",
+    "model": "qwen3.7-flash",
+    "request_json": {
+     "model": "qwen3.7-flash",
+     "schema": {
+      "name": "orchestrator_plan",
+      "schema": {
+       "type": "object",
+       "required": [
+        "tasks"
+       ],
+       "properties": {
+        "tasks": {
+         "type": "array",
+         "items": {
+          "type": "object",
+          "required": [
+           "id",
+           "name",
+           "input",
+           "depends_on"
+          ],
+          "properties": {
+           "id": {
+            "type": "string"
+           },
+           "name": {
+            "type": "string"
+           },
+           "input": {
+            "type": "object"
+           },
+           "depends_on": {
+            "type": "array",
+            "items": {
+             "type": "string"
+            }
+           }
+          },
+          "additionalProperties": false
+         }
+        }
+       },
+       "additionalProperties": false
+      },
+      "strict": true
+     },
+     "system": "你是品牌经销商工作台的编排器。你不跟用户聊天或查询工具，只根据现在已有的工具（包含原生 tools，agent，MCP 等）输出运行时要执行的计划。\n\n## 可用工具（与 tools= 相同的 JSON；name 用 function.name，input 按 parameters 填）\n[\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"web_search\",\n      \"description\": \"检索公开网页，查找模型还不知道的当前信息、新闻或报告。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"query\": {\n            \"type\": \"string\",\n            \"description\": \"检索关键词\"\n          }\n        },\n        \"required\": [\n          \"query\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"translate\",\n      \"description\": \"用户要求翻译时，把文字译成另一种语言。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"target_language\": {\n            \"type\": \"string\",\n            \"description\": \"要译成的语言，例如英语、德语、中文\"\n          },\n          \"text\": {\n            \"type\": \"string\",\n            \"description\": \"要翻译的原话，当这些话就在这条用户消息里时填写\"\n          },\n          \"source\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"message\",\n              \"last_assistant\",\n              \"report\"\n            ],\n            \"description\": \"`text` 为空时，从哪里取文字\"\n          }\n        },\n        \"required\": [\n          \"target_language\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"exchange_rate\",\n      \"description\": \"查询汇率（欧洲央行，经由 Frankfurter）。用于货币换算的问题；不要编造汇率。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"base_currency\": {\n            \"type\": \"string\",\n            \"description\": \"源货币的 ISO 代码，例如 CNY、USD、EUR（也接受 RMB）\"\n          },\n          \"target_currency\": {\n            \"type\": \"string\",\n            \"description\": \"目标货币的 ISO 代码，例如 EUR、USD、CNY\"\n          },\n          \"amount\": {\n            \"type\": \"number\",\n            \"description\": \"要换算的源货币金额（默认 1）\"\n          }\n        },\n        \"required\": [\n          \"base_currency\",\n          \"target_currency\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"send_email\",\n      \"description\": \"用户明确要求给某人发邮件时发送。不要编造收件人。主题和正文尽量短、清楚。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"to\": {\n            \"type\": \"string\",\n            \"description\": \"收件人邮箱\"\n          },\n          \"subject\": {\n            \"type\": \"string\",\n            \"description\": \"邮件主题\"\n          },\n          \"body\": {\n            \"type\": \"string\",\n            \"description\": \"纯文本正文\"\n          },\n          \"cc\": {\n            \"type\": \"string\",\n            \"description\": \"可选的抄送地址\"\n          }\n        },\n        \"required\": [\n          \"to\",\n          \"subject\",\n          \"body\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_find\",\n      \"description\": \"Start here: a task in plain words -> the best endpoints (3 by default) of 733, each with the params the task supplies (URLs and @handles resolved), the params still missing, the credit cost and the exact call. With no task it lists platforms, or one platform's endpoints. Free; no key needed.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_endpoint\",\n      \"description\": \"Read before calling: one endpoint's purpose, params, where the rows are and up to 25 response fields, cost rule, paging, latency, timeout, next endpoints and a sample link. id (or platform+resource, path), a platform slug (its endpoints) or a guide topic. Free.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_estimate\",\n      \"description\": \"Exact credits before you spend: one call (id, platform+resource or path, plus the params you will send; calls for a job total; items for a walk) or a plan of several calls. Uses the API's estimator when available, else the bundled pricing. A platform slug gives its price table; no id gives the pricing overview. Free.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_request\",\n      \"description\": \"Call one endpoint (platform+resource, or id, or path). Validated locally first (a bad call is free), quoted, refused above max_credits and confirmed above the threshold. A large page is cut at row boundaries; socialcrawl_collect result_id reads the rest. Spends credits; needs SOCIALCRAWL_API_KEY.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_collect\",\n      \"description\": \"Walk a paged endpoint (id, platform+resource or path) to `items` unique rows, the last page or max_credits: cursors supplied, duplicates dropped, stops on a 402, refused free when one page exceeds max_credits. Small results come back whole. result_id (+offset, limit, format) reads a stored result, free. Spends credits.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_account\",\n      \"description\": \"Free: balance (default, with this session's spend), transactions (ledger), usage (per key per day; from/to YYYY-MM-DD, ≤92 days), status (health; check before retrying a 502/503), freshness (vs live catalogue), notifications (inbox).\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_manage\",\n      \"description\": \"By area + action: monitors, cohorts, web (scrape, crawl, agents, page monitors, sessions), jobs, discover, search_runs (search lists, watches), creator_runs, review_history, events (feed, webhooks). Wrong fields refused free. Managing is free; scrapes, jobs, queries, run_more/include, monitor runs bill.\\ndry_run: true quotes, creating nothing. rows_new alerts need track. Docs: discover-runs, search-runs.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  }\n]\n\n## 5 个 Agent 代理（name 必须写完整的代理名，带 _agent 后缀）\n- po_agent — 用户要求下采购单、修改采购单，或延续一张未完成的采购订单。\n- contract_agent — 合同上传解析。用户上传合同文件后，你需要调用这个 agent。这里需要文件字节，不能只有文件名称。如果用户没有明确说要上传、解析合同（或相似含义），则不排这个任务。\n- report_agent — 按标准大纲以及用户要求写一份报告草稿。Report Agent 自己会有调用工具的计划，因此你只需要调用 report_agent 即可，即使判断需要有其他工具来辅助它，也不需要调用。\n- brand_agent — 关于品牌自有材料的问题（故事、规格、营销文案）。\n- data_agent — 判断用户需要的内容需要从已有数据库中获取，比如关于这个合作关系的订单、付款、动销、合同条款或产品目录的问题。\n\n规则：\n- 先快速判断是否需要使用工具，如果不需要，直接返回空数组。空计划不会进工具循环，由作答模型直接回复。\n- 这一轮真正要做的事都写进 tasks，可以有多项，可以根据用户要求有串行或并行的逻辑，tasks之间需要判断是否有依赖关系，实际运行时会把没有依赖的任务交给不同的 worker 一起执行。\n- 代理的 name 只能是上面写的代理名（`po_agent` 等）。工具的 name 只能是上一节「可用工具」里的函数名。不需要写 kind，运行时按 name 判断是代理还是工具。\n- 写报表时只排 report_agent，不要为同一份草稿再排 data_agent。用户另外问了一个数字问题时，再排一个 data_agent，并且不要放进 report_agent 的 depends_on。\n- po_agent、contract_agent、report_agent 这一轮只产出草稿。确认入库发生在各自的浮窗里，所以这三项可以同时出现。\n- 同一个会话里有未完成的采购单（收集中 / 待确认）时，计划里保留这一个 po_agent，同时仍可排其它任务，但不要再排第二个 po_agent。\n- 只有下一步要用上一步的结果时才填 depends_on。彼此独立的任务把 depends_on 留空。\n- 每个 data_agent 任务的 input 必须包含 `question`、`deliver` 和 `columns`。`columns` 写下游实际需要的结果列名；只要问题需要多个字段，全部列出，不要只写一个代表列。\n- `deliver` 只填 `answer` 或 `data`：本轮唯一任务是 data_agent、没有下游依赖时填 `answer`；有其他任务、需要汇总或存在下游依赖时填 `data`。\n- 某一步依赖上一步的正文时，不要在 input 里编占位句。运行时会把依赖步骤的结果补进后续工具的参数（例如检索结果补进 translate 的 text）。\n- 只有用户明确要求发邮件时才排 send_email；若用户要「翻译后发邮件」，再排 send_email 并 depends_on 翻译，运行时可将译文补进 body。\n- 不要编造 SKU、价格、日期或国家。每个任务的 input 里只放用户说过的内容。\n\n只返回一个原始 JSON 对象：\n{\"tasks\": [{\"id\": string, \"name\": string, \"input\": object, \"depends_on\": [string]}]}\n",
+     "messages": [
+      {
+       "role": "user",
+       "content": "=== 未完成采购单 ===\n有\n\n=== 附件 ===\n（无）\n\n=== 最近对话 ===\n（无）\n\n=== 消息 ===\n2026年9月采购金额比8月变化了多少？百分比是多少？"
+      }
+     ]
+    },
+    "response_json": {
+     "json": {
+      "tasks": [
+       {
+        "id": "data_1",
+        "name": "data_agent",
+        "input": {
+         "columns": [
+          "month",
+          "purchase_amount"
+         ],
+         "deliver": "answer",
+         "question": "2026年9月采购金额比8月变化了多少？百分比是多少？"
+        },
+        "depends_on": []
+       }
+      ]
+     }
+    },
+    "prompt_tokens": 2588,
+    "completion_tokens": 106,
+    "latency_ms": 3512,
+    "status": "succeeded",
+    "cache_hit_tokens": 2560,
+    "cache_miss_tokens": 28,
+    "cache_creation_tokens": null,
+    "usage_source": "actual",
+    "error_json": {},
+    "created_at": "2026-11-11T14:07:41.243743Z"
+   },
+   {
+    "id": "mcall_6458f1d6a27a43758c57b52c0305990f",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "step_id": "step_994734e9f9744386879823d6af530452",
+    "provider": "qwen",
+    "model": "qwen3.7-flash",
+    "request_json": {
+     "model": "qwen3.7-flash",
+     "system": "你是品牌与已入驻经销商对话时的工作台助手。你只负责开口回复。请使用用户的语言。\n\n这一轮要跑的采购单、合同、报表、查数、检索和工具，如果已经执行，结果会放在给你的材料里。没有这些材料时，就直接回答用户这一句。\n\n规则：\n- 不要编造 SKU、价格、总额、汇率或合同折扣。数字、汇率、合同条款只引用材料里有的。品牌资料只根据给出的段落说。\n- 查数材料里 `shown_rows` 小于 `row_count` 时，你只看到前 `shown_rows` 行，没看到的行不要下结论；`truncated: true` 表示查询本身触到行数上限，只能说结果被截断，不能把 `row_count` 当成完整记录总数。\n- 查数结果带 `no_matching_records: true` 时，说明没有匹配的记录，要明确说\"没有数据\"，不要说成 0 或\"金额为 0\"。\n- 问的是比较、变化、增减或占比时，把参与比较的每个原始数字和结果一起写出来（例如「9 月 6731.82，8 月 7405.53，减少 673.71，约 -9.1%」），不要只给差值或百分比。\n- 某一项失败或没有跑到，就说明没拿到，不要补一个听起来合理的数。\n- 采购单、合同、报表如果出了草稿，告诉用户在右侧对应标签里查看。点那个标签上的确认才会下单或入库。不要说已经下单、已经归档或已经保存报表。\n- 只有用户明确要求发邮件、并且材料里有发送结果时，才提发信。不要编造收件地址。\n- 寒暄、澄清或材料里没有可引用的事实时，短答即可。需要文件却没有附件时，请他们附上。\n- 回复要短，把这一轮的结果说清楚，不要重复材料原文。\n",
+     "messages": [
+      {
+       "role": "user",
+       "content": "=== 用户 ===\n2026年9月采购金额比8月变化了多少？百分比是多少？\n\n=== 这一轮结果 ===\n[{\"id\": \"data_1\", \"ok\": false, \"kind\": \"agent\", \"name\": \"data.query\", \"error\": \"query result is missing required columns: month, purchase_amount\", \"status\": \"failed\", \"payload\": {\"ok\": false, \"sql\": \"WITH monthly AS (SELECT DATE_TRUNC('MONTH', submitted_at) AS month, SUM(total_amount) AS purchase_amount FROM purchase_orders WHERE submitted_at >= '2026-08-01' AND submitted_at < '2026-10-01' GROUP BY 1) SELECT MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) AS aug_amount, MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) AS sep_amount, MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) - MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) AS change_amount, (MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) - MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END)) / MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) * 100 AS change_percent FROM monthly LIMIT 100\", \"rows\": [{\"aug_amount\": 7405.53, \"sep_amount\": 6731.82, \"change_amount\": -673.71, \"change_percent\": -9.097390733681452}], \"error\": \"query result is missing required columns: month, purchase_amount\", \"score\": 95, \"log_id\": 654, \"tables\": [\"purchase_orders\", \"purchase_order_items\"], \"columns\": [\"aug_amount\", \"sep_amount\", \"change_amount\", \"change_percent\"], \"deliver\": \"answer\", \"handoff\": \"\", \"complete\": false, \"row_count\": 1, \"truncated\": false, \"error_type\": null, \"rows_handle\": 654, \"missing_columns\": [\"month\", \"purchase_amount\"], \"shown_rows\": 1, \"no_matching_records\": false}}]"
+      }
+     ]
+    },
+    "response_json": {
+     "text": "查询失败，缺少必要字段（month, purchase_amount），无法提供数据。"
+    },
+    "prompt_tokens": 996,
+    "completion_tokens": 16,
+    "latency_ms": 6707,
+    "status": "succeeded",
+    "cache_hit_tokens": 0,
+    "cache_miss_tokens": 996,
+    "cache_creation_tokens": null,
+    "usage_source": "actual",
+    "error_json": {},
+    "created_at": "2026-11-11T14:07:54.468218Z"
+   }
+  ],
+  "tool_calls": [],
+  "checkpoints": [
+   {
+    "id": "ckpt_3ed73c60dc3746b7a422db3bc41c03e2",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "checkpoint_index": 1,
+    "state_json": {
+     "last": "user",
+     "context": [],
+     "orchestrator": {
+      "phase": "planned",
+      "tasks": [
+       {
+        "id": "data_1",
+        "kind": "agent",
+        "name": "data",
+        "input": {
+         "columns": [
+          "month",
+          "purchase_amount"
+         ],
+         "deliver": "answer",
+         "question": "2026年9月采购金额比8月变化了多少？百分比是多少？"
+        },
+        "depends_on": []
+       }
+      ],
+      "results": {},
+      "wave_id": null,
+      "finished": [],
+      "wave_ids": []
+     },
+     "completed_tool_calls": []
+    },
+    "created_at": "2026-11-11T14:07:41.254959Z"
+   },
+   {
+    "id": "ckpt_ac9d1ae775274a4eac227ea8ee09558c",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "checkpoint_index": 2,
+    "state_json": {
+     "last": "user",
+     "context": [],
+     "orchestrator": {
+      "tasks": [
+       {
+        "id": "data_1",
+        "kind": "agent",
+        "name": "data",
+        "input": {
+         "columns": [
+          "month",
+          "purchase_amount"
+         ],
+         "deliver": "answer",
+         "question": "2026年9月采购金额比8月变化了多少？百分比是多少？"
+        },
+        "depends_on": []
+       }
+      ],
+      "results": {},
+      "wave_id": "175cfc655fcf4e9eb5f798762dae1685",
+      "finished": [],
+      "wave_ids": [
+       "data_1"
+      ]
+     },
+     "completed_tool_calls": []
+    },
+    "created_at": "2026-11-11T14:07:41.261087Z"
+   },
+   {
+    "id": "ckpt_49b908a09cfb48018a07a641fe201606",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "checkpoint_index": 3,
+    "state_json": {
+     "last": "user",
+     "context": [],
+     "orchestrator": {
+      "tasks": [
+       {
+        "id": "data_1",
+        "kind": "agent",
+        "name": "data",
+        "input": {
+         "columns": [
+          "month",
+          "purchase_amount"
+         ],
+         "deliver": "answer",
+         "question": "2026年9月采购金额比8月变化了多少？百分比是多少？"
+        },
+        "depends_on": []
+       }
+      ],
+      "results": {
+       "data_1": {
+        "id": "data_1",
+        "ok": false,
+        "kind": "agent",
+        "name": "data.query",
+        "error": "query result is missing required columns: month, purchase_amount",
+        "status": "failed",
+        "payload": {
+         "ok": false,
+         "sql": "WITH monthly AS (SELECT DATE_TRUNC('MONTH', submitted_at) AS month, SUM(total_amount) AS purchase_amount FROM purchase_orders WHERE submitted_at >= '2026-08-01' AND submitted_at < '2026-10-01' GROUP BY 1) SELECT MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) AS aug_amount, MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) AS sep_amount, MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) - MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) AS change_amount, (MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) - MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END)) / MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) * 100 AS change_percent FROM monthly LIMIT 100",
+         "rows": [
+          {
+           "aug_amount": 7405.53,
+           "sep_amount": 6731.82,
+           "change_amount": -673.71,
+           "change_percent": -9.097390733681452
+          }
+         ],
+         "error": "query result is missing required columns: month, purchase_amount",
+         "score": 95,
+         "log_id": 654,
+         "tables": [
+          "purchase_orders",
+          "purchase_order_items"
+         ],
+         "columns": [
+          "aug_amount",
+          "sep_amount",
+          "change_amount",
+          "change_percent"
+         ],
+         "deliver": "answer",
+         "handoff": "",
+         "complete": false,
+         "row_count": 1,
+         "truncated": false,
+         "error_type": null,
+         "rows_handle": 654,
+         "missing_columns": [
+          "month",
+          "purchase_amount"
+         ]
+        }
+       }
+      },
+      "wave_id": "175cfc655fcf4e9eb5f798762dae1685",
+      "finished": [
+       "data_1"
+      ],
+      "wave_ids": [
+       "data_1"
+      ]
+     },
+     "completed_tool_calls": []
+    },
+    "created_at": "2026-11-11T14:07:47.715176Z"
+   },
+   {
+    "id": "ckpt_35b13c1adb6b4f3bb957c19e82da6092",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "checkpoint_index": 4,
+    "state_json": {
+     "last": "user",
+     "context": [],
+     "orchestrator": {
+      "phase": "answer_done",
+      "tasks": [
+       {
+        "id": "data_1",
+        "kind": "agent",
+        "name": "data",
+        "input": {
+         "columns": [
+          "month",
+          "purchase_amount"
+         ],
+         "deliver": "answer",
+         "question": "2026年9月采购金额比8月变化了多少？百分比是多少？"
+        },
+        "depends_on": []
+       }
+      ],
+      "answer": "查询失败，缺少必要字段（month, purchase_amount），无法提供数据。",
+      "results": {
+       "data_1": {
+        "id": "data_1",
+        "ok": false,
+        "kind": "agent",
+        "name": "data.query",
+        "error": "query result is missing required columns: month, purchase_amount",
+        "status": "failed",
+        "payload": {
+         "ok": false,
+         "sql": "WITH monthly AS (SELECT DATE_TRUNC('MONTH', submitted_at) AS month, SUM(total_amount) AS purchase_amount FROM purchase_orders WHERE submitted_at >= '2026-08-01' AND submitted_at < '2026-10-01' GROUP BY 1) SELECT MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) AS aug_amount, MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) AS sep_amount, MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) - MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) AS change_amount, (MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) - MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END)) / MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) * 100 AS change_percent FROM monthly LIMIT 100",
+         "rows": [
+          {
+           "aug_amount": 7405.53,
+           "sep_amount": 6731.82,
+           "change_amount": -673.71,
+           "change_percent": -9.097390733681452
+          }
+         ],
+         "error": "query result is missing required columns: month, purchase_amount",
+         "score": 95,
+         "log_id": 654,
+         "tables": [
+          "purchase_orders",
+          "purchase_order_items"
+         ],
+         "columns": [
+          "aug_amount",
+          "sep_amount",
+          "change_amount",
+          "change_percent"
+         ],
+         "deliver": "answer",
+         "handoff": "",
+         "complete": false,
+         "row_count": 1,
+         "truncated": false,
+         "error_type": null,
+         "rows_handle": 654,
+         "missing_columns": [
+          "month",
+          "purchase_amount"
+         ]
+        }
+       }
+      },
+      "wave_id": null,
+      "finished": [
+       "data_1"
+      ],
+      "wave_ids": []
+     },
+     "completed_tool_calls": []
+    },
+    "created_at": "2026-11-11T14:07:54.475829Z"
+   }
+  ],
+  "usage_records": [
+   {
+    "id": "usage_c298d97825f548fd8a01d70700e87bb1",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "org_id": "dist-liancai",
+    "user_id": "user-liancai-chen",
+    "provider": "qwen",
+    "model": "qwen3.7-flash",
+    "prompt_tokens": 2588,
+    "completion_tokens": 106,
+    "total_tokens": 2694,
+    "estimated_cost_cents": 0,
+    "cache_hit_tokens": 2560,
+    "cache_miss_tokens": 28,
+    "cache_creation_tokens": null,
+    "usage_source": "actual",
+    "created_at": "2026-11-11T14:07:41.243743Z"
+   },
+   {
+    "id": "usage_c83f6089a06c4ec79d7a71c20e7bfbd5",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "org_id": "dist-liancai",
+    "user_id": "user-liancai-chen",
+    "provider": "qwen",
+    "model": "qwen3.7-flash",
+    "prompt_tokens": 996,
+    "completion_tokens": 16,
+    "total_tokens": 1012,
+    "estimated_cost_cents": 0,
+    "cache_hit_tokens": 0,
+    "cache_miss_tokens": 996,
+    "cache_creation_tokens": null,
+    "usage_source": "actual",
+    "created_at": "2026-11-11T14:07:54.468218Z"
+   }
+  ],
+  "audit_logs": [
+   {
+    "id": "aud_4462527352e5426a8d9e2de54aae6b34",
+    "user_id": "celery:10",
+    "org_id": "dist-liancai",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "action": "run.transition",
+    "target_type": "agent_run",
+    "target_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "metadata_json": {
+     "actor_id": "celery:10",
+     "to_status": "running",
+     "actor_type": "worker",
+     "from_status": "queued",
+     "lease_owner": "celery:10"
+    },
+    "created_at": "2026-11-11T14:07:37.702604Z"
+   },
+   {
+    "id": "aud_1a029f5f760d4243bb88596728cb6bd6",
+    "user_id": "celery:10",
+    "org_id": "dist-liancai",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "action": "run.transition",
+    "target_type": "agent_run",
+    "target_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "metadata_json": {
+     "wave_id": "175cfc655fcf4e9eb5f798762dae1685",
+     "actor_id": "celery:10",
+     "task_ids": [
+      "data_1"
+     ],
+     "to_status": "waiting_for_tasks",
+     "actor_type": "worker",
+     "from_status": "running"
+    },
+    "created_at": "2026-11-11T14:07:41.261087Z"
+   },
+   {
+    "id": "aud_882e22d06e804d7182ae06ae6956f46d",
+    "user_id": "user-liancai-chen",
+    "org_id": "dist-liancai",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "action": "run.transition",
+    "target_type": "agent_run",
+    "target_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "metadata_json": {
+     "wave_id": "175cfc655fcf4e9eb5f798762dae1685",
+     "actor_id": "user-liancai-chen",
+     "to_status": "queued",
+     "actor_type": "worker",
+     "from_status": "waiting_for_tasks"
+    },
+    "created_at": "2026-11-11T14:07:47.718429Z"
+   },
+   {
+    "id": "aud_f812d07abf6849eb84a47d34d225ad8a",
+    "user_id": "celery:10",
+    "org_id": "dist-liancai",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "action": "run.transition",
+    "target_type": "agent_run",
+    "target_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "metadata_json": {
+     "actor_id": "celery:10",
+     "to_status": "running",
+     "actor_type": "worker",
+     "from_status": "queued",
+     "lease_owner": "celery:10"
+    },
+    "created_at": "2026-11-11T14:07:47.724981Z"
+   },
+   {
+    "id": "aud_57a6845f37074b0799f251a18f5742f5",
+    "user_id": "celery:10",
+    "org_id": "dist-liancai",
+    "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "action": "run.transition",
+    "target_type": "agent_run",
+    "target_id": "run_76fccc6449064b0d893831e24c36bb44",
+    "metadata_json": {
+     "status": "succeeded",
+     "actor_id": "celery:10",
+     "to_status": "succeeded",
+     "actor_type": "worker",
+     "from_status": "running"
+    },
+    "created_at": "2026-11-11T14:07:54.490255Z"
+   }
+  ],
+  "outbox": [
+   {
+    "id": "obx_9c3a4069ba0d455a9b30d7e7f5c30528",
+    "job_type": "execute_run",
+    "payload_json": {
+     "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+     "run_type": "chat",
+     "trace_id": "4bef37edd53a48e6afa4e4b027bca9a1"
+    },
+    "status": "dispatched",
+    "attempts": 0,
+    "max_attempts": 10,
+    "next_attempt_at": "2026-11-11T14:07:37.697041Z",
+    "last_error_json": null,
+    "created_at": "2026-11-11T14:07:37.697041Z",
+    "dispatch_at": "2026-11-11T14:07:37.700287Z"
+   },
+   {
+    "id": "obx_6ab94bb5949a45019d110ff62bc921f8",
+    "job_type": "execute_run",
+    "payload_json": {
+     "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+     "run_type": "chat",
+     "trace_id": "4bef37edd53a48e6afa4e4b027bca9a1"
+    },
+    "status": "dispatched",
+    "attempts": 0,
+    "max_attempts": 10,
+    "next_attempt_at": "2026-11-11T14:07:47.718429Z",
+    "last_error_json": null,
+    "created_at": "2026-11-11T14:07:47.718429Z",
+    "dispatch_at": "2026-11-11T14:07:47.722425Z"
+   }
+  ],
+  "dead_letters": []
+ },
+ "children": {
+  "run_76fccc6449064b0d893831e24c36bb44": {
+   "run_type": "chat",
+   "status": "succeeded",
+   "trace": {
+    "run": {
+     "id": "run_76fccc6449064b0d893831e24c36bb44",
+     "org_id": "dist-liancai",
+     "user_id": "user-liancai-chen",
+     "run_type": "chat",
+     "idempotency_key": "chat:02ae5bf8392e42d78e8ec9ad38829924:ae3b1b83df8f4112b233f538c411986e",
+     "status": "succeeded",
+     "input_json": {
+      "images": [],
+      "message": "2026年9月采购金额比8月变化了多少？百分比是多少？",
+      "documents": [],
+      "session_id": "02ae5bf8392e42d78e8ec9ad38829924",
+      "attachments": []
+     },
+     "output_json": {
+      "text": "查询失败，缺少必要字段（month, purchase_amount），无法提供数据。"
+     },
+     "error_json": null,
+     "created_at": "2026-11-11 14:07:37.697041+00:00",
+     "queued_at": "2026-11-11 14:07:47.718429+00:00",
+     "queue_heartbeat_at": null,
+     "started_at": "2026-11-11 14:07:37.702604+00:00",
+     "ended_at": "2026-11-11 14:07:54.490255+00:00",
+     "cancel_requested_at": null,
+     "updated_at": "2026-11-11 14:07:54.490255+00:00",
+     "lease_owner": "celery:10",
+     "lease_expires_at": "2026-11-11 14:17:47.724978+00:00",
+     "attempts": 2,
+     "redispatch_count": 0,
+     "parent_run_id": null,
+     "owner_run_id": null,
+     "trace_id": "4bef37edd53a48e6afa4e4b027bca9a1",
+     "max_model_calls": 8,
+     "max_tokens": 32000,
+     "max_tool_calls": null,
+     "max_duration_seconds": null
+    },
+    "steps": [
+     {
+      "id": "step_3f8287a93f054a6c95fba174406a87e5",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "step_index": 1,
+      "step_type": "model",
+      "name": "model",
+      "status": "succeeded",
+      "input_json": {
+       "purpose": "orchestrator.plan"
+      },
+      "output_json": {
+       "tasks": [
+        {
+         "id": "data_1",
+         "kind": "agent",
+         "name": "data",
+         "input": {
+          "columns": [
+           "month",
+           "purchase_amount"
+          ],
+          "deliver": "answer",
+          "question": "2026年9月采购金额比8月变化了多少？百分比是多少？"
+         },
+         "depends_on": []
+        }
+       ]
+      },
+      "error_json": null,
+      "started_at": "2026-11-11 14:07:37.712095+00:00",
+      "ended_at": "2026-11-11 14:07:41.254959+00:00"
+     },
+     {
+      "id": "step_994734e9f9744386879823d6af530452",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "step_index": 2,
+      "step_type": "model",
+      "name": "model",
+      "status": "succeeded",
+      "input_json": {
+       "purpose": "orchestrator.answer"
+      },
+      "output_json": {
+       "text": "查询失败，缺少必要字段（month, purchase_amount），无法提供数据。"
+      },
+      "error_json": null,
+      "started_at": "2026-11-11 14:07:47.738551+00:00",
+      "ended_at": "2026-11-11 14:07:54.475829+00:00"
+     },
+     {
+      "id": "step_6a69e513412045279544da79faf5a16c",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "step_index": 3,
+      "step_type": "model",
+      "name": "model",
+      "status": "succeeded",
+      "input_json": {
+       "purpose": "orchestrator.history"
+      },
+      "output_json": {
+       "saved": true
+      },
+      "error_json": null,
+      "started_at": "2026-11-11 14:07:54.483038+00:00",
+      "ended_at": "2026-11-11 14:07:54.487002+00:00"
+     }
+    ],
+    "events": [
+     {
+      "id": "evt_8af63671505745e2a293fa7231598771",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 1,
+      "event_type": "run.created",
+      "payload_json": {
+       "status": "queued",
+       "display": "已开始"
+      },
+      "created_at": "2026-11-11 14:07:37.697041+00:00"
+     },
+     {
+      "id": "evt_bf9366aac5bf46a68b479bd7f68bdb34",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 2,
+      "event_type": "run.enqueued",
+      "payload_json": {
+       "outbox_job_id": "obx_9c3a4069ba0d455a9b30d7e7f5c30528"
+      },
+      "created_at": "2026-11-11 14:07:37.700287+00:00"
+     },
+     {
+      "id": "evt_739bddcb91724427a6164e38e50f8437",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 3,
+      "event_type": "run.started",
+      "payload_json": {
+       "actor_id": "celery:10",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:10"
+      },
+      "created_at": "2026-11-11 14:07:37.702604+00:00"
+     },
+     {
+      "id": "evt_105b6005e610457d960f10c329c843af",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 4,
+      "event_type": "step.started",
+      "payload_json": {
+       "name": "model",
+       "step_id": "step_3f8287a93f054a6c95fba174406a87e5",
+       "step_type": "model",
+       "step_index": 1
+      },
+      "created_at": "2026-11-11 14:07:37.712095+00:00"
+     },
+     {
+      "id": "evt_74754eb978c845f09abab1ef1a384508",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 5,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "4bef37edd53a48e6afa4e4b027bca9a1",
+       "max_tokens": 1200,
+       "route_task": "orchestrator.plan",
+       "quality_gate": "valid_task_plan",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "selected_model": "qwen3.7-flash",
+       "candidate_index": 0,
+       "max_model_calls": 2,
+       "selected_provider": "qwen",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-11 14:07:37.717606+00:00"
+     },
+     {
+      "id": "evt_46b8e3ad12e34aa7a713fc24de93e6b5",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 6,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "qwen",
+       "model": "qwen3.7-flash",
+       "display": "正在思考...",
+       "purpose": "orchestrator.plan",
+       "step_id": "step_3f8287a93f054a6c95fba174406a87e5",
+       "trace_id": "4bef37edd53a48e6afa4e4b027bca9a1"
+      },
+      "created_at": "2026-11-11 14:07:37.730760+00:00"
+     },
+     {
+      "id": "evt_d90e7b95d152455f8ce0bcdcb882cefc",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 7,
+      "event_type": "model.completed",
+      "payload_json": {
+       "brand": "qwen",
+       "model": "qwen3.7-flash",
+       "status": "succeeded",
+       "purpose": "orchestrator.plan",
+       "step_id": "step_3f8287a93f054a6c95fba174406a87e5",
+       "trace_id": "4bef37edd53a48e6afa4e4b027bca9a1",
+       "usage_source": "actual",
+       "model_call_id": "mcall_ac5d564d434c4391baed96091589253c",
+       "prompt_tokens": 2588,
+       "cache_hit_tokens": 2560,
+       "cache_miss_tokens": 28,
+       "completion_tokens": 106,
+       "cache_creation_tokens": null
+      },
+      "created_at": "2026-11-11 14:07:41.250956+00:00"
+     },
+     {
+      "id": "evt_1774e07968514daf93ba349f90d69e07",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 8,
+      "event_type": "step.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "step_id": "step_3f8287a93f054a6c95fba174406a87e5",
+       "step_index": 1
+      },
+      "created_at": "2026-11-11 14:07:41.254959+00:00"
+     },
+     {
+      "id": "evt_7770b4e2e08e49188c28b0d597e3cfca",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 9,
+      "event_type": "tool.started",
+      "payload_json": {
+       "display": "data.query",
+       "task_id": "data_1",
+       "tool_name": "data.query"
+      },
+      "created_at": "2026-11-11 14:07:41.261087+00:00"
+     },
+     {
+      "id": "evt_04259ce7caec45f18cf6f36b961a3f7c",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 10,
+      "event_type": "run.waiting_for_tasks",
+      "payload_json": {
+       "display": "正在执行任务",
+       "wave_id": "175cfc655fcf4e9eb5f798762dae1685",
+       "actor_id": "celery:10",
+       "task_ids": [
+        "data_1"
+       ],
+       "to_status": "waiting_for_tasks",
+       "actor_type": "worker",
+       "from_status": "running"
+      },
+      "created_at": "2026-11-11 14:07:41.261087+00:00"
+     },
+     {
+      "id": "evt_4eb7ea7ee2fb432a80784ae303f3112f",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 11,
+      "event_type": "step.started",
+      "payload_json": {
+       "name": "data.query",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "step_type": "tool",
+       "step_index": 1,
+       "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+       "projected_from": "run_15ff6e3b5eed45138354baaefa214a33"
+      },
+      "created_at": "2026-11-11 14:07:41.290674+00:00"
+     },
+     {
+      "id": "evt_c5b34b54bea0422b830217392e0e948d",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 12,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "max_tokens": null,
+       "route_task": "data.pick",
+       "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+       "quality_gate": "response_parsed",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "projected_from": "run_15ff6e3b5eed45138354baaefa214a33",
+       "selected_model": "deepseek-flash",
+       "candidate_index": 0,
+       "max_model_calls": null,
+       "selected_provider": "deepseek",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-11 14:07:41.312988+00:00"
+     },
+     {
+      "id": "evt_da27753c90a84b32ae90f79d5634394d",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 13,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "display": "正在思考...",
+       "purpose": "data.pick",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+       "projected_from": "run_15ff6e3b5eed45138354baaefa214a33"
+      },
+      "created_at": "2026-11-11 14:07:41.316138+00:00"
+     },
+     {
+      "id": "evt_fcb12b6893704a449c633f55ad3dc8ee",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 14,
+      "event_type": "model.completed",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "status": "succeeded",
+       "purpose": "data.pick",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+       "usage_source": "actual",
+       "model_call_id": "mcall_f0a31188530b463ea0011e854b47d41a",
+       "prompt_tokens": 983,
+       "projected_from": "run_15ff6e3b5eed45138354baaefa214a33",
+       "cache_hit_tokens": 768,
+       "cache_miss_tokens": 215,
+       "completion_tokens": 11,
+       "cache_creation_tokens": null
+      },
+      "created_at": "2026-11-11 14:07:42.194972+00:00"
+     },
+     {
+      "id": "evt_0b5fc5e794e84480b5b4c75aab1c8472",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 15,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "max_tokens": null,
+       "route_task": "data.sql",
+       "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+       "quality_gate": "response_parsed",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "projected_from": "run_15ff6e3b5eed45138354baaefa214a33",
+       "selected_model": "deepseek-flash",
+       "candidate_index": 0,
+       "max_model_calls": null,
+       "selected_provider": "deepseek",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-11 14:07:42.226683+00:00"
+     },
+     {
+      "id": "evt_864a986ddd644dd98adeb93cf11e52a5",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 16,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "display": "正在思考...",
+       "purpose": "data.sql",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+       "projected_from": "run_15ff6e3b5eed45138354baaefa214a33"
+      },
+      "created_at": "2026-11-11 14:07:42.230176+00:00"
+     },
+     {
+      "id": "evt_74b2bfaf9b9e44b58968313751942a59",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 17,
+      "event_type": "model.completed",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "status": "succeeded",
+       "purpose": "data.sql",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+       "usage_source": "actual",
+       "model_call_id": "mcall_a33dd167a5d74ae7b8374f569c9728d3",
+       "prompt_tokens": 1193,
+       "projected_from": "run_15ff6e3b5eed45138354baaefa214a33",
+       "cache_hit_tokens": 1024,
+       "cache_miss_tokens": 169,
+       "completion_tokens": 148,
+       "cache_creation_tokens": null
+      },
+      "created_at": "2026-11-11 14:07:43.537372+00:00"
+     },
+     {
+      "id": "evt_4a967209fbd546b5a74aafcfdc395fc1",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 18,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "max_tokens": null,
+       "route_task": "data.sql.revise",
+       "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+       "quality_gate": "response_parsed",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "projected_from": "run_15ff6e3b5eed45138354baaefa214a33",
+       "selected_model": "deepseek-flash",
+       "candidate_index": 0,
+       "max_model_calls": null,
+       "selected_provider": "deepseek",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-11 14:07:43.582878+00:00"
+     },
+     {
+      "id": "evt_32c6d56fcbb445cd9a1c751aeda4dc95",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 19,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "display": "正在思考...",
+       "purpose": "data.sql.revise",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+       "projected_from": "run_15ff6e3b5eed45138354baaefa214a33"
+      },
+      "created_at": "2026-11-11 14:07:43.586496+00:00"
+     },
+     {
+      "id": "evt_156c79a429d347cb9df054dd7d9add26",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 20,
+      "event_type": "model.completed",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "status": "succeeded",
+       "purpose": "data.sql.revise",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+       "usage_source": "actual",
+       "model_call_id": "mcall_20b0ec54c1a34831b46898d8b3cb9e81",
+       "prompt_tokens": 1369,
+       "projected_from": "run_15ff6e3b5eed45138354baaefa214a33",
+       "cache_hit_tokens": 1152,
+       "cache_miss_tokens": 217,
+       "completion_tokens": 155,
+       "cache_creation_tokens": null
+      },
+      "created_at": "2026-11-11 14:07:44.927291+00:00"
+     },
+     {
+      "id": "evt_b80dce0e893d42aa974802322a40a654",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 21,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "max_tokens": null,
+       "route_task": "data.sql.revise",
+       "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+       "quality_gate": "response_parsed",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "projected_from": "run_15ff6e3b5eed45138354baaefa214a33",
+       "selected_model": "deepseek-flash",
+       "candidate_index": 0,
+       "max_model_calls": null,
+       "selected_provider": "deepseek",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-11 14:07:44.970522+00:00"
+     },
+     {
+      "id": "evt_abef82a6d8b94263b466950abf25c2b0",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 22,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "display": "正在思考...",
+       "purpose": "data.sql.revise",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+       "projected_from": "run_15ff6e3b5eed45138354baaefa214a33"
+      },
+      "created_at": "2026-11-11 14:07:44.974387+00:00"
+     },
+     {
+      "id": "evt_51deea92c7d0486dbebed1bbd60f17cb",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 23,
+      "event_type": "model.completed",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "status": "succeeded",
+       "purpose": "data.sql.revise",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+       "usage_source": "actual",
+       "model_call_id": "mcall_48277458ef3e4a5290b764eebefd7bdf",
+       "prompt_tokens": 1376,
+       "projected_from": "run_15ff6e3b5eed45138354baaefa214a33",
+       "cache_hit_tokens": 1152,
+       "cache_miss_tokens": 224,
+       "completion_tokens": 221,
+       "cache_creation_tokens": null
+      },
+      "created_at": "2026-11-11 14:07:46.679956+00:00"
+     },
+     {
+      "id": "evt_814955bea757474797aa3faa28770cbc",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 24,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "max_tokens": null,
+       "route_task": "data.score",
+       "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+       "quality_gate": "response_parsed",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "projected_from": "run_15ff6e3b5eed45138354baaefa214a33",
+       "selected_model": "deepseek-flash",
+       "candidate_index": 0,
+       "max_model_calls": null,
+       "selected_provider": "deepseek",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-11 14:07:46.739503+00:00"
+     },
+     {
+      "id": "evt_85bcc5674c0e46a0afa5513525ea960b",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 25,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "display": "正在思考...",
+       "purpose": "data.score",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+       "projected_from": "run_15ff6e3b5eed45138354baaefa214a33"
+      },
+      "created_at": "2026-11-11 14:07:46.743269+00:00"
+     },
+     {
+      "id": "evt_caefcda32f184f4da0b1c939327291ba",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 26,
+      "event_type": "model.completed",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "status": "succeeded",
+       "purpose": "data.score",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+       "usage_source": "actual",
+       "model_call_id": "mcall_3d3534d60c37470d8129f9bf1a88dc90",
+       "prompt_tokens": 616,
+       "projected_from": "run_15ff6e3b5eed45138354baaefa214a33",
+       "cache_hit_tokens": 0,
+       "cache_miss_tokens": 616,
+       "completion_tokens": 14,
+       "cache_creation_tokens": null
+      },
+      "created_at": "2026-11-11 14:07:47.700523+00:00"
+     },
+     {
+      "id": "evt_92271b8366fa425685ea134108838206",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 27,
+      "event_type": "step.failed",
+      "payload_json": {
+       "status": "failed",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "step_index": 1,
+       "child_run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+       "projected_from": "run_15ff6e3b5eed45138354baaefa214a33"
+      },
+      "created_at": "2026-11-11 14:07:47.707757+00:00"
+     },
+     {
+      "id": "evt_31ea7738168f44afad60291b42e065d2",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 28,
+      "event_type": "tool.failed",
+      "payload_json": {
+       "ok": false,
+       "task_id": "data_1",
+       "tool_name": "data.query"
+      },
+      "created_at": "2026-11-11 14:07:47.715176+00:00"
+     },
+     {
+      "id": "evt_71c617c818d84f71a335514fcc6cec2e",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 29,
+      "event_type": "run.resumed",
+      "payload_json": {
+       "wave_id": "175cfc655fcf4e9eb5f798762dae1685",
+       "actor_id": "user-liancai-chen",
+       "to_status": "queued",
+       "actor_type": "worker",
+       "from_status": "waiting_for_tasks"
+      },
+      "created_at": "2026-11-11 14:07:47.718429+00:00"
+     },
+     {
+      "id": "evt_6533070fa06e49b2b3761e73bd855f1e",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 30,
+      "event_type": "run.enqueued",
+      "payload_json": {
+       "outbox_job_id": "obx_6ab94bb5949a45019d110ff62bc921f8"
+      },
+      "created_at": "2026-11-11 14:07:47.722425+00:00"
+     },
+     {
+      "id": "evt_7dd392783d52426db5b37593f0b42c41",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 31,
+      "event_type": "run.started",
+      "payload_json": {
+       "actor_id": "celery:10",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:10"
+      },
+      "created_at": "2026-11-11 14:07:47.724981+00:00"
+     },
+     {
+      "id": "evt_4bd8d93cda184d32a2c6f13db88c6c5f",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 32,
+      "event_type": "step.started",
+      "payload_json": {
+       "name": "model",
+       "step_id": "step_994734e9f9744386879823d6af530452",
+       "step_type": "model",
+       "step_index": 2
+      },
+      "created_at": "2026-11-11 14:07:47.738551+00:00"
+     },
+     {
+      "id": "evt_966f3e3a2001433db5572aca89a52fce",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 33,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "4bef37edd53a48e6afa4e4b027bca9a1",
+       "max_tokens": 1600,
+       "route_task": "orchestrator.answer",
+       "quality_gate": "non_empty_answer",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "selected_model": "qwen3.7-flash",
+       "candidate_index": 0,
+       "max_model_calls": 2,
+       "selected_provider": "qwen",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-11 14:07:47.744909+00:00"
+     },
+     {
+      "id": "evt_1dd169351671415092a3cc0993da573f",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 34,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "qwen",
+       "model": "qwen3.7-flash",
+       "display": "正在思考...",
+       "purpose": "orchestrator.answer",
+       "step_id": "step_994734e9f9744386879823d6af530452",
+       "trace_id": "4bef37edd53a48e6afa4e4b027bca9a1"
+      },
+      "created_at": "2026-11-11 14:07:47.759301+00:00"
+     },
+     {
+      "id": "evt_5de28abb369049d6bee3b2490c45e3a0",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 35,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "查询",
+       "generation_id": "d0267a096e4b47e3b90e5f7e6121c44a"
+      },
+      "created_at": "2026-11-11 14:07:53.192924+00:00"
+     },
+     {
+      "id": "evt_fb90c8715f104921b310c2869e70d9a7",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 36,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "查询失败",
+       "generation_id": "d0267a096e4b47e3b90e5f7e6121c44a"
+      },
+      "created_at": "2026-11-11 14:07:53.230640+00:00"
+     },
+     {
+      "id": "evt_8dd4933f02c2488c8fa53f0826baaead",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 37,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "查询失败，缺少",
+       "generation_id": "d0267a096e4b47e3b90e5f7e6121c44a"
+      },
+      "created_at": "2026-11-11 14:07:53.235500+00:00"
+     },
+     {
+      "id": "evt_7e0457dde472487aa2d62258bd8122f2",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 38,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "查询失败，缺少必要",
+       "generation_id": "d0267a096e4b47e3b90e5f7e6121c44a"
+      },
+      "created_at": "2026-11-11 14:07:53.371961+00:00"
+     },
+     {
+      "id": "evt_41a68f59f1b94c9bb6a47e0c03b49bbe",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 39,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "查询失败，缺少必要字段（month,",
+       "generation_id": "d0267a096e4b47e3b90e5f7e6121c44a"
+      },
+      "created_at": "2026-11-11 14:07:53.378308+00:00"
+     },
+     {
+      "id": "evt_161c02e1c36f41cab25a825c442fa7a9",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 40,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "查询失败，缺少必要字段（month, purchase_amount），无法",
+       "generation_id": "d0267a096e4b47e3b90e5f7e6121c44a"
+      },
+      "created_at": "2026-11-11 14:07:54.453402+00:00"
+     },
+     {
+      "id": "evt_378309adcc4e4f4da36d9e5e7cb454ea",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 41,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "查询失败，缺少必要字段（month, purchase_amount），无法提供",
+       "generation_id": "d0267a096e4b47e3b90e5f7e6121c44a"
+      },
+      "created_at": "2026-11-11 14:07:54.460398+00:00"
+     },
+     {
+      "id": "evt_21afd59139fd41eca876fd756cd3cbc2",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 42,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "查询失败，缺少必要字段（month, purchase_amount），无法提供数据。",
+       "generation_id": "d0267a096e4b47e3b90e5f7e6121c44a"
+      },
+      "created_at": "2026-11-11 14:07:54.464120+00:00"
+     },
+     {
+      "id": "evt_6e4749f9d9e6404e8379f5653ce21531",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 43,
+      "event_type": "model.completed",
+      "payload_json": {
+       "brand": "qwen",
+       "model": "qwen3.7-flash",
+       "status": "succeeded",
+       "purpose": "orchestrator.answer",
+       "step_id": "step_994734e9f9744386879823d6af530452",
+       "trace_id": "4bef37edd53a48e6afa4e4b027bca9a1",
+       "usage_source": "actual",
+       "model_call_id": "mcall_6458f1d6a27a43758c57b52c0305990f",
+       "prompt_tokens": 996,
+       "cache_hit_tokens": 0,
+       "cache_miss_tokens": 996,
+       "completion_tokens": 16,
+       "cache_creation_tokens": null
+      },
+      "created_at": "2026-11-11 14:07:54.472027+00:00"
+     },
+     {
+      "id": "evt_d96fb434ebd541fcaf33d3b1aebed522",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 44,
+      "event_type": "step.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "step_id": "step_994734e9f9744386879823d6af530452",
+       "step_index": 2
+      },
+      "created_at": "2026-11-11 14:07:54.475829+00:00"
+     },
+     {
+      "id": "evt_89aed13dd42b4942ae3ca4b0199c99a0",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 45,
+      "event_type": "step.started",
+      "payload_json": {
+       "name": "model",
+       "step_id": "step_6a69e513412045279544da79faf5a16c",
+       "step_type": "model",
+       "step_index": 3
+      },
+      "created_at": "2026-11-11 14:07:54.483038+00:00"
+     },
+     {
+      "id": "evt_ceb2134278794e499e65751fc5a69fcf",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 46,
+      "event_type": "step.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "step_id": "step_6a69e513412045279544da79faf5a16c",
+       "step_index": 3
+      },
+      "created_at": "2026-11-11 14:07:54.487002+00:00"
+     },
+     {
+      "id": "evt_4a4aeacc7505443bbce33ddc0cae8cd0",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "sequence": 47,
+      "event_type": "run.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "display": "回复结束",
+       "actor_id": "celery:10",
+       "to_status": "succeeded",
+       "actor_type": "worker",
+       "from_status": "running"
+      },
+      "created_at": "2026-11-11 14:07:54.490255+00:00"
+     }
+    ],
+    "model_calls": [
+     {
+      "id": "mcall_ac5d564d434c4391baed96091589253c",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "step_id": "step_3f8287a93f054a6c95fba174406a87e5",
+      "provider": "qwen",
+      "model": "qwen3.7-flash",
+      "request_json": {
+       "model": "qwen3.7-flash",
+       "schema": {
+        "name": "orchestrator_plan",
+        "schema": {
+         "type": "object",
+         "required": [
+          "tasks"
+         ],
+         "properties": {
+          "tasks": {
+           "type": "array",
+           "items": {
+            "type": "object",
+            "required": [
+             "id",
+             "name",
+             "input",
+             "depends_on"
+            ],
+            "properties": {
+             "id": {
+              "type": "string"
+             },
+             "name": {
+              "type": "string"
+             },
+             "input": {
+              "type": "object"
+             },
+             "depends_on": {
+              "type": "array",
+              "items": {
+               "type": "string"
+              }
+             }
+            },
+            "additionalProperties": false
+           }
+          }
+         },
+         "additionalProperties": false
+        },
+        "strict": true
+       },
+       "system": "你是品牌经销商工作台的编排器。你不跟用户聊天或查询工具，只根据现在已有的工具（包含原生 tools，agent，MCP 等）输出运行时要执行的计划。\n\n## 可用工具（与 tools= 相同的 JSON；name 用 function.name，input 按 parameters 填）\n[\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"web_search\",\n      \"description\": \"检索公开网页，查找模型还不知道的当前信息、新闻或报告。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"query\": {\n            \"type\": \"string\",\n            \"description\": \"检索关键词\"\n          }\n        },\n        \"required\": [\n          \"query\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"translate\",\n      \"description\": \"用户要求翻译时，把文字译成另一种语言。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"target_language\": {\n            \"type\": \"string\",\n            \"description\": \"要译成的语言，例如英语、德语、中文\"\n          },\n          \"text\": {\n            \"type\": \"string\",\n            \"description\": \"要翻译的原话，当这些话就在这条用户消息里时填写\"\n          },\n          \"source\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"message\",\n              \"last_assistant\",\n              \"report\"\n            ],\n            \"description\": \"`text` 为空时，从哪里取文字\"\n          }\n        },\n        \"required\": [\n          \"target_language\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"exchange_rate\",\n      \"description\": \"查询汇率（欧洲央行，经由 Frankfurter）。用于货币换算的问题；不要编造汇率。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"base_currency\": {\n            \"type\": \"string\",\n            \"description\": \"源货币的 ISO 代码，例如 CNY、USD、EUR（也接受 RMB）\"\n          },\n          \"target_currency\": {\n            \"type\": \"string\",\n            \"description\": \"目标货币的 ISO 代码，例如 EUR、USD、CNY\"\n          },\n          \"amount\": {\n            \"type\": \"number\",\n            \"description\": \"要换算的源货币金额（默认 1）\"\n          }\n        },\n        \"required\": [\n          \"base_currency\",\n          \"target_currency\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"send_email\",\n      \"description\": \"用户明确要求给某人发邮件时发送。不要编造收件人。主题和正文尽量短、清楚。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"to\": {\n            \"type\": \"string\",\n            \"description\": \"收件人邮箱\"\n          },\n          \"subject\": {\n            \"type\": \"string\",\n            \"description\": \"邮件主题\"\n          },\n          \"body\": {\n            \"type\": \"string\",\n            \"description\": \"纯文本正文\"\n          },\n          \"cc\": {\n            \"type\": \"string\",\n            \"description\": \"可选的抄送地址\"\n          }\n        },\n        \"required\": [\n          \"to\",\n          \"subject\",\n          \"body\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_find\",\n      \"description\": \"Start here: a task in plain words -> the best endpoints (3 by default) of 733, each with the params the task supplies (URLs and @handles resolved), the params still missing, the credit cost and the exact call. With no task it lists platforms, or one platform's endpoints. Free; no key needed.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_endpoint\",\n      \"description\": \"Read before calling: one endpoint's purpose, params, where the rows are and up to 25 response fields, cost rule, paging, latency, timeout, next endpoints and a sample link. id (or platform+resource, path), a platform slug (its endpoints) or a guide topic. Free.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_estimate\",\n      \"description\": \"Exact credits before you spend: one call (id, platform+resource or path, plus the params you will send; calls for a job total; items for a walk) or a plan of several calls. Uses the API's estimator when available, else the bundled pricing. A platform slug gives its price table; no id gives the pricing overview. Free.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_request\",\n      \"description\": \"Call one endpoint (platform+resource, or id, or path). Validated locally first (a bad call is free), quoted, refused above max_credits and confirmed above the threshold. A large page is cut at row boundaries; socialcrawl_collect result_id reads the rest. Spends credits; needs SOCIALCRAWL_API_KEY.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_collect\",\n      \"description\": \"Walk a paged endpoint (id, platform+resource or path) to `items` unique rows, the last page or max_credits: cursors supplied, duplicates dropped, stops on a 402, refused free when one page exceeds max_credits. Small results come back whole. result_id (+offset, limit, format) reads a stored result, free. Spends credits.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_account\",\n      \"description\": \"Free: balance (default, with this session's spend), transactions (ledger), usage (per key per day; from/to YYYY-MM-DD, ≤92 days), status (health; check before retrying a 502/503), freshness (vs live catalogue), notifications (inbox).\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_manage\",\n      \"description\": \"By area + action: monitors, cohorts, web (scrape, crawl, agents, page monitors, sessions), jobs, discover, search_runs (search lists, watches), creator_runs, review_history, events (feed, webhooks). Wrong fields refused free. Managing is free; scrapes, jobs, queries, run_more/include, monitor runs bill.\\ndry_run: true quotes, creating nothing. rows_new alerts need track. Docs: discover-runs, search-runs.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  }\n]\n\n## 5 个 Agent 代理（name 必须写完整的代理名，带 _agent 后缀）\n- po_agent — 用户要求下采购单、修改采购单，或延续一张未完成的采购订单。\n- contract_agent — 合同上传解析。用户上传合同文件后，你需要调用这个 agent。这里需要文件字节，不能只有文件名称。如果用户没有明确说要上传、解析合同（或相似含义），则不排这个任务。\n- report_agent — 按标准大纲以及用户要求写一份报告草稿。Report Agent 自己会有调用工具的计划，因此你只需要调用 report_agent 即可，即使判断需要有其他工具来辅助它，也不需要调用。\n- brand_agent — 关于品牌自有材料的问题（故事、规格、营销文案）。\n- data_agent — 判断用户需要的内容需要从已有数据库中获取，比如关于这个合作关系的订单、付款、动销、合同条款或产品目录的问题。\n\n规则：\n- 先快速判断是否需要使用工具，如果不需要，直接返回空数组。空计划不会进工具循环，由作答模型直接回复。\n- 这一轮真正要做的事都写进 tasks，可以有多项，可以根据用户要求有串行或并行的逻辑，tasks之间需要判断是否有依赖关系，实际运行时会把没有依赖的任务交给不同的 worker 一起执行。\n- 代理的 name 只能是上面写的代理名（`po_agent` 等）。工具的 name 只能是上一节「可用工具」里的函数名。不需要写 kind，运行时按 name 判断是代理还是工具。\n- 写报表时只排 report_agent，不要为同一份草稿再排 data_agent。用户另外问了一个数字问题时，再排一个 data_agent，并且不要放进 report_agent 的 depends_on。\n- po_agent、contract_agent、report_agent 这一轮只产出草稿。确认入库发生在各自的浮窗里，所以这三项可以同时出现。\n- 同一个会话里有未完成的采购单（收集中 / 待确认）时，计划里保留这一个 po_agent，同时仍可排其它任务，但不要再排第二个 po_agent。\n- 只有下一步要用上一步的结果时才填 depends_on。彼此独立的任务把 depends_on 留空。\n- 每个 data_agent 任务的 input 必须包含 `question`、`deliver` 和 `columns`。`columns` 写下游实际需要的结果列名；只要问题需要多个字段，全部列出，不要只写一个代表列。\n- `deliver` 只填 `answer` 或 `data`：本轮唯一任务是 data_agent、没有下游依赖时填 `answer`；有其他任务、需要汇总或存在下游依赖时填 `data`。\n- 某一步依赖上一步的正文时，不要在 input 里编占位句。运行时会把依赖步骤的结果补进后续工具的参数（例如检索结果补进 translate 的 text）。\n- 只有用户明确要求发邮件时才排 send_email；若用户要「翻译后发邮件」，再排 send_email 并 depends_on 翻译，运行时可将译文补进 body。\n- 不要编造 SKU、价格、日期或国家。每个任务的 input 里只放用户说过的内容。\n\n只返回一个原始 JSON 对象：\n{\"tasks\": [{\"id\": string, \"name\": string, \"input\": object, \"depends_on\": [string]}]}\n",
+       "messages": [
+        {
+         "role": "user",
+         "content": "=== 未完成采购单 ===\n有\n\n=== 附件 ===\n（无）\n\n=== 最近对话 ===\n（无）\n\n=== 消息 ===\n2026年9月采购金额比8月变化了多少？百分比是多少？"
+        }
+       ]
+      },
+      "response_json": {
+       "json": {
+        "tasks": [
+         {
+          "id": "data_1",
+          "name": "data_agent",
+          "input": {
+           "columns": [
+            "month",
+            "purchase_amount"
+           ],
+           "deliver": "answer",
+           "question": "2026年9月采购金额比8月变化了多少？百分比是多少？"
+          },
+          "depends_on": []
+         }
+        ]
+       }
+      },
+      "prompt_tokens": 2588,
+      "completion_tokens": 106,
+      "cache_hit_tokens": 2560,
+      "cache_miss_tokens": 28,
+      "cache_creation_tokens": null,
+      "usage_source": "actual",
+      "latency_ms": 3512,
+      "status": "succeeded",
+      "error_json": {},
+      "created_at": "2026-11-11 14:07:41.243743+00:00"
+     },
+     {
+      "id": "mcall_6458f1d6a27a43758c57b52c0305990f",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "step_id": "step_994734e9f9744386879823d6af530452",
+      "provider": "qwen",
+      "model": "qwen3.7-flash",
+      "request_json": {
+       "model": "qwen3.7-flash",
+       "system": "你是品牌与已入驻经销商对话时的工作台助手。你只负责开口回复。请使用用户的语言。\n\n这一轮要跑的采购单、合同、报表、查数、检索和工具，如果已经执行，结果会放在给你的材料里。没有这些材料时，就直接回答用户这一句。\n\n规则：\n- 不要编造 SKU、价格、总额、汇率或合同折扣。数字、汇率、合同条款只引用材料里有的。品牌资料只根据给出的段落说。\n- 查数材料里 `shown_rows` 小于 `row_count` 时，你只看到前 `shown_rows` 行，没看到的行不要下结论；`truncated: true` 表示查询本身触到行数上限，只能说结果被截断，不能把 `row_count` 当成完整记录总数。\n- 查数结果带 `no_matching_records: true` 时，说明没有匹配的记录，要明确说\"没有数据\"，不要说成 0 或\"金额为 0\"。\n- 问的是比较、变化、增减或占比时，把参与比较的每个原始数字和结果一起写出来（例如「9 月 6731.82，8 月 7405.53，减少 673.71，约 -9.1%」），不要只给差值或百分比。\n- 某一项失败或没有跑到，就说明没拿到，不要补一个听起来合理的数。\n- 采购单、合同、报表如果出了草稿，告诉用户在右侧对应标签里查看。点那个标签上的确认才会下单或入库。不要说已经下单、已经归档或已经保存报表。\n- 只有用户明确要求发邮件、并且材料里有发送结果时，才提发信。不要编造收件地址。\n- 寒暄、澄清或材料里没有可引用的事实时，短答即可。需要文件却没有附件时，请他们附上。\n- 回复要短，把这一轮的结果说清楚，不要重复材料原文。\n",
+       "messages": [
+        {
+         "role": "user",
+         "content": "=== 用户 ===\n2026年9月采购金额比8月变化了多少？百分比是多少？\n\n=== 这一轮结果 ===\n[{\"id\": \"data_1\", \"ok\": false, \"kind\": \"agent\", \"name\": \"data.query\", \"error\": \"query result is missing required columns: month, purchase_amount\", \"status\": \"failed\", \"payload\": {\"ok\": false, \"sql\": \"WITH monthly AS (SELECT DATE_TRUNC('MONTH', submitted_at) AS month, SUM(total_amount) AS purchase_amount FROM purchase_orders WHERE submitted_at >= '2026-08-01' AND submitted_at < '2026-10-01' GROUP BY 1) SELECT MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) AS aug_amount, MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) AS sep_amount, MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) - MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) AS change_amount, (MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) - MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END)) / MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) * 100 AS change_percent FROM monthly LIMIT 100\", \"rows\": [{\"aug_amount\": 7405.53, \"sep_amount\": 6731.82, \"change_amount\": -673.71, \"change_percent\": -9.097390733681452}], \"error\": \"query result is missing required columns: month, purchase_amount\", \"score\": 95, \"log_id\": 654, \"tables\": [\"purchase_orders\", \"purchase_order_items\"], \"columns\": [\"aug_amount\", \"sep_amount\", \"change_amount\", \"change_percent\"], \"deliver\": \"answer\", \"handoff\": \"\", \"complete\": false, \"row_count\": 1, \"truncated\": false, \"error_type\": null, \"rows_handle\": 654, \"missing_columns\": [\"month\", \"purchase_amount\"], \"shown_rows\": 1, \"no_matching_records\": false}}]"
+        }
+       ]
+      },
+      "response_json": {
+       "text": "查询失败，缺少必要字段（month, purchase_amount），无法提供数据。"
+      },
+      "prompt_tokens": 996,
+      "completion_tokens": 16,
+      "cache_hit_tokens": 0,
+      "cache_miss_tokens": 996,
+      "cache_creation_tokens": null,
+      "usage_source": "actual",
+      "latency_ms": 6707,
+      "status": "succeeded",
+      "error_json": {},
+      "created_at": "2026-11-11 14:07:54.468218+00:00"
+     }
+    ],
+    "tool_calls": [],
+    "checkpoints": [
+     {
+      "id": "ckpt_3ed73c60dc3746b7a422db3bc41c03e2",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "checkpoint_index": 1,
+      "state_json": {
+       "last": "user",
+       "context": [],
+       "orchestrator": {
+        "phase": "planned",
+        "tasks": [
+         {
+          "id": "data_1",
+          "kind": "agent",
+          "name": "data",
+          "input": {
+           "columns": [
+            "month",
+            "purchase_amount"
+           ],
+           "deliver": "answer",
+           "question": "2026年9月采购金额比8月变化了多少？百分比是多少？"
+          },
+          "depends_on": []
+         }
+        ],
+        "results": {},
+        "wave_id": null,
+        "finished": [],
+        "wave_ids": []
+       },
+       "completed_tool_calls": []
+      },
+      "created_at": "2026-11-11 14:07:41.254959+00:00"
+     },
+     {
+      "id": "ckpt_ac9d1ae775274a4eac227ea8ee09558c",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "checkpoint_index": 2,
+      "state_json": {
+       "last": "user",
+       "context": [],
+       "orchestrator": {
+        "tasks": [
+         {
+          "id": "data_1",
+          "kind": "agent",
+          "name": "data",
+          "input": {
+           "columns": [
+            "month",
+            "purchase_amount"
+           ],
+           "deliver": "answer",
+           "question": "2026年9月采购金额比8月变化了多少？百分比是多少？"
+          },
+          "depends_on": []
+         }
+        ],
+        "results": {},
+        "wave_id": "175cfc655fcf4e9eb5f798762dae1685",
+        "finished": [],
+        "wave_ids": [
+         "data_1"
+        ]
+       },
+       "completed_tool_calls": []
+      },
+      "created_at": "2026-11-11 14:07:41.261087+00:00"
+     },
+     {
+      "id": "ckpt_49b908a09cfb48018a07a641fe201606",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "checkpoint_index": 3,
+      "state_json": {
+       "last": "user",
+       "context": [],
+       "orchestrator": {
+        "tasks": [
+         {
+          "id": "data_1",
+          "kind": "agent",
+          "name": "data",
+          "input": {
+           "columns": [
+            "month",
+            "purchase_amount"
+           ],
+           "deliver": "answer",
+           "question": "2026年9月采购金额比8月变化了多少？百分比是多少？"
+          },
+          "depends_on": []
+         }
+        ],
+        "results": {
+         "data_1": {
+          "id": "data_1",
+          "ok": false,
+          "kind": "agent",
+          "name": "data.query",
+          "error": "query result is missing required columns: month, purchase_amount",
+          "status": "failed",
+          "payload": {
+           "ok": false,
+           "sql": "WITH monthly AS (SELECT DATE_TRUNC('MONTH', submitted_at) AS month, SUM(total_amount) AS purchase_amount FROM purchase_orders WHERE submitted_at >= '2026-08-01' AND submitted_at < '2026-10-01' GROUP BY 1) SELECT MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) AS aug_amount, MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) AS sep_amount, MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) - MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) AS change_amount, (MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) - MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END)) / MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) * 100 AS change_percent FROM monthly LIMIT 100",
+           "rows": [
+            {
+             "aug_amount": 7405.53,
+             "sep_amount": 6731.82,
+             "change_amount": -673.71,
+             "change_percent": -9.097390733681452
+            }
+           ],
+           "error": "query result is missing required columns: month, purchase_amount",
+           "score": 95,
+           "log_id": 654,
+           "tables": [
+            "purchase_orders",
+            "purchase_order_items"
+           ],
+           "columns": [
+            "aug_amount",
+            "sep_amount",
+            "change_amount",
+            "change_percent"
+           ],
+           "deliver": "answer",
+           "handoff": "",
+           "complete": false,
+           "row_count": 1,
+           "truncated": false,
+           "error_type": null,
+           "rows_handle": 654,
+           "missing_columns": [
+            "month",
+            "purchase_amount"
+           ]
+          }
+         }
+        },
+        "wave_id": "175cfc655fcf4e9eb5f798762dae1685",
+        "finished": [
+         "data_1"
+        ],
+        "wave_ids": [
+         "data_1"
+        ]
+       },
+       "completed_tool_calls": []
+      },
+      "created_at": "2026-11-11 14:07:47.715176+00:00"
+     },
+     {
+      "id": "ckpt_35b13c1adb6b4f3bb957c19e82da6092",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "checkpoint_index": 4,
+      "state_json": {
+       "last": "user",
+       "context": [],
+       "orchestrator": {
+        "phase": "answer_done",
+        "tasks": [
+         {
+          "id": "data_1",
+          "kind": "agent",
+          "name": "data",
+          "input": {
+           "columns": [
+            "month",
+            "purchase_amount"
+           ],
+           "deliver": "answer",
+           "question": "2026年9月采购金额比8月变化了多少？百分比是多少？"
+          },
+          "depends_on": []
+         }
+        ],
+        "answer": "查询失败，缺少必要字段（month, purchase_amount），无法提供数据。",
+        "results": {
+         "data_1": {
+          "id": "data_1",
+          "ok": false,
+          "kind": "agent",
+          "name": "data.query",
+          "error": "query result is missing required columns: month, purchase_amount",
+          "status": "failed",
+          "payload": {
+           "ok": false,
+           "sql": "WITH monthly AS (SELECT DATE_TRUNC('MONTH', submitted_at) AS month, SUM(total_amount) AS purchase_amount FROM purchase_orders WHERE submitted_at >= '2026-08-01' AND submitted_at < '2026-10-01' GROUP BY 1) SELECT MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) AS aug_amount, MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) AS sep_amount, MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) - MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) AS change_amount, (MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) - MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END)) / MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) * 100 AS change_percent FROM monthly LIMIT 100",
+           "rows": [
+            {
+             "aug_amount": 7405.53,
+             "sep_amount": 6731.82,
+             "change_amount": -673.71,
+             "change_percent": -9.097390733681452
+            }
+           ],
+           "error": "query result is missing required columns: month, purchase_amount",
+           "score": 95,
+           "log_id": 654,
+           "tables": [
+            "purchase_orders",
+            "purchase_order_items"
+           ],
+           "columns": [
+            "aug_amount",
+            "sep_amount",
+            "change_amount",
+            "change_percent"
+           ],
+           "deliver": "answer",
+           "handoff": "",
+           "complete": false,
+           "row_count": 1,
+           "truncated": false,
+           "error_type": null,
+           "rows_handle": 654,
+           "missing_columns": [
+            "month",
+            "purchase_amount"
+           ]
+          }
+         }
+        },
+        "wave_id": null,
+        "finished": [
+         "data_1"
+        ],
+        "wave_ids": []
+       },
+       "completed_tool_calls": []
+      },
+      "created_at": "2026-11-11 14:07:54.475829+00:00"
+     }
+    ],
+    "usage_records": [
+     {
+      "id": "usage_c298d97825f548fd8a01d70700e87bb1",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "org_id": "dist-liancai",
+      "user_id": "user-liancai-chen",
+      "provider": "qwen",
+      "model": "qwen3.7-flash",
+      "prompt_tokens": 2588,
+      "completion_tokens": 106,
+      "cache_hit_tokens": 2560,
+      "cache_miss_tokens": 28,
+      "cache_creation_tokens": null,
+      "total_tokens": 2694,
+      "estimated_cost_cents": 0,
+      "usage_source": "actual",
+      "created_at": "2026-11-11 14:07:41.243743+00:00"
+     },
+     {
+      "id": "usage_c83f6089a06c4ec79d7a71c20e7bfbd5",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "org_id": "dist-liancai",
+      "user_id": "user-liancai-chen",
+      "provider": "qwen",
+      "model": "qwen3.7-flash",
+      "prompt_tokens": 996,
+      "completion_tokens": 16,
+      "cache_hit_tokens": 0,
+      "cache_miss_tokens": 996,
+      "cache_creation_tokens": null,
+      "total_tokens": 1012,
+      "estimated_cost_cents": 0,
+      "usage_source": "actual",
+      "created_at": "2026-11-11 14:07:54.468218+00:00"
+     }
+    ],
+    "audit_logs": [
+     {
+      "id": "aud_4462527352e5426a8d9e2de54aae6b34",
+      "user_id": "celery:10",
+      "org_id": "dist-liancai",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "metadata_json": {
+       "actor_id": "celery:10",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:10"
+      },
+      "created_at": "2026-11-11 14:07:37.702604+00:00"
+     },
+     {
+      "id": "aud_1a029f5f760d4243bb88596728cb6bd6",
+      "user_id": "celery:10",
+      "org_id": "dist-liancai",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "metadata_json": {
+       "wave_id": "175cfc655fcf4e9eb5f798762dae1685",
+       "actor_id": "celery:10",
+       "task_ids": [
+        "data_1"
+       ],
+       "to_status": "waiting_for_tasks",
+       "actor_type": "worker",
+       "from_status": "running"
+      },
+      "created_at": "2026-11-11 14:07:41.261087+00:00"
+     },
+     {
+      "id": "aud_882e22d06e804d7182ae06ae6956f46d",
+      "user_id": "user-liancai-chen",
+      "org_id": "dist-liancai",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "metadata_json": {
+       "wave_id": "175cfc655fcf4e9eb5f798762dae1685",
+       "actor_id": "user-liancai-chen",
+       "to_status": "queued",
+       "actor_type": "worker",
+       "from_status": "waiting_for_tasks"
+      },
+      "created_at": "2026-11-11 14:07:47.718429+00:00"
+     },
+     {
+      "id": "aud_f812d07abf6849eb84a47d34d225ad8a",
+      "user_id": "celery:10",
+      "org_id": "dist-liancai",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "metadata_json": {
+       "actor_id": "celery:10",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:10"
+      },
+      "created_at": "2026-11-11 14:07:47.724981+00:00"
+     },
+     {
+      "id": "aud_57a6845f37074b0799f251a18f5742f5",
+      "user_id": "celery:10",
+      "org_id": "dist-liancai",
+      "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "metadata_json": {
+       "status": "succeeded",
+       "actor_id": "celery:10",
+       "to_status": "succeeded",
+       "actor_type": "worker",
+       "from_status": "running"
+      },
+      "created_at": "2026-11-11 14:07:54.490255+00:00"
+     }
+    ],
+    "outbox": [
+     {
+      "id": "obx_9c3a4069ba0d455a9b30d7e7f5c30528",
+      "job_type": "execute_run",
+      "payload_json": {
+       "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+       "run_type": "chat",
+       "trace_id": "4bef37edd53a48e6afa4e4b027bca9a1"
+      },
+      "status": "dispatched",
+      "attempts": 0,
+      "max_attempts": 10,
+      "next_attempt_at": "2026-11-11 14:07:37.697041+00:00",
+      "last_error_json": null,
+      "created_at": "2026-11-11 14:07:37.697041+00:00",
+      "dispatch_at": "2026-11-11 14:07:37.700287+00:00"
+     },
+     {
+      "id": "obx_6ab94bb5949a45019d110ff62bc921f8",
+      "job_type": "execute_run",
+      "payload_json": {
+       "run_id": "run_76fccc6449064b0d893831e24c36bb44",
+       "run_type": "chat",
+       "trace_id": "4bef37edd53a48e6afa4e4b027bca9a1"
+      },
+      "status": "dispatched",
+      "attempts": 0,
+      "max_attempts": 10,
+      "next_attempt_at": "2026-11-11 14:07:47.718429+00:00",
+      "last_error_json": null,
+      "created_at": "2026-11-11 14:07:47.718429+00:00",
+      "dispatch_at": "2026-11-11 14:07:47.722425+00:00"
+     }
+    ],
+    "dead_letters": []
+   }
+  },
+  "run_15ff6e3b5eed45138354baaefa214a33": {
+   "run_type": "data",
+   "status": "succeeded",
+   "trace": {
+    "run": {
+     "id": "run_15ff6e3b5eed45138354baaefa214a33",
+     "org_id": "dist-liancai",
+     "user_id": "user-liancai-chen",
+     "run_type": "data",
+     "idempotency_key": "chat:02ae5bf8392e42d78e8ec9ad38829924:run_76fccc6449064b0d893831e24c36bb44:data_1",
+     "status": "succeeded",
+     "input_json": {
+      "kind": "agent",
+      "name": "data",
+      "input": {
+       "columns": [
+        "month",
+        "purchase_amount"
+       ],
+       "deliver": "answer",
+       "question": "2026年9月采购金额比8月变化了多少？百分比是多少？"
+      },
+      "prior": [],
+      "images": [],
+      "message": "2026年9月采购金额比8月变化了多少？百分比是多少？",
+      "task_id": "data_1",
+      "wave_id": "175cfc655fcf4e9eb5f798762dae1685",
+      "documents": [],
+      "tool_name": "data.query",
+      "session_id": "02ae5bf8392e42d78e8ec9ad38829924",
+      "attachments": [],
+      "owner_run_id": "run_76fccc6449064b0d893831e24c36bb44"
+     },
+     "output_json": {
+      "id": "data_1",
+      "ok": false,
+      "kind": "agent",
+      "name": "data.query",
+      "error": "query result is missing required columns: month, purchase_amount",
+      "status": "failed",
+      "payload": {
+       "ok": false,
+       "sql": "WITH monthly AS (SELECT DATE_TRUNC('MONTH', submitted_at) AS month, SUM(total_amount) AS purchase_amount FROM purchase_orders WHERE submitted_at >= '2026-08-01' AND submitted_at < '2026-10-01' GROUP BY 1) SELECT MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) AS aug_amount, MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) AS sep_amount, MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) - MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) AS change_amount, (MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) - MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END)) / MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) * 100 AS change_percent FROM monthly LIMIT 100",
+       "rows": [
+        {
+         "aug_amount": 7405.53,
+         "sep_amount": 6731.82,
+         "change_amount": -673.71,
+         "change_percent": -9.097390733681452
+        }
+       ],
+       "error": "query result is missing required columns: month, purchase_amount",
+       "score": 95,
+       "log_id": 654,
+       "tables": [
+        "purchase_orders",
+        "purchase_order_items"
+       ],
+       "columns": [
+        "aug_amount",
+        "sep_amount",
+        "change_amount",
+        "change_percent"
+       ],
+       "deliver": "answer",
+       "handoff": "",
+       "complete": false,
+       "row_count": 1,
+       "truncated": false,
+       "error_type": null,
+       "rows_handle": 654,
+       "missing_columns": [
+        "month",
+        "purchase_amount"
+       ]
+      }
+     },
+     "error_json": null,
+     "created_at": "2026-11-11 14:07:41.261087+00:00",
+     "queued_at": "2026-11-11 14:07:41.261087+00:00",
+     "queue_heartbeat_at": null,
+     "started_at": "2026-11-11 14:07:41.278001+00:00",
+     "ended_at": "2026-11-11 14:07:47.725212+00:00",
+     "cancel_requested_at": null,
+     "updated_at": "2026-11-11 14:07:47.725212+00:00",
+     "lease_owner": "celery:11",
+     "lease_expires_at": "2026-11-11 14:17:41.277998+00:00",
+     "attempts": 1,
+     "redispatch_count": 0,
+     "parent_run_id": null,
+     "owner_run_id": "run_76fccc6449064b0d893831e24c36bb44",
+     "trace_id": "c917198526164645b02679766cd0cdf5",
+     "max_model_calls": null,
+     "max_tokens": null,
+     "max_tool_calls": null,
+     "max_duration_seconds": null
+    },
+    "steps": [
+     {
+      "id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "step_index": 1,
+      "step_type": "tool",
+      "name": "data.query",
+      "status": "failed",
+      "input_json": {
+       "columns": [
+        "month",
+        "purchase_amount"
+       ],
+       "deliver": "answer",
+       "question": "2026年9月采购金额比8月变化了多少？百分比是多少？"
+      },
+      "output_json": null,
+      "error_json": {
+       "message": "query result is missing required columns: month, purchase_amount"
+      },
+      "started_at": "2026-11-11 14:07:41.290674+00:00",
+      "ended_at": "2026-11-11 14:07:47.707757+00:00"
+     }
+    ],
+    "events": [
+     {
+      "id": "evt_6b8c070129bb441b807fb314c98c975e",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 1,
+      "event_type": "run.created",
+      "payload_json": {
+       "status": "queued",
+       "display": "已开始",
+       "owner_run_id": "run_76fccc6449064b0d893831e24c36bb44"
+      },
+      "created_at": "2026-11-11 14:07:41.261087+00:00"
+     },
+     {
+      "id": "evt_fd6e663ed8b544eab77a084e8eb11abc",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 2,
+      "event_type": "run.enqueued",
+      "payload_json": {
+       "outbox_job_id": "obx_97203281b1a44132b2aa83bbf4c8f5a8"
+      },
+      "created_at": "2026-11-11 14:07:41.273464+00:00"
+     },
+     {
+      "id": "evt_c94b7c8c49e449c785c20b889310eb4d",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 3,
+      "event_type": "run.started",
+      "payload_json": {
+       "actor_id": "celery:11",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:11"
+      },
+      "created_at": "2026-11-11 14:07:41.278001+00:00"
+     },
+     {
+      "id": "evt_eeb251c48dfd4e16aa36b6e5cdad18c0",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 4,
+      "event_type": "step.started",
+      "payload_json": {
+       "name": "data.query",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "step_type": "tool",
+       "step_index": 1
+      },
+      "created_at": "2026-11-11 14:07:41.290674+00:00"
+     },
+     {
+      "id": "evt_a77c20214ef24d6482fee3940742ec2d",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 5,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "max_tokens": null,
+       "route_task": "data.pick",
+       "quality_gate": "response_parsed",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "selected_model": "deepseek-flash",
+       "candidate_index": 0,
+       "max_model_calls": null,
+       "selected_provider": "deepseek",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-11 14:07:41.312988+00:00"
+     },
+     {
+      "id": "evt_39f6160b1f1c49afb7e71535ac40b007",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 6,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "display": "正在思考...",
+       "purpose": "data.pick",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "trace_id": "c917198526164645b02679766cd0cdf5"
+      },
+      "created_at": "2026-11-11 14:07:41.316138+00:00"
+     },
+     {
+      "id": "evt_330696de30e74534a301e64a5a581913",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 7,
+      "event_type": "model.completed",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "status": "succeeded",
+       "purpose": "data.pick",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "usage_source": "actual",
+       "model_call_id": "mcall_f0a31188530b463ea0011e854b47d41a",
+       "prompt_tokens": 983,
+       "cache_hit_tokens": 768,
+       "cache_miss_tokens": 215,
+       "completion_tokens": 11,
+       "cache_creation_tokens": null
+      },
+      "created_at": "2026-11-11 14:07:42.194972+00:00"
+     },
+     {
+      "id": "evt_3d8a7d3a7b3a4c26a145073e991337ca",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 8,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "max_tokens": null,
+       "route_task": "data.sql",
+       "quality_gate": "response_parsed",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "selected_model": "deepseek-flash",
+       "candidate_index": 0,
+       "max_model_calls": null,
+       "selected_provider": "deepseek",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-11 14:07:42.226683+00:00"
+     },
+     {
+      "id": "evt_bacf72bd1cb04f5ea62320115944fad0",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 9,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "display": "正在思考...",
+       "purpose": "data.sql",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "trace_id": "c917198526164645b02679766cd0cdf5"
+      },
+      "created_at": "2026-11-11 14:07:42.230176+00:00"
+     },
+     {
+      "id": "evt_37addb2856d04d73b0bc8bcb86413b3f",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 10,
+      "event_type": "model.completed",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "status": "succeeded",
+       "purpose": "data.sql",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "usage_source": "actual",
+       "model_call_id": "mcall_a33dd167a5d74ae7b8374f569c9728d3",
+       "prompt_tokens": 1193,
+       "cache_hit_tokens": 1024,
+       "cache_miss_tokens": 169,
+       "completion_tokens": 148,
+       "cache_creation_tokens": null
+      },
+      "created_at": "2026-11-11 14:07:43.537372+00:00"
+     },
+     {
+      "id": "evt_f3da84e73ef4441faf568ce67132bcac",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 11,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "max_tokens": null,
+       "route_task": "data.sql.revise",
+       "quality_gate": "response_parsed",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "selected_model": "deepseek-flash",
+       "candidate_index": 0,
+       "max_model_calls": null,
+       "selected_provider": "deepseek",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-11 14:07:43.582878+00:00"
+     },
+     {
+      "id": "evt_dee4f4037b0346ed8436c6889e12518f",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 12,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "display": "正在思考...",
+       "purpose": "data.sql.revise",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "trace_id": "c917198526164645b02679766cd0cdf5"
+      },
+      "created_at": "2026-11-11 14:07:43.586496+00:00"
+     },
+     {
+      "id": "evt_25bafdfedb2d4b90bc4444c1e8478f1f",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 13,
+      "event_type": "model.completed",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "status": "succeeded",
+       "purpose": "data.sql.revise",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "usage_source": "actual",
+       "model_call_id": "mcall_20b0ec54c1a34831b46898d8b3cb9e81",
+       "prompt_tokens": 1369,
+       "cache_hit_tokens": 1152,
+       "cache_miss_tokens": 217,
+       "completion_tokens": 155,
+       "cache_creation_tokens": null
+      },
+      "created_at": "2026-11-11 14:07:44.927291+00:00"
+     },
+     {
+      "id": "evt_e288189a71be4864bc203b2b5f4a86b4",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 14,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "max_tokens": null,
+       "route_task": "data.sql.revise",
+       "quality_gate": "response_parsed",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "selected_model": "deepseek-flash",
+       "candidate_index": 0,
+       "max_model_calls": null,
+       "selected_provider": "deepseek",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-11 14:07:44.970522+00:00"
+     },
+     {
+      "id": "evt_f1b31c75067d44dea9a7b1ac250853c4",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 15,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "display": "正在思考...",
+       "purpose": "data.sql.revise",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "trace_id": "c917198526164645b02679766cd0cdf5"
+      },
+      "created_at": "2026-11-11 14:07:44.974387+00:00"
+     },
+     {
+      "id": "evt_4c9ea77918f74b72a63956f748c8d68e",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 16,
+      "event_type": "model.completed",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "status": "succeeded",
+       "purpose": "data.sql.revise",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "usage_source": "actual",
+       "model_call_id": "mcall_48277458ef3e4a5290b764eebefd7bdf",
+       "prompt_tokens": 1376,
+       "cache_hit_tokens": 1152,
+       "cache_miss_tokens": 224,
+       "completion_tokens": 221,
+       "cache_creation_tokens": null
+      },
+      "created_at": "2026-11-11 14:07:46.679956+00:00"
+     },
+     {
+      "id": "evt_87eaffe573324e0d86cb13bd59b05c65",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 17,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "max_tokens": null,
+       "route_task": "data.score",
+       "quality_gate": "response_parsed",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "selected_model": "deepseek-flash",
+       "candidate_index": 0,
+       "max_model_calls": null,
+       "selected_provider": "deepseek",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-11 14:07:46.739503+00:00"
+     },
+     {
+      "id": "evt_62410de7e1964346b7e3fe40453638c8",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 18,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "display": "正在思考...",
+       "purpose": "data.score",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "trace_id": "c917198526164645b02679766cd0cdf5"
+      },
+      "created_at": "2026-11-11 14:07:46.743269+00:00"
+     },
+     {
+      "id": "evt_273705ee8cc6404988568031767b2b23",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 19,
+      "event_type": "model.completed",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "status": "succeeded",
+       "purpose": "data.score",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "trace_id": "c917198526164645b02679766cd0cdf5",
+       "usage_source": "actual",
+       "model_call_id": "mcall_3d3534d60c37470d8129f9bf1a88dc90",
+       "prompt_tokens": 616,
+       "cache_hit_tokens": 0,
+       "cache_miss_tokens": 616,
+       "completion_tokens": 14,
+       "cache_creation_tokens": null
+      },
+      "created_at": "2026-11-11 14:07:47.700523+00:00"
+     },
+     {
+      "id": "evt_c7bfe64620c2441ea4f17eee596a5e14",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 20,
+      "event_type": "tool.failed",
+      "payload_json": {
+       "status": "failed",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "tool_name": "data.query",
+       "tool_call_id": "tcall_9edf99979ab742c4be6744fdce6c904a"
+      },
+      "created_at": "2026-11-11 14:07:47.707757+00:00"
+     },
+     {
+      "id": "evt_742f66c3693e43b1ab09dfdf4a8ae3b6",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 21,
+      "event_type": "step.failed",
+      "payload_json": {
+       "status": "failed",
+       "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+       "step_index": 1
+      },
+      "created_at": "2026-11-11 14:07:47.707757+00:00"
+     },
+     {
+      "id": "evt_669214df04de46ba81e5dbfff40aa940",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "sequence": 22,
+      "event_type": "run.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "display": "回复结束",
+       "actor_id": "celery:11",
+       "to_status": "succeeded",
+       "actor_type": "worker",
+       "from_status": "running"
+      },
+      "created_at": "2026-11-11 14:07:47.725212+00:00"
+     }
+    ],
+    "model_calls": [
+     {
+      "id": "mcall_f0a31188530b463ea0011e854b47d41a",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "request_json": {
+       "model": "deepseek-flash",
+       "schema": {
+        "name": "select_tables",
+        "schema": {
+         "type": "object",
+         "required": [
+          "tables"
+         ],
+         "properties": {
+          "tables": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           }
+          }
+         },
+         "additionalProperties": false
+        },
+        "strict": true
+       },
+       "system": "你选择回答经销商这个问题需要哪些数据库表。你不写 SQL，也不估算数字。\n\n给你的是一份表目录。只返回这份列表里的表。要筛选或聚合的表要包括，要连接的表也要包括。仅仅作为背景的表不要。最多 6 张。如果这些问题无法用这些表回答，返回空列表。\n\n这些表已按当前合作关系、品牌、经销商限定，不要自行添加这些作用域条件。\n问题需要多个数字时，后续 SQL 必须用一条 SELECT 并列输出，不要拆成多次查询。\n\n返回 JSON {\"tables\": [\"exact_table_name\"]}。\n\n=== 表目录 ===\n- brands: 这家经销商合作的品牌。一行。\n- distributors: 这家经销商。一行。\n- partnerships: 这场对话所属的品牌与经销商关系。一行。货币和收货地在这里。\n- products: 这个品牌的产品目录。很大（几十万行）。按 sku 或 name 筛选，或者做聚合。不要把目录列出来。case_price 是每箱价格；moq_units 是件数，不是箱数。\n- commercial_rules: 约束采购单的品牌商业规则。rule_config 的形状取决于 rule_type。contract_id 为 null 表示这条规则不是从协议推导出来的。\n- brand_agent_settings: 品牌工作台的默认商业条款和常驻说明。\n- contracts: 为这个合作关系归档的协议。status 为 active 的是正在生效的；superseded 是更早的一份。期限日期是日历文本，不是时间戳。\n- contract_extractions: 合同阅读器的一次运行。raw 是逐字的 JSON。要数字时优先用规范化后的 contract_* 表。\n- contract_discount_rules: 协议上的一份折扣档期。档位在 contract_discount_tiers。applies_per 和 basis 说明这份档期在计什么。\n- contract_discount_tiers: 折扣档期里的一个档位。to_container 为 null 表示这一档覆盖此后的每一个集装箱。discount_percent 为 0 表示目录价。\n- contract_moqs: 协议里写明的最低数量。\n- contract_price_list: 协议里写明的价格。unit_price 是条款里的数字，不是算出来的箱价。\n- contract_territories: 协议允许或排除的国家。\n- contract_evidence: 合同字段是从文件的哪里读到的。\n- contract_chunks: 一份协议的标题树。body 是节的正文，可能很长；先按 title 或 path 筛选。\n- purchase_orders: 这个合作关系已提交的采购单。这张表上没有 quantity；行数量是 purchase_order_items 上的箱数。金额列已经算好；求和，不要重新计价。eta_date 是日历日。submitted_at 是 UTC 时刻。\n- purchase_order_items: 采购单的一行。quantity 是箱数，不是件数。line_total 已经是 quantity 乘 case_price。\n- po_rule_evaluations: 提交时的规则结果快照。snapshot 是每条规则结果的 JSON 列表。\n- po_events: 订单存在之后发生的事：提交、收货、付款、破损索赔。\n- brand_documents: 品牌上传的文件（演示文稿、目录）。这是文件记录，不是正文。页面文本在 brand_document_pages。原始文件字节不能查询。\n- brand_document_pages: 品牌文档某一页的文本。text 可能很长；按文档或页码筛选。\n- sales_reports: 这家经销商的动销或库存文件。status 为 confirmed 表示有人接受了它。期间列是日历文本（YYYY-MM-DD），不是时间戳。数字在 report_facts。\n- report_extractions: 一次销售报告阅读是怎么找到列的。数字在 report_facts，不在这里。\n- report_facts: 销售报告里的一个数字。除非问题问的是草稿，否则优先 status 为 confirmed。superseded 的事实已被同一期间后来的报告替换；不要把它们和 confirmed 加在一起。period_start 和 period_end 是日历文本 YYYY-MM-DD。numeric_value 是这个数字。\n- memories: 这个人在这个合作关系下留下的备注：偏好、事实、指示、事件。只有 is_active 的行仍然有效。同事的备注不在这里。",
+       "messages": [
+        {
+         "role": "user",
+         "content": "2026年9月采购金额比8月变化了多少？百分比是多少？"
+        }
+       ]
+      },
+      "response_json": {
+       "json": {
+        "tables": [
+         "purchase_orders"
+        ]
+       }
+      },
+      "prompt_tokens": 983,
+      "completion_tokens": 11,
+      "cache_hit_tokens": 768,
+      "cache_miss_tokens": 215,
+      "cache_creation_tokens": null,
+      "usage_source": "actual",
+      "latency_ms": 872,
+      "status": "succeeded",
+      "error_json": {},
+      "created_at": "2026-11-11 14:07:42.190702+00:00"
+     },
+     {
+      "id": "mcall_a33dd167a5d74ae7b8374f569c9728d3",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "request_json": {
+       "model": "deepseek-flash",
+       "schema": {
+        "name": "select_sql",
+        "schema": {
+         "type": "object",
+         "required": [
+          "sql"
+         ],
+         "properties": {
+          "sql": {
+           "type": "string"
+          }
+         },
+         "additionalProperties": false
+        },
+        "strict": true
+       },
+       "system": "你写一条 PostgreSQL SELECT，用下面这些表回答问题。你不估算数字，也不用散文作答。\n\n这些表已按当前合作关系、品牌、经销商限定，不要自行添加这些作用域条件。\n\n规则：\n- 一条 SELECT（WITH 子句可以）。不要 insert、update、delete 或 DDL。\n- 只用下面列出的表和列。表名不加模式前缀，写法与列出的完全一致。\n- 函数用裸名称调用（date_trunc、max）。绝不要写模式前缀，例如 pg_catalog、public 或 information_schema。\n- 日历列（eta_date、period_start、period_end、term_start_date、term_end_date、effective_from、effective_until、reporting_period）是文本 YYYY-MM-DD 或期间标签，不是时间戳。按文本比较。\n- created_at、updated_at、submitted_at、confirmed_at、extracted_at 是 timestamptz。\n- purchase_order_items.quantity 是箱数。金额列已经算好，不要重复乘数量。\n- 要计数、求和或总额时，返回聚合结果。不要把明细行列出来，指望读者自己加总。\n- 问题需要多个数字时，写成一条 SELECT：用 WITH 分别聚合后同一行并列输出，或 UNION ALL 输出“指标/数值”。最终只采用一次查询的结果。\n- report_facts 除非问题问的是草稿或被替换的行，否则使用 status = 'confirmed'。不要把 superseded 的行加进已确认的合计。\n- 结果涉及产品时同时选择名称和 SKU。products 目录很大，必须按 SKU、名称筛选或聚合。\n- 长文本只在问题要求时选择。\n- 聚合不要用 COALESCE 把空结果补成 0。没有匹配记录时 SUM/AVG 应保持 NULL；需要时同时返回 COUNT(*) 作为记录数，别名里带 count。\n- 观察里出现 too_many_rows，说明这条查询触到了行数上限，返回的行不是完整答案。按提示改写：要汇总就在 SQL 里聚合，要缩小范围就加筛选；只要前几名就写明确的 LIMIT。不要对被截断的行求和、计数或下结论，也不要不改写就结束。\n\n返回 JSON {\"sql\": \"SELECT ...\"}。\n\n=== 结构 ===\n表 purchase_orders — 这个合作关系已提交的采购单。这张表上没有 quantity；行数量是 purchase_order_items 上的箱数。金额列已经算好；求和，不要重新计价。eta_date 是日历日。submitted_at 是 UTC 时刻。\n  常与这些表连接：purchase_order_items\n  id text — 主键。\n  po_number text — 给人看的订单号。 示例：['PO-20261019-0001']\n  brand_id text — 对应 brands.id。\n  distributor_id text — 对应 distributors.id。\n  partnership_id text — 对应 partnerships.id。\n  status text — 订单履行到哪一步。 示例：['submitted', 'awaiting_payment', 'payment_claimed', 'completed', 'awaiting_refund', 'claim_filed']\n  currency text — 金额列的货币。 示例：['USD']\n  payment_terms text — 这张订单怎么付款。 示例：['50_50', '100_prepaid', 'net_30', 'net_60']\n  incoterms text — 贸易术语。 示例：['FOB', 'CIF', 'EXW', 'DDP', 'DAP', 'CFR']\n  shipping_method text — 怎么运输。 示例：['sea', 'air', 'express', 'land']\n  eta_date text — 预计到达 YYYY-MM-DD，或 null。不是时间戳。\n  ship_to_country text — 收货国家，ISO alpha-2。\n  notes text — 订单上的自由文本备注。\n  discount_amount numeric — 货币金额的折扣，没有时为 null。\n  discount_percentage numeric — 折扣百分比；折扣是金额或没有折扣时为 null。\n  subtotal_amount numeric — 折扣前各行合计之和。\n  total_amount numeric — subtotal_amount 减去 discount_amount。\n  submitted_at timestamptz — 订单提交时间，UTC，或 null。\n  submit_cycle_version integer — 这张订单提交过几次。\n  prepaid_amount numeric — 记为已预付的金额。\n  balance_paid numeric — 交货后记为已付的尾款。\n  created_at timestamptz — 行的创建时间，UTC。\n  updated_at timestamptz — 行的最后更新时间，UTC。\n\n表 purchase_order_items — 采购单的一行。quantity 是箱数，不是件数。line_total 已经是 quantity 乘 case_price。\n  常与这些表连接：purchase_orders\n  id integer — 主键。\n  po_id text — 对应 purchase_orders.id。\n  product_id text — 对应 products.id。\n  sku text — 抄到这一行上的 SKU。\n  product_name text — 抄到这一行上的名称。\n  quantity integer — 箱数。\n  case_price numeric — 这一行一箱的价格。\n  line_total numeric — quantity 乘 case_price。\n  case_pack integer — 下单时的每箱件数。",
+       "messages": [
+        {
+         "role": "user",
+         "content": "2026年9月采购金额比8月变化了多少？百分比是多少？"
+        }
+       ]
+      },
+      "response_json": {
+       "json": {
+        "sql": "WITH monthly AS (SELECT date_trunc('month', submitted_at) AS m, SUM(total_amount) AS amt FROM purchase_orders WHERE submitted_at >= '2026-08-01' AND submitted_at < '2026-10-01' GROUP BY 1) SELECT aug.amt AS aug_amount, sep.amt AS sep_amount, sep.amt - aug.amt AS change_amount, (sep.amt - aug.amt) / aug.amt * 100 AS change_percent FROM (SELECT amt FROM monthly WHERE m = '2026-08-01') aug CROSS JOIN (SELECT amt FROM monthly WHERE m = '2026-09-01') sep"
+       }
+      },
+      "prompt_tokens": 1193,
+      "completion_tokens": 148,
+      "cache_hit_tokens": 1024,
+      "cache_miss_tokens": 169,
+      "cache_creation_tokens": null,
+      "usage_source": "actual",
+      "latency_ms": 1297,
+      "status": "succeeded",
+      "error_json": {},
+      "created_at": "2026-11-11 14:07:43.530338+00:00"
+     },
+     {
+      "id": "mcall_20b0ec54c1a34831b46898d8b3cb9e81",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "request_json": {
+       "model": "deepseek-flash",
+       "schema": {
+        "name": "select_sql",
+        "schema": {
+         "type": "object",
+         "required": [
+          "sql"
+         ],
+         "properties": {
+          "sql": {
+           "type": "string"
+          }
+         },
+         "additionalProperties": false
+        },
+        "strict": true
+       },
+       "system": "你写一条 PostgreSQL SELECT，用下面这些表回答问题。你不估算数字，也不用散文作答。\n\n这些表已按当前合作关系、品牌、经销商限定，不要自行添加这些作用域条件。\n\n规则：\n- 一条 SELECT（WITH 子句可以）。不要 insert、update、delete 或 DDL。\n- 只用下面列出的表和列。表名不加模式前缀，写法与列出的完全一致。\n- 函数用裸名称调用（date_trunc、max）。绝不要写模式前缀，例如 pg_catalog、public 或 information_schema。\n- 日历列（eta_date、period_start、period_end、term_start_date、term_end_date、effective_from、effective_until、reporting_period）是文本 YYYY-MM-DD 或期间标签，不是时间戳。按文本比较。\n- created_at、updated_at、submitted_at、confirmed_at、extracted_at 是 timestamptz。\n- purchase_order_items.quantity 是箱数。金额列已经算好，不要重复乘数量。\n- 要计数、求和或总额时，返回聚合结果。不要把明细行列出来，指望读者自己加总。\n- 问题需要多个数字时，写成一条 SELECT：用 WITH 分别聚合后同一行并列输出，或 UNION ALL 输出“指标/数值”。最终只采用一次查询的结果。\n- report_facts 除非问题问的是草稿或被替换的行，否则使用 status = 'confirmed'。不要把 superseded 的行加进已确认的合计。\n- 结果涉及产品时同时选择名称和 SKU。products 目录很大，必须按 SKU、名称筛选或聚合。\n- 长文本只在问题要求时选择。\n- 聚合不要用 COALESCE 把空结果补成 0。没有匹配记录时 SUM/AVG 应保持 NULL；需要时同时返回 COUNT(*) 作为记录数，别名里带 count。\n- 观察里出现 too_many_rows，说明这条查询触到了行数上限，返回的行不是完整答案。按提示改写：要汇总就在 SQL 里聚合，要缩小范围就加筛选；只要前几名就写明确的 LIMIT。不要对被截断的行求和、计数或下结论，也不要不改写就结束。\n\n返回 JSON {\"sql\": \"SELECT ...\"}。\n\n=== 结构 ===\n表 purchase_orders — 这个合作关系已提交的采购单。这张表上没有 quantity；行数量是 purchase_order_items 上的箱数。金额列已经算好；求和，不要重新计价。eta_date 是日历日。submitted_at 是 UTC 时刻。\n  常与这些表连接：purchase_order_items\n  id text — 主键。\n  po_number text — 给人看的订单号。 示例：['PO-20261019-0001']\n  brand_id text — 对应 brands.id。\n  distributor_id text — 对应 distributors.id。\n  partnership_id text — 对应 partnerships.id。\n  status text — 订单履行到哪一步。 示例：['submitted', 'awaiting_payment', 'payment_claimed', 'completed', 'awaiting_refund', 'claim_filed']\n  currency text — 金额列的货币。 示例：['USD']\n  payment_terms text — 这张订单怎么付款。 示例：['50_50', '100_prepaid', 'net_30', 'net_60']\n  incoterms text — 贸易术语。 示例：['FOB', 'CIF', 'EXW', 'DDP', 'DAP', 'CFR']\n  shipping_method text — 怎么运输。 示例：['sea', 'air', 'express', 'land']\n  eta_date text — 预计到达 YYYY-MM-DD，或 null。不是时间戳。\n  ship_to_country text — 收货国家，ISO alpha-2。\n  notes text — 订单上的自由文本备注。\n  discount_amount numeric — 货币金额的折扣，没有时为 null。\n  discount_percentage numeric — 折扣百分比；折扣是金额或没有折扣时为 null。\n  subtotal_amount numeric — 折扣前各行合计之和。\n  total_amount numeric — subtotal_amount 减去 discount_amount。\n  submitted_at timestamptz — 订单提交时间，UTC，或 null。\n  submit_cycle_version integer — 这张订单提交过几次。\n  prepaid_amount numeric — 记为已预付的金额。\n  balance_paid numeric — 交货后记为已付的尾款。\n  created_at timestamptz — 行的创建时间，UTC。\n  updated_at timestamptz — 行的最后更新时间，UTC。\n\n表 purchase_order_items — 采购单的一行。quantity 是箱数，不是件数。line_total 已经是 quantity 乘 case_price。\n  常与这些表连接：purchase_orders\n  id integer — 主键。\n  po_id text — 对应 purchase_orders.id。\n  product_id text — 对应 products.id。\n  sku text — 抄到这一行上的 SKU。\n  product_name text — 抄到这一行上的名称。\n  quantity integer — 箱数。\n  case_price numeric — 这一行一箱的价格。\n  line_total numeric — quantity 乘 case_price。\n  case_pack integer — 下单时的每箱件数。\n\n上一版 SELECT 没有得到可用结果。按报错或缺列说明改这一条，不要改成另一个问题，也不要退回已经失败的版本。",
+       "messages": [
+        {
+         "role": "user",
+         "content": "{\"failed_sql\": \"WITH monthly AS (SELECT date_trunc('month', submitted_at) AS m, SUM(total_amount) AS amt FROM purchase_orders WHERE submitted_at >= '2026-08-01' AND submitted_at < '2026-10-01' GROUP BY 1) SELECT aug.amt AS aug_amount, sep.amt AS sep_amount, sep.amt - aug.amt AS change_amount, (sep.amt - aug.amt) / aug.amt * 100 AS change_percent FROM (SELECT amt FROM monthly WHERE m = '2026-08-01') aug CROSS JOIN (SELECT amt FROM monthly WHERE m = '2026-09-01') sep\", \"error\": \"missing required columns: month, purchase_amount\"}"
+        }
+       ]
+      },
+      "response_json": {
+       "json": {
+        "sql": "WITH monthly AS (SELECT date_trunc('month', submitted_at) AS month, SUM(total_amount) AS purchase_amount FROM purchase_orders WHERE submitted_at >= '2026-08-01' AND submitted_at < '2026-10-01' GROUP BY 1) SELECT aug.purchase_amount AS aug_amount, sep.purchase_amount AS sep_amount, sep.purchase_amount - aug.purchase_amount AS change_amount, (sep.purchase_amount - aug.purchase_amount) / aug.purchase_amount * 100 AS change_percent FROM (SELECT purchase_amount FROM monthly WHERE month = '2026-08-01') aug CROSS JOIN (SELECT purchase_amount FROM monthly WHERE month = '2026-09-01') sep"
+       }
+      },
+      "prompt_tokens": 1369,
+      "completion_tokens": 155,
+      "cache_hit_tokens": 1152,
+      "cache_miss_tokens": 217,
+      "cache_creation_tokens": null,
+      "usage_source": "actual",
+      "latency_ms": 1334,
+      "status": "succeeded",
+      "error_json": {},
+      "created_at": "2026-11-11 14:07:44.923319+00:00"
+     },
+     {
+      "id": "mcall_48277458ef3e4a5290b764eebefd7bdf",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "request_json": {
+       "model": "deepseek-flash",
+       "schema": {
+        "name": "select_sql",
+        "schema": {
+         "type": "object",
+         "required": [
+          "sql"
+         ],
+         "properties": {
+          "sql": {
+           "type": "string"
+          }
+         },
+         "additionalProperties": false
+        },
+        "strict": true
+       },
+       "system": "你写一条 PostgreSQL SELECT，用下面这些表回答问题。你不估算数字，也不用散文作答。\n\n这些表已按当前合作关系、品牌、经销商限定，不要自行添加这些作用域条件。\n\n规则：\n- 一条 SELECT（WITH 子句可以）。不要 insert、update、delete 或 DDL。\n- 只用下面列出的表和列。表名不加模式前缀，写法与列出的完全一致。\n- 函数用裸名称调用（date_trunc、max）。绝不要写模式前缀，例如 pg_catalog、public 或 information_schema。\n- 日历列（eta_date、period_start、period_end、term_start_date、term_end_date、effective_from、effective_until、reporting_period）是文本 YYYY-MM-DD 或期间标签，不是时间戳。按文本比较。\n- created_at、updated_at、submitted_at、confirmed_at、extracted_at 是 timestamptz。\n- purchase_order_items.quantity 是箱数。金额列已经算好，不要重复乘数量。\n- 要计数、求和或总额时，返回聚合结果。不要把明细行列出来，指望读者自己加总。\n- 问题需要多个数字时，写成一条 SELECT：用 WITH 分别聚合后同一行并列输出，或 UNION ALL 输出“指标/数值”。最终只采用一次查询的结果。\n- report_facts 除非问题问的是草稿或被替换的行，否则使用 status = 'confirmed'。不要把 superseded 的行加进已确认的合计。\n- 结果涉及产品时同时选择名称和 SKU。products 目录很大，必须按 SKU、名称筛选或聚合。\n- 长文本只在问题要求时选择。\n- 聚合不要用 COALESCE 把空结果补成 0。没有匹配记录时 SUM/AVG 应保持 NULL；需要时同时返回 COUNT(*) 作为记录数，别名里带 count。\n- 观察里出现 too_many_rows，说明这条查询触到了行数上限，返回的行不是完整答案。按提示改写：要汇总就在 SQL 里聚合，要缩小范围就加筛选；只要前几名就写明确的 LIMIT。不要对被截断的行求和、计数或下结论，也不要不改写就结束。\n\n返回 JSON {\"sql\": \"SELECT ...\"}。\n\n=== 结构 ===\n表 purchase_orders — 这个合作关系已提交的采购单。这张表上没有 quantity；行数量是 purchase_order_items 上的箱数。金额列已经算好；求和，不要重新计价。eta_date 是日历日。submitted_at 是 UTC 时刻。\n  常与这些表连接：purchase_order_items\n  id text — 主键。\n  po_number text — 给人看的订单号。 示例：['PO-20261019-0001']\n  brand_id text — 对应 brands.id。\n  distributor_id text — 对应 distributors.id。\n  partnership_id text — 对应 partnerships.id。\n  status text — 订单履行到哪一步。 示例：['submitted', 'awaiting_payment', 'payment_claimed', 'completed', 'awaiting_refund', 'claim_filed']\n  currency text — 金额列的货币。 示例：['USD']\n  payment_terms text — 这张订单怎么付款。 示例：['50_50', '100_prepaid', 'net_30', 'net_60']\n  incoterms text — 贸易术语。 示例：['FOB', 'CIF', 'EXW', 'DDP', 'DAP', 'CFR']\n  shipping_method text — 怎么运输。 示例：['sea', 'air', 'express', 'land']\n  eta_date text — 预计到达 YYYY-MM-DD，或 null。不是时间戳。\n  ship_to_country text — 收货国家，ISO alpha-2。\n  notes text — 订单上的自由文本备注。\n  discount_amount numeric — 货币金额的折扣，没有时为 null。\n  discount_percentage numeric — 折扣百分比；折扣是金额或没有折扣时为 null。\n  subtotal_amount numeric — 折扣前各行合计之和。\n  total_amount numeric — subtotal_amount 减去 discount_amount。\n  submitted_at timestamptz — 订单提交时间，UTC，或 null。\n  submit_cycle_version integer — 这张订单提交过几次。\n  prepaid_amount numeric — 记为已预付的金额。\n  balance_paid numeric — 交货后记为已付的尾款。\n  created_at timestamptz — 行的创建时间，UTC。\n  updated_at timestamptz — 行的最后更新时间，UTC。\n\n表 purchase_order_items — 采购单的一行。quantity 是箱数，不是件数。line_total 已经是 quantity 乘 case_price。\n  常与这些表连接：purchase_orders\n  id integer — 主键。\n  po_id text — 对应 purchase_orders.id。\n  product_id text — 对应 products.id。\n  sku text — 抄到这一行上的 SKU。\n  product_name text — 抄到这一行上的名称。\n  quantity integer — 箱数。\n  case_price numeric — 这一行一箱的价格。\n  line_total numeric — quantity 乘 case_price。\n  case_pack integer — 下单时的每箱件数。\n\n上一版 SELECT 没有得到可用结果。按报错或缺列说明改这一条，不要改成另一个问题，也不要退回已经失败的版本。",
+       "messages": [
+        {
+         "role": "user",
+         "content": "{\"failed_sql\": \"WITH monthly AS (SELECT date_trunc('month', submitted_at) AS month, SUM(total_amount) AS purchase_amount FROM purchase_orders WHERE submitted_at >= '2026-08-01' AND submitted_at < '2026-10-01' GROUP BY 1) SELECT aug.purchase_amount AS aug_amount, sep.purchase_amount AS sep_amount, sep.purchase_amount - aug.purchase_amount AS change_amount, (sep.purchase_amount - aug.purchase_amount) / aug.purchase_amount * 100 AS change_percent FROM (SELECT purchase_amount FROM monthly WHERE month = '2026-08-01') aug CROSS JOIN (SELECT purchase_amount FROM monthly WHERE month = '2026-09-01') sep\", \"error\": \"missing required columns: month, purchase_amount\"}"
+        }
+       ]
+      },
+      "response_json": {
+       "json": {
+        "sql": "WITH monthly AS (SELECT date_trunc('month', submitted_at) AS month, SUM(total_amount) AS purchase_amount FROM purchase_orders WHERE submitted_at >= '2026-08-01' AND submitted_at < '2026-10-01' GROUP BY 1) SELECT MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) AS aug_amount, MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) AS sep_amount, MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) - MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) AS change_amount, (MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) - MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END)) / MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) * 100 AS change_percent FROM monthly"
+       }
+      },
+      "prompt_tokens": 1376,
+      "completion_tokens": 221,
+      "cache_hit_tokens": 1152,
+      "cache_miss_tokens": 224,
+      "cache_creation_tokens": null,
+      "usage_source": "actual",
+      "latency_ms": 1695,
+      "status": "succeeded",
+      "error_json": {},
+      "created_at": "2026-11-11 14:07:46.672761+00:00"
+     },
+     {
+      "id": "mcall_3d3534d60c37470d8129f9bf1a88dc90",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "request_json": {
+       "model": "deepseek-flash",
+       "schema": {
+        "name": "reflect_result",
+        "schema": {
+         "type": "object",
+         "required": [
+          "score",
+          "retry_question"
+         ],
+         "properties": {
+          "score": {
+           "type": "integer"
+          },
+          "retry_question": {
+           "type": "string"
+          }
+         },
+         "additionalProperties": false
+        },
+        "strict": true
+       },
+       "system": "你检查数据库结果是否回答了用户的问题。你不编造数字，也不写 SQL。\n\n你看到的是问题、SQL 结果和列信息。score 是 0 到 100 的整数，只评价这次成功查询对原问题的回答程度。诚实的“没有匹配”如果就是答案，给 80 分或更高。需要另一种聚合、筛选、连接或结果列时给 80 分以下。\n\n如果 score 低于 80，retry_question 必须是一个可以单独成立的后续问题，仍然回答原问题并遵守同一套查询规则。不要重复原来的问题。score 达到 80 时 retry_question 留空。\n\n如果结果缺少下游要求的列，不能给高分。结果被截断时不能给高分。\n\n返回 JSON {\"score\": integer, \"retry_question\": string}。",
+       "messages": [
+        {
+         "role": "user",
+         "content": "{\"question\": \"2026年9月采购金额比8月变化了多少？百分比是多少？\", \"tables\": [\"purchase_orders\", \"purchase_order_items\"], \"result\": {\"columns\": [\"aug_amount\", \"sep_amount\", \"change_amount\", \"change_percent\"], \"row_count\": 1, \"shown_rows\": 1, \"truncated\": false, \"no_matching_records\": false, \"rows\": [{\"aug_amount\": 7405.53, \"sep_amount\": 6731.82, \"change_amount\": -673.71, \"change_percent\": -9.097390733681452}]}, \"sql\": \"WITH monthly AS (SELECT DATE_TRUNC('MONTH', submitted_at) AS month, SUM(total_amount) AS purchase_amount FROM purchase_orders WHERE submitted_at >= '2026-08-01' AND submitted_at < '2026-10-01' GROUP BY 1) SELECT MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) AS aug_amount, MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) AS sep_amount, MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) - MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) AS change_amount, (MAX(CASE WHEN month = '2026-09-01' THEN purchase_amount END) - MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END)) / MAX(CASE WHEN month = '2026-08-01' THEN purchase_amount END) * 100 AS change_percent FROM monthly LIMIT 100\", \"error\": null}"
+        }
+       ]
+      },
+      "response_json": {
+       "json": {
+        "score": 95,
+        "retry_question": ""
+       }
+      },
+      "prompt_tokens": 616,
+      "completion_tokens": 14,
+      "cache_hit_tokens": 0,
+      "cache_miss_tokens": 616,
+      "cache_creation_tokens": null,
+      "usage_source": "actual",
+      "latency_ms": 949,
+      "status": "succeeded",
+      "error_json": {},
+      "created_at": "2026-11-11 14:07:47.695336+00:00"
+     }
+    ],
+    "tool_calls": [
+     {
+      "id": "tcall_9edf99979ab742c4be6744fdce6c904a",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "org_id": "dist-liancai",
+      "user_id": "user-liancai-chen",
+      "step_id": "step_72e32922bbd44ff78bfb1af1ce6769c5",
+      "tool_name": "data.query",
+      "args_json": {
+       "columns": [
+        "month",
+        "purchase_amount"
+       ],
+       "deliver": "answer",
+       "question": "2026年9月采购金额比8月变化了多少？百分比是多少？"
+      },
+      "result_json": {},
+      "status": "failed",
+      "idempotency_key": "data.query:run_15ff6e3b5eed45138354baaefa214a33:data_1",
+      "latency_ms": 0,
+      "error_json": {
+       "message": "query result is missing required columns: month, purchase_amount"
+      },
+      "created_at": "2026-11-11 14:07:47.707757+00:00",
+      "started_at": "2026-11-11 14:07:47.707757+00:00",
+      "ended_at": "2026-11-11 14:07:47.707757+00:00"
+     }
+    ],
+    "checkpoints": [],
+    "usage_records": [
+     {
+      "id": "usage_1e10199a3ce940c59ed63f506d3ab64a",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "org_id": "dist-liancai",
+      "user_id": "user-liancai-chen",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "prompt_tokens": 983,
+      "completion_tokens": 11,
+      "cache_hit_tokens": 768,
+      "cache_miss_tokens": 215,
+      "cache_creation_tokens": null,
+      "total_tokens": 994,
+      "estimated_cost_cents": 0,
+      "usage_source": "actual",
+      "created_at": "2026-11-11 14:07:42.190702+00:00"
+     },
+     {
+      "id": "usage_224f4333f5ce4e87852fe9f55f5a3af0",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "org_id": "dist-liancai",
+      "user_id": "user-liancai-chen",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "prompt_tokens": 1193,
+      "completion_tokens": 148,
+      "cache_hit_tokens": 1024,
+      "cache_miss_tokens": 169,
+      "cache_creation_tokens": null,
+      "total_tokens": 1341,
+      "estimated_cost_cents": 0,
+      "usage_source": "actual",
+      "created_at": "2026-11-11 14:07:43.530338+00:00"
+     },
+     {
+      "id": "usage_eeb7d921bd1b45ca884b1155b99fc172",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "org_id": "dist-liancai",
+      "user_id": "user-liancai-chen",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "prompt_tokens": 1369,
+      "completion_tokens": 155,
+      "cache_hit_tokens": 1152,
+      "cache_miss_tokens": 217,
+      "cache_creation_tokens": null,
+      "total_tokens": 1524,
+      "estimated_cost_cents": 0,
+      "usage_source": "actual",
+      "created_at": "2026-11-11 14:07:44.923319+00:00"
+     },
+     {
+      "id": "usage_1e47a5390a5d46c9b5c56ab4e3f02514",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "org_id": "dist-liancai",
+      "user_id": "user-liancai-chen",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "prompt_tokens": 1376,
+      "completion_tokens": 221,
+      "cache_hit_tokens": 1152,
+      "cache_miss_tokens": 224,
+      "cache_creation_tokens": null,
+      "total_tokens": 1597,
+      "estimated_cost_cents": 0,
+      "usage_source": "actual",
+      "created_at": "2026-11-11 14:07:46.672761+00:00"
+     },
+     {
+      "id": "usage_77ee830093d247af90d7e1b6c782bc2c",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "org_id": "dist-liancai",
+      "user_id": "user-liancai-chen",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "prompt_tokens": 616,
+      "completion_tokens": 14,
+      "cache_hit_tokens": 0,
+      "cache_miss_tokens": 616,
+      "cache_creation_tokens": null,
+      "total_tokens": 630,
+      "estimated_cost_cents": 0,
+      "usage_source": "actual",
+      "created_at": "2026-11-11 14:07:47.695336+00:00"
+     }
+    ],
+    "audit_logs": [
+     {
+      "id": "aud_2f47acb0f13749ffb8f71a559e8d12d1",
+      "user_id": "celery:11",
+      "org_id": "dist-liancai",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "metadata_json": {
+       "actor_id": "celery:11",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:11"
+      },
+      "created_at": "2026-11-11 14:07:41.278001+00:00"
+     },
+     {
+      "id": "aud_c8c89a8407064316b073d352f060ab9e",
+      "user_id": "celery:11",
+      "org_id": "dist-liancai",
+      "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_15ff6e3b5eed45138354baaefa214a33",
+      "metadata_json": {
+       "status": "succeeded",
+       "actor_id": "celery:11",
+       "to_status": "succeeded",
+       "actor_type": "worker",
+       "from_status": "running"
+      },
+      "created_at": "2026-11-11 14:07:47.725212+00:00"
+     }
+    ],
+    "outbox": [
+     {
+      "id": "obx_97203281b1a44132b2aa83bbf4c8f5a8",
+      "job_type": "execute_run",
+      "payload_json": {
+       "run_id": "run_15ff6e3b5eed45138354baaefa214a33",
+       "run_type": "data",
+       "trace_id": "c917198526164645b02679766cd0cdf5"
+      },
+      "status": "dispatched",
+      "attempts": 0,
+      "max_attempts": 10,
+      "next_attempt_at": "2026-11-11 14:07:41.261087+00:00",
+      "last_error_json": null,
+      "created_at": "2026-11-11 14:07:41.261087+00:00",
+      "dispatch_at": "2026-11-11 14:07:41.273464+00:00"
+     }
+    ],
+    "dead_letters": []
+   }
+  },
+  "run_65d0c72c8d2745babde4cf755e2108ea": {
+   "run_type": "open",
+   "status": "running",
+   "trace": {
+    "run": {
+     "id": "run_65d0c72c8d2745babde4cf755e2108ea",
+     "org_id": "dist-liancai",
+     "user_id": "user-liancai-chen",
+     "run_type": "open",
+     "idempotency_key": "title:02ae5bf8392e42d78e8ec9ad38829924",
+     "status": "running",
+     "input_json": {
+      "message": "2026年9月采购金额比8月变化了多少？百分比是多少？",
+      "session_id": "02ae5bf8392e42d78e8ec9ad38829924",
+      "attachments": [],
+      "chat_run_id": "run_76fccc6449064b0d893831e24c36bb44",
+      "provisional_title": "2026年9月采购金额比8月变化了多少？百分比是多少？"
+     },
+     "output_json": null,
+     "error_json": null,
+     "created_at": "2026-11-11 14:07:54.493863+00:00",
+     "queued_at": "2026-11-11 14:07:54.493863+00:00",
+     "queue_heartbeat_at": null,
+     "started_at": "2026-11-11 14:07:54.502077+00:00",
+     "ended_at": null,
+     "cancel_requested_at": null,
+     "updated_at": "2026-11-11 14:07:54.502077+00:00",
+     "lease_owner": "celery:10",
+     "lease_expires_at": "2026-11-11 14:17:54.502076+00:00",
+     "attempts": 1,
+     "redispatch_count": 0,
+     "parent_run_id": null,
+     "owner_run_id": "run_76fccc6449064b0d893831e24c36bb44",
+     "trace_id": "9c5ec45178a74eccbe7f7715e38d1f89",
+     "max_model_calls": 2,
+     "max_tokens": 8000,
+     "max_tool_calls": null,
+     "max_duration_seconds": null
+    },
+    "steps": [
+     {
+      "id": "step_fcbc274bb62d4f8c9bdb5ae4f3603e7d",
+      "run_id": "run_65d0c72c8d2745babde4cf755e2108ea",
+      "step_index": 1,
+      "step_type": "model",
+      "name": "model",
+      "status": "running",
+      "input_json": {},
+      "output_json": null,
+      "error_json": null,
+      "started_at": "2026-11-11 14:07:54.504993+00:00",
+      "ended_at": null
+     }
+    ],
+    "events": [
+     {
+      "id": "evt_3acfa889d38e415384500823d99896ef",
+      "run_id": "run_65d0c72c8d2745babde4cf755e2108ea",
+      "sequence": 1,
+      "event_type": "run.created",
+      "payload_json": {
+       "status": "queued",
+       "display": "已开始",
+       "owner_run_id": "run_76fccc6449064b0d893831e24c36bb44"
+      },
+      "created_at": "2026-11-11 14:07:54.493863+00:00"
+     },
+     {
+      "id": "evt_4f40421bf94649bdbd14a99e3acf7efe",
+      "run_id": "run_65d0c72c8d2745babde4cf755e2108ea",
+      "sequence": 2,
+      "event_type": "run.enqueued",
+      "payload_json": {
+       "outbox_job_id": "obx_da8553f07756458c936e165e0cd06006"
+      },
+      "created_at": "2026-11-11 14:07:54.497566+00:00"
+     },
+     {
+      "id": "evt_dd529e6341d24ebfb0d803bff6a00c66",
+      "run_id": "run_65d0c72c8d2745babde4cf755e2108ea",
+      "sequence": 3,
+      "event_type": "run.started",
+      "payload_json": {
+       "actor_id": "celery:10",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:10"
+      },
+      "created_at": "2026-11-11 14:07:54.502077+00:00"
+     },
+     {
+      "id": "evt_3c99035aae194dc3b9814442e7d4dcee",
+      "run_id": "run_65d0c72c8d2745babde4cf755e2108ea",
+      "sequence": 4,
+      "event_type": "step.started",
+      "payload_json": {
+       "name": "model",
+       "step_id": "step_fcbc274bb62d4f8c9bdb5ae4f3603e7d",
+       "step_type": "model",
+       "step_index": 1
+      },
+      "created_at": "2026-11-11 14:07:54.504993+00:00"
+     },
+     {
+      "id": "evt_fd478353094448978d2b57d9f863df09",
+      "run_id": "run_65d0c72c8d2745babde4cf755e2108ea",
+      "sequence": 5,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "9c5ec45178a74eccbe7f7715e38d1f89",
+       "max_tokens": 800,
+       "route_task": "session.title",
+       "quality_gate": "response_parsed",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "selected_model": "qwen3.7-flash",
+       "candidate_index": 0,
+       "max_model_calls": 2,
+       "selected_provider": "qwen",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-11 14:07:54.512021+00:00"
+     },
+     {
+      "id": "evt_8512d1536fa042189bddd7f996a81b28",
+      "run_id": "run_65d0c72c8d2745babde4cf755e2108ea",
+      "sequence": 6,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "qwen",
+       "model": "qwen3.7-flash",
+       "display": "正在思考...",
+       "purpose": "session.title",
+       "step_id": "step_fcbc274bb62d4f8c9bdb5ae4f3603e7d",
+       "trace_id": "9c5ec45178a74eccbe7f7715e38d1f89"
+      },
+      "created_at": "2026-11-11 14:07:54.528028+00:00"
+     }
+    ],
+    "model_calls": [],
+    "tool_calls": [],
+    "checkpoints": [],
+    "usage_records": [],
+    "audit_logs": [
+     {
+      "id": "aud_a93a6924408d44d79127ed09c6b3d480",
+      "user_id": "celery:10",
+      "org_id": "dist-liancai",
+      "run_id": "run_65d0c72c8d2745babde4cf755e2108ea",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_65d0c72c8d2745babde4cf755e2108ea",
+      "metadata_json": {
+       "actor_id": "celery:10",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:10"
+      },
+      "created_at": "2026-11-11 14:07:54.502077+00:00"
+     }
+    ],
+    "outbox": [
+     {
+      "id": "obx_da8553f07756458c936e165e0cd06006",
+      "job_type": "execute_run",
+      "payload_json": {
+       "run_id": "run_65d0c72c8d2745babde4cf755e2108ea",
+       "run_type": "open",
+       "trace_id": "9c5ec45178a74eccbe7f7715e38d1f89"
+      },
+      "status": "dispatched",
+      "attempts": 0,
+      "max_attempts": 10,
+      "next_attempt_at": "2026-11-11 14:07:54.493863+00:00",
+      "last_error_json": null,
+      "created_at": "2026-11-11 14:07:54.493863+00:00",
+      "dispatch_at": "2026-11-11 14:07:54.497566+00:00"
+     }
+    ],
+    "dead_letters": []
+   }
+  }
+ }
+}

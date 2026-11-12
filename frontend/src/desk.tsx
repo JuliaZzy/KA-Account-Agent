@@ -51,8 +51,6 @@ function resolvePick(
 }
 
 export type Meta = {
-  models: { id: string; label: string; short: string; vision: boolean; thinking: boolean }[];
-  default_model: string;
   product_statuses: string[];
   memory_kinds: Record<string, string>;
   max_images: number;

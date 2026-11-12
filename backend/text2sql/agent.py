@@ -10,11 +10,11 @@ from ..db import Database
 from ..orchestrator.speak import answer_directly
 from ..orchestrator.status import status
 from .prompt import ANSWER
-from .text2sql import answer_question
+from .text2sql import answer_question, llm_result_view
 
 
 def _prompt(question: str, result: Any) -> str:
-    payload = {"ok": result.ok, "row_count": result.row_count, "rows": result.rows, "error": result.error}
+    payload = {"ok": result.ok, "error": result.error, **llm_result_view(result)}
     return (
         f"{question}\n\n"
         "=== 数据（从本合作关系的数据库查出；引用这些数字，不要重算，也不要编造） ===\n"
@@ -23,7 +23,16 @@ def _prompt(question: str, result: Any) -> str:
 
 
 def _mark(result: Any) -> dict[str, Any]:
-    return {"ok": result.ok, "row_count": result.row_count, "error": result.error, "log_id": result.log_id}
+    error = result.error or (
+        "query result is missing required columns: " + ", ".join(result.missing_columns)
+        if result.missing_columns else None
+    )
+    return {
+        "ok": result.ok and not result.missing_columns, "row_count": result.row_count,
+        "columns": result.columns, "missing_columns": result.missing_columns,
+        "truncated": result.truncated, "rows_handle": result.log_id,
+        "error": error, "log_id": result.log_id,
+    }
 
 
 def run(

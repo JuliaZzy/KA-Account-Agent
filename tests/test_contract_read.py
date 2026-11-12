@@ -258,3 +258,38 @@ def test_contract_read_hands_the_run_to_ocr(db, monkeypatch):
     assert seen["file_name"] == "agreement.pdf"
     assert seen["run_id"] == run["id"]
     assert seen["db"] is db
+
+
+def test_chat_contract_read_records_ocr_and_extraction(db, monkeypatch):
+    from datetime import timedelta
+
+    from backend.contract.turn import file_contract
+    from backend.db import utcnow
+
+    monkeypatch.setenv("GLM_API_KEY", "test-key")
+    monkeypatch.setenv("GLM_BASE_URL", "https://ocr.example/layout_parsing")
+    monkeypatch.setattr("backend.llm.client.GLMOCRClient.parse", lambda *_args: {
+        "md_results": AGREEMENT,
+        "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+    })
+    fake = FakeLLM(json_replies=[dict(EXTRACTION)])
+    monkeypatch.setattr("backend.contract.turn.deepseek_client", lambda: fake)
+    run, _ = db.create_agent_run("dist-1", "u-a", "chat", "contract-ocr-ledger", {"message": "read"})
+    assert db.claim_chat_turn(run["id"], "worker-test", utcnow() + timedelta(minutes=5))
+    filed = file_contract(db, {"partnership_id": "ps-1"}, [("agreement.pdf", b"%PDF")], run_id=run["id"])
+    assert filed["status"] == "ready"
+    trace = db.run_trace("dist-1", run["id"])
+    assert {row["model"] for row in trace["model_calls"]} == {"glm-ocr", "deepseek-flash"}
+    ocr = next(row for row in trace["usage_records"] if row["model"] == "glm-ocr")
+    assert (ocr["prompt_tokens"], ocr["completion_tokens"], ocr["usage_source"]) == (100, 50, "actual")
+
+
+def test_finished_import_run_cannot_file_contract(db):
+    from backend.contract.ingest import record_from_extraction
+
+    run = db.create_inline_contract_run("dist-1", "u-a", "agreement.pdf")
+    db.transition_run("dist-1", run["id"], "failed")
+    rec = record_from_extraction(EXTRACTION, brand_id="brand-1", partnership_id="ps-1")
+    with pytest.raises(ValueError, match="no longer active"):
+        db.save_contract(rec, inline_run_id=run["id"])
+    assert db.active_contract("ps-1") is None

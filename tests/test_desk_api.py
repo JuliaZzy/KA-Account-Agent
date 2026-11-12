@@ -14,14 +14,12 @@ def client(db, llm=None) -> TestClient:
     return TestClient(create_app(db=db, llm=llm or FakeLLM()))
 
 
-def test_meta_lists_the_official_models(db):
+def test_meta_lists_desk_configuration(db):
     from backend import service
 
     body = client(db).get("/api/meta").json()
-    ids = [m["id"] for m in body["models"]]
-    assert "qwen3.7-flash" in ids
-    assert "deepseek-flash" in ids
-    assert body["default_model"] == "qwen3.7-flash"
+    assert "models" not in body
+    assert "default_model" not in body
     assert "停产" in body["product_statuses"]
     assert body["memory_kinds"]["preference"] == "Preference"
     assert body["max_images"] == service.MAX_IMAGES
@@ -105,6 +103,47 @@ def test_contract_detail_shows_the_next_discount_and_derived_rules(db, partnersh
     assert body["next_discount"]["percent"] == 3
     assert len(body["terms"]["discount_rules"]) == 1
     assert any(r["rule_type"] == "min_order_value" for r in body["rules"])
+
+
+def test_contract_upload_records_ocr_and_extraction_on_an_inline_run(db, monkeypatch):
+    from importlib import import_module
+
+    db.upsert_user("u-a", "dist-1", "Ada")
+    db.upsert_partnership(Partnership(
+        id="ps-other", brand_id="brand-1", distributor_id="dist-2",
+        brand_name="Brand", distributor_name="Other", ship_to_country="US", currency="USD",
+    ))
+    db.upsert_user("u-other", "dist-2", "Other")
+    monkeypatch.setenv("GLM_API_KEY", "test-key")
+    monkeypatch.setenv("GLM_BASE_URL", "https://ocr.example/layout_parsing")
+    monkeypatch.setattr("backend.llm.client.GLMOCRClient.parse", lambda *_args: {
+        "layout_details": [[{"label": "text", "content": "Minimum order USD 500."}]],
+        "usage": {"prompt_tokens": 45000, "completion_tokens": 5000},
+    })
+    fake = FakeLLM(json_replies=[{
+        "minimum_order_quantities": [{"quantity": 500, "unit": "USD", "applies_per": "per_order"}],
+        "confidence_score": 1.0,
+    }])
+    monkeypatch.setattr(import_module("backend.router.contract_router"), "deepseek_client", lambda: fake)
+    c = client(db, fake)
+    bad = c.post(
+        "/api/partnerships/ps-1/contracts", files={"file": ("agreement.pdf", b"%PDF", "application/pdf")},
+        data={"user_id": "u-other"},
+    )
+    assert bad.status_code == 400
+    result = c.post(
+        "/api/partnerships/ps-1/contracts", files={"file": ("agreement.pdf", b"%PDF", "application/pdf")},
+        data={"user_id": "u-a"},
+    )
+    assert result.status_code == 200, result.text
+    runs = db.list_agent_runs("dist-1", user_id="u-a", status=None, limit=10)
+    assert len(runs) == 1 and runs[0]["status"] == "succeeded"
+    assert result.json()["run_id"] == runs[0]["id"]
+    trace = db.run_trace("dist-1", runs[0]["id"])
+    assert trace["outbox"] == []
+    assert {call["model"] for call in trace["model_calls"]} == {"glm-ocr", "deepseek-flash"}
+    assert next(call for call in trace["model_calls"] if call["model"] == "glm-ocr")["usage_source"] == "actual"
+    assert db.org_daily_usage("dist-1")["total_tokens"] >= 50000
 
 
 def test_chats_and_memories_belong_to_one_person(db):

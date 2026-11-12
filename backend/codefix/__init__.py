@@ -1,6 +1,6 @@
 """Shared retry when a model writes something the process then runs.
 
-SQL, chart JSON, and the report's analyze() all call this. Three runs, then the
+Chart JSON and the report's analyze() call this. Three runs, then the
 last artifact and its error are handed to a person.
 """
 

@@ -8,6 +8,7 @@ The caller still runs that statement inside a transaction that always rolls back
 
 from __future__ import annotations
 
+import os
 import re
 
 import sqlglot
@@ -18,8 +19,20 @@ from .table_metadata import TABLES
 
 MAX_SQL_CHARS = 8_000
 MAX_SELECTS = 8
-DEFAULT_LIMIT = 100
-MAX_LIMIT = 200
+
+
+def _limit_from_env(name: str, default: int) -> int:
+    """An experiment can lower the caps (the seed has too few rows to ever reach 100/200).
+    Anything unparsable or non-positive falls back to the default."""
+    try:
+        value = int(os.environ.get(name, ""))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+DEFAULT_LIMIT = _limit_from_env("KA_SQL_DEFAULT_LIMIT", 100)
+MAX_LIMIT = max(DEFAULT_LIMIT, _limit_from_env("KA_SQL_MAX_LIMIT", 200))
 MAX_OFFSET = 5_000
 
 # Functions sqlglot does not model as their own class. Anything else anonymous is rejected.
@@ -114,6 +127,41 @@ def _cap_numbers(sql: str) -> str:
 
     sql = _LIMIT_RE.sub(limit, sql)
     return _OFFSET_RE.sub(offset, sql)
+
+
+def system_row_cap(raw: str, sanitized: str) -> int | None:
+    """The row cap the system imposed on this statement, or None when the author's LIMIT stood.
+
+    `LIMIT 5` written by the model is the question's answer, not a truncation. A LIMIT the
+    validator appended (none written) or lowered (above MAX_LIMIT) is: hitting it means the
+    result may be cut short, and callers should say so instead of reporting a row count.
+    """
+    final = _LIMIT_RE.findall(sanitized)
+    if not final:
+        return None
+    written = _LIMIT_RE.findall(raw or "")
+    if not written or int(written[-1]) > MAX_LIMIT:
+        return int(final[-1])
+    return None
+
+
+def unlimited_statement(raw: str, sanitized: str) -> str | None:
+    """Remove only a validator-added top-level LIMIT for an exact truncation count.
+
+    An explicit LIMIT is part of the user's request and is therefore retained. The caller uses
+    the returned statement only inside a bounded COUNT wrapper after the original query hit the
+    system-added cap.
+    """
+    if system_row_cap(raw, sanitized) is None or _LIMIT_RE.search(raw or ""):
+        return None
+    try:
+        tree = sqlglot.parse_one(sanitized, read="postgres")
+    except ParseError:
+        return None
+    if tree.args.get("limit") is None:
+        return None
+    tree.set("limit", None)
+    return tree.sql(dialect="postgres").strip().rstrip(";")
 
 
 def validate(sql: str) -> tuple[bool, str, str]:

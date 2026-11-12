@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Sanity-check the scorer itself: synthetic perfect answers must all pass; deliberately wrong ones must fail.
-Usage: python selftest_golden.py eval/datasets/golden_v1.jsonl"""
+Usage: python selftest_golden.py docs/experiments/golden_set/golden_v1.jsonl"""
 import copy, json, subprocess, sys, tempfile, os
 cases = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8")]
 
