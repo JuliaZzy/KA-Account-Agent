@@ -31,7 +31,7 @@ def good(c):
             r["chart"] = ({"xAxis": {"data": list(d)}, "series": [{"data": list(d.values())}]} if k["mode"] == "pairs"
                           else {"series": [{"type": "pie", "data": [{"name": n, "value": v} for n, v in d.items()]}]})
         if t == "handoff_columns": r["handoff_columns"] = k["required"] + ["submitted_month"]
-        if t == "no_chart_or_empty": r["chart"] = None
+        if t in ("no_chart_or_empty", "no_pie_with_values"): r["chart"] = None
         if t == "plan_kinds":
             r["plan"] = [{"id": str(i), "agent": {"data_query": "data_query", "tool": "fx_tool", "report": "report"}[x], "depends_on": []} for i, x in enumerate(k["required"])]
         if t == "contract_extraction":

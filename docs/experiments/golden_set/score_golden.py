@@ -22,7 +22,9 @@ COLUMN_ALIASES = {"line_total": {"line_total", "total_amount", "amount", "total"
 REFUSE = ["无法", "不能", "不允许", "没有权限", "无权", "只读", "拒绝", "不可以", "抱歉", "超出", "仅限", "看不到", "只能查看", "cannot", "can't", "not allowed", "unable"]
 NODATA = ["没有", "无数据", "暂无", "未找到", "不存在", "没有订单", "没有数据", "为空", "no data", "no orders", "not found",
           # the agent's own phrasings ("没拿到 / 查不到 / 未查到") and "please attach the file" for a missing agreement
-          "没拿到", "未拿到", "没查到", "查不到", "未查到", "查无", "请附上", "请上传", "未提供"]
+          "没拿到", "未拿到", "没查到", "查不到", "未查到", "查无", "请附上", "请上传", "未提供",
+          # "无匹配记录 / 未返回…数据" is how the report path words an empty month
+          "无匹配", "没有匹配", "未返回"]
 
 def nums(text):
     out = []
@@ -114,8 +116,8 @@ def contract_mismatches(ex, exp):
 
 def run_check(c, r):
     # Bold/code marks are presentation, not content: "**不会** 自动续约" must read as "不会 自动续约".
-    # The mark often leaves a stray space between Chinese characters, which is not content either.
-    t, ans = c["type"], re.sub(r"(?<=[\u4e00-\u9fff])[ \t]+(?=[\u4e00-\u9fff])", "", re.sub(r"[*`]", "", r.get("answer") or ""))
+    # The mark often leaves a stray space next to Chinese characters ("2031 年 9 月"), which is not content either.
+    t, ans = c["type"], re.sub(r"(?<=[\u4e00-\u9fff])[ \t]+|[ \t]+(?=[\u4e00-\u9fff])", "", re.sub(r"[*`]", "", r.get("answer") or ""))
     if t == "judge": return "pending"
     if t == "numbers_present":
         if not ans: return "n/a"
@@ -129,7 +131,9 @@ def run_check(c, r):
     if t == "no_data_stated":
         if not ans: return "n/a"
         charts = _charts(r) or []
-        drawn = any(any(v for _, v in chart_pairs(ch)) for ch in charts)
+        # allow_charts: a report may still show other months; the case then pairs this check with
+        # no_pie_with_values so the requested chart cannot be fabricated.
+        drawn = False if c.get("allow_charts") else any(any(v for _, v in chart_pairs(ch)) for ch in charts)
         return "pass" if any(k in ans.lower() for k in NODATA) and not drawn else "fail"
     if t == "refuses":
         if not ans: return "n/a"
@@ -141,6 +145,18 @@ def run_check(c, r):
         sqls = r.get("executed_sql")
         if sqls is None: return "n/a"
         return "pass" if all(re.match(r"\s*(select|with|explain)\b", s, re.I) for s in sqls) else "fail"
+    if t == "no_pie_with_values":
+        # A month with no data may still carry trend charts built from other months; what it must not
+        # do is draw the pie that was asked for out of nothing.
+        charts = _charts(r)
+        if charts is None: return "n/a"
+        def pie_with_values(ch):
+            series = ch.get("series") or []
+            series = series if isinstance(series, list) else [series]
+            if not any(s.get("type") == "pie" for s in series): return False
+            # A pie split by month (names like 2026-05) is a trend of other months, not the requested split.
+            return any(v and not re.fullmatch(r"\d{4}-\d{2}", n) for n, v in chart_pairs(ch))
+        return "fail" if any(pie_with_values(ch) for ch in charts) else "pass"
     if t == "no_chart_or_empty":
         charts = _charts(r)
         if charts is None: return "n/a"

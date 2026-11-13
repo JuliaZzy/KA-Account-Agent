@@ -344,6 +344,20 @@ def test_chat_quotes_the_rows_and_a_report_uses_them(db, monkeypatch):
 
     sid = db.create_session("sess-report", "ps-1", "u-a")["id"]
     db.update_session(sid, title="report", tags=["report"])
+    insight = (
+        "def analyze(datasets):\n"
+        "    rows = datasets[0]['rows']\n"
+        "    return [{'title': '订单总额', 'detail': '总额 ' + str(rows[0]['total_amount']),"
+        " 'evidence': {'total': rows[0]['total_amount']}}]"
+    )
+    monkeypatch.setattr(
+        "backend.tools.web_search.run",
+        lambda arguments, **_kwargs: {
+            "ok": True,
+            "data": {"results": [{"title": "档期", "snippet": "促销", "url": "https://example.com"}]},
+            "error": None,
+        },
+    )
     report_llm = FakeLLM(json_replies=[
         {"tasks": [
             {"id": "d", "kind": "agent", "name": "data", "input": {"question": "order total"}, "depends_on": []},
@@ -371,18 +385,14 @@ def test_chat_quotes_the_rows_and_a_report_uses_them(db, monkeypatch):
             "type": "bar",
             "echarts_option": {"series": [{"type": "bar", "data": [1000]}]},
         }]},
-        {"code": "rows = datasets[0]['rows']\ninsights = [{'title': '订单总额', 'detail': '总额 ' + str(rows[0]['total_amount']), 'evidence': {'total': rows[0]['total_amount']}}]"},
-        {"code": "rows = datasets[0]['rows']\ninsights = [{'title': '订单总额', 'detail': '总额 ' + str(rows[0]['total_amount']), 'evidence': {'total': rows[0]['total_amount']}}]"},
-        {"code": "rows = datasets[0]['rows']\ninsights = [{'title': '订单总额', 'detail': '总额 ' + str(rows[0]['total_amount']), 'evidence': {'total': rows[0]['total_amount']}}]"},
-        {"code": "rows = datasets[0]['rows']\ninsights = [{'title': '订单总额', 'detail': '总额 ' + str(rows[0]['total_amount']), 'evidence': {'total': rows[0]['total_amount']}}]"},
+        {"metrics": insight, "performance": insight, "inventory": insight, "next": insight},
         {"content": "Report: 1000.", "key_points": ["1000"]},
         {"content": "Report: 1000.", "key_points": ["1000"]},
         {"content": "Report: 1000.", "key_points": ["1000"]},
         {"content": "Report: 1000.", "key_points": ["1000"]},
-        {"write": True, "questions": ["open purchase orders"], "searches": []},
-        {"code": "rows = datasets[0]['rows']\ninsights = [{'title': '订单总额', 'detail': '总额 ' + str(rows[0]['total_amount']), 'evidence': {'total': rows[0]['total_amount']}}]"},
-        {"content": "未结订单还在。", "key_points": ["未结"]},
         {"content": "Report: 1000.", "key_points": ["1000"]},
+        {"content": "Report: 1000.", "key_points": ["1000"]},
+        {"score": 90, "ok": True, "issues": []},
         {"score": 90, "ok": True, "issues": []},
     ], tool_replies=[AssistantTurn(tool_calls=[ToolCall(id="r1", name="report.draft", arguments={})])],
         text_reply="Report: 1000.")
@@ -401,7 +411,9 @@ def test_chat_quotes_the_rows_and_a_report_uses_them(db, monkeypatch):
     assert saved["content"] == "Report: 1000."
     report = next(row for row in db.find_runs_by_owner(parent_id) if row["run_type"] == "report")
     nested = [row for row in db.find_runs_by_owner(report["id"]) if row["run_type"] == "data"]
+    lookups = [row for row in db.find_runs_by_owner(report["id"]) if row["run_type"] == "tool"]
     assert nested and all(row["status"] == "succeeded" for row in nested)
+    assert lookups and all(row["status"] == "succeeded" for row in lookups)
     assert report["status"] == "succeeded"
 
 

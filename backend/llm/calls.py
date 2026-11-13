@@ -1181,6 +1181,9 @@ def _route_budget_exceeded(db: Any | None, run_id: str | None, policy: Any) -> b
 
 def call_model(*args: Any, **kwargs: Any) -> ModelResult:
     """Select a versioned route, record it in the trace, and fall back on transient errors."""
+    from .context import fill_call_kwargs
+
+    kwargs = fill_call_kwargs(kwargs)
     requested_model = str(args[0] if args else kwargs.get("model_name") or "")
     purpose = kwargs.get("purpose")
     policy = policy_for(

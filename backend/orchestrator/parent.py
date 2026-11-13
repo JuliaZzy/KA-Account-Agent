@@ -128,9 +128,16 @@ def compose_answer(
         if m.get("role") in ("user", "assistant")
     ]
     materials = _materials(results)
+    opening = empty_named_period_line(text, results)
     user = text if not materials else (
         f"=== 用户 ===\n{text}\n\n=== 这一轮结果 ===\n{materials}"
     )
+    if opening:
+        user = (
+            f"=== 开口 ===\n第一句必须逐字是：{opening}\n"
+            "不要改写成「月报已生成」或「数据不完整」。报告草稿里其他月份的内容可以接着说。\n\n"
+            f"{user}"
+        )
     messages.append({"role": "user", "content": user})
     step = db.insert_step(run_id, StepType.MODEL, step_name(StepType.MODEL, None), {"purpose": "orchestrator.answer"})
     step_id = None if step is None else step["id"]
@@ -154,7 +161,9 @@ def compose_answer(
             on_text=on_text, db=db, run_id=run_id, step_id=step_id, purpose="orchestrator.answer",
         ):
             parts.append(chunk)
-        reply = "".join(parts).strip() or "How can I help?"
+        reply = ensure_empty_period_opening(
+            "".join(parts).strip() or "How can I help?", opening,
+        )
     except Exception as err:
         caught = err
         raise
@@ -180,6 +189,40 @@ def _session_memory(db: Database, session: dict[str, Any]) -> str:
 def _open_po(session: dict[str, Any]) -> bool:
     stage = str(session.get("stage") or "")
     return stage in ("gathering", "confirm") or bool(session.get("confirm_token"))
+
+
+def empty_named_period_line(message: str, results: list[dict[str, Any]]) -> str | None:
+    """First sentence when the report already knows the named month has no rows."""
+    from ..report.charts import period_label
+    from ..report.metrics import period_from_message
+
+    period = period_from_message(message)
+    empty = False
+    for result in results:
+        payload = result.get("payload") if isinstance(result.get("payload"), dict) else None
+        if not payload:
+            continue
+        if payload.get("named_period_empty") is True:
+            empty = True
+            period = period or payload.get("named_period")
+    if not empty or not period:
+        return None
+    label = period_label(str(period))
+    return f"{label}没有数据。" if label else None
+
+
+def ensure_empty_period_opening(reply: str, line: str | None) -> str:
+    """Keep the model's wording, but the named empty month must lead."""
+    if not line:
+        return reply
+    required = line.rstrip("。") + "。"
+    text = (reply or "").strip()
+    if text.startswith(required.rstrip("。")):
+        return text
+    first = text.split("。", 1)[0]
+    if "没有数据" in first:
+        return text
+    return required + text
 
 
 def _materials(results: list[dict[str, Any]]) -> str:

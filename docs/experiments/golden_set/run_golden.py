@@ -141,6 +141,17 @@ def default_user(ps: str) -> str:
     return "user-haina-wu" if ps.startswith("ps-haina") else "user-liancai-chen"
 
 
+def pick_user(case: dict, slot: int, liancai_users: list[str] | None) -> str:
+    """Haina stays on its own user. Liancai rotates only when the case did not name one."""
+    ps = case["scope"]["partnership_id"]
+    named = case["scope"].get("user_id")
+    if named:
+        return named
+    if liancai_users and not ps.startswith("ps-haina"):
+        return liancai_users[slot % len(liancai_users)]
+    return default_user(ps)
+
+
 def po_count(db) -> int | None:
     if db is None:
         return None
@@ -242,9 +253,10 @@ async def wait_for_reply(client, base, sid, uid, t0, timeout) -> list | None:
     return None
 
 
-async def run_one(client, base, case, repeat, args, db) -> dict[str, Any]:
+async def run_one(client, base, case, repeat, args, db, *, slot: int = 0) -> dict[str, Any]:
     ps = case["scope"]["partnership_id"]
-    uid = case["scope"].get("user_id") or default_user(ps)
+    users = [u.strip() for u in (args.liancai_users or "").split(",") if u.strip()] or None
+    uid = pick_user(case, slot, users)
     res: dict[str, Any] = {"id": case["id"], "category": case["category"], "repeat": repeat,
                            "partnership_id": ps, "user_id": uid}
     before = po_count(db)
@@ -380,7 +392,8 @@ async def main_async(args, client=None, db=None) -> list[dict]:
         cases = [c for c in cases if c["id"] in args.only.split(",")]
     # Files without a `split` (golden_v2, golden_hard_v2) are unaffected. In the merged file the
     # held-out split only runs when it is asked for by name.
-    wanted = set(args.split.split(",")) if args.split else {"core", "dev"}
+    split = getattr(args, "split", None)
+    wanted = set(split.split(",")) if split else {"core", "dev"}
     cases = [c for c in cases if c.get("split", "core") in wanted or "split" not in c]
     out: list[dict] = []
     if args.phase in ("ingest", "ingest-check"):
@@ -414,13 +427,14 @@ async def main_async(args, client=None, db=None) -> list[dict]:
     own = client is None
     client = client or httpx.AsyncClient(timeout=httpx.Timeout(30))
     sem = asyncio.Semaphore(args.concurrency)
+    jobs = [(c, i) for c in todo for i in range(1, args.repeats + 1)]
 
-    async def go(c, i):
+    async def go(c, i, slot):
         async with sem:
-            return await run_one(client, args.base_url.rstrip("/"), c, i, args, db)
+            return await run_one(client, args.base_url.rstrip("/"), c, i, args, db, slot=slot)
 
     try:
-        out = await asyncio.gather(*(go(c, i) for c in todo for i in range(1, args.repeats + 1)))
+        out = await asyncio.gather(*(go(c, i, slot) for slot, (c, i) in enumerate(jobs)))
     finally:
         if own:
             await client.aclose()
@@ -439,6 +453,11 @@ def main() -> int:
                     help="keep 1: purchase_orders before/after counts assume no other writers, and B is a no-load baseline")
     ap.add_argument("--timeout", type=float, default=180)
     ap.add_argument("--only", help="comma-separated case ids")
+    ap.add_argument(
+        "--liancai-users",
+        default="",
+        help="comma-separated 联采 users to rotate (haina cases and explicit scope.user_id stay put)",
+    )
     ap.add_argument("--split", help="golden_all_v2 only: comma-separated of core,dev,heldout (default core,dev)")
     ap.add_argument("--inproc", action="store_true", help="ingest: call the import code directly instead of the HTTP route")
     args = ap.parse_args()

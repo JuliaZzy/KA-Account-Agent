@@ -5,7 +5,8 @@ does not contain secrets or prompt text; runtime decisions are written to Run
 events by ``llm.calls`` so they remain visible in the existing trace.
 
 Cheap short text uses official ``qwen3.7-flash``. Structured JSON, tools, vision,
-and longer report prose use official ``deepseek-flash``. There is no campus path.
+and longer report prose use official ``deepseek-flash``. Report review and revise
+are the exception: they take Qwen first. There is no campus path.
 """
 
 from __future__ import annotations
@@ -91,13 +92,15 @@ def _cheap_text(task: str, *, max_tokens: int = 1600) -> RoutePolicy:
     )
 
 
-def _structured(task: str, *, max_tokens: int = 1200, quality_gate: str = "response_parsed") -> RoutePolicy:
+def _structured(
+    task: str, *, max_tokens: int = 1200, max_model_calls: int = 2, quality_gate: str = "response_parsed",
+) -> RoutePolicy:
     return RoutePolicy(
         task=task,
         primary=DEEPSEEK_FLASH,
         fallbacks=(QWEN_FLASH,),
         max_tokens=max_tokens,
-        max_model_calls=2,
+        max_model_calls=max_model_calls,
         quality_gate=quality_gate,
         fallback_on=("provider_error", "model_capacity", "invalid_json", "quality_gate_failed"),
     )
@@ -151,7 +154,20 @@ ROUTES: dict[str, RoutePolicy] = {
     ),
     "po.extract": _structured("po.extract", quality_gate="valid_po_slots"),
     "contract.extract": _structured("contract.extract"),
-    "report": _structured("report", max_tokens=4000),
+    # Catch-all if a report call forgets a graded purpose. Graded caps are per purpose, not a
+    # shared 24. Writes ~7, review ~6 for two rounds, optional (plan/charts/wizards) ~4–8.
+    "report": _structured("report", max_tokens=24_000, max_model_calls=24),
+    "report.write": _structured("report.write", max_tokens=16_000, max_model_calls=12),
+    "report.review": RoutePolicy(
+        task="report.review",
+        primary=QWEN_FLASH,
+        fallbacks=(DEEPSEEK_FLASH,),
+        max_tokens=12_000,
+        max_model_calls=8,
+        quality_gate="response_parsed",
+        fallback_on=("provider_error", "model_capacity", "invalid_json", "quality_gate_failed"),
+    ),
+    "report.optional": _structured("report.optional", max_tokens=12_000, max_model_calls=12),
     "code.fix": _structured("code.fix"),
     "data.react": RoutePolicy(
         task="data.react", primary=DEEPSEEK_FLASH, fallbacks=(QWEN_FLASH,),

@@ -56,6 +56,12 @@ class FakeLLM:
                 return _take_reply(self.json_replies, "tasks") or {"tasks": []}
             if name == "session_open":
                 return _take_open(self.json_replies) or {"tags": [], "title": "New chat"}
+            tagged = _take_schema(self.json_replies, name)
+            if tagged is not None:
+                return tagged
+            matched = _take_match(self.json_replies, system, messages)
+            if matched is not None:
+                return matched
             if not self.json_replies:
                 raise RuntimeError("FakeLLM: no scripted JSON reply left")
             return self.json_replies.pop(0)
@@ -104,6 +110,26 @@ def _take_open(replies: list[dict[str, Any]]) -> dict[str, Any] | None:
     for index, reply in enumerate(replies):
         if isinstance(reply, dict) and "title" in reply and "tasks" not in reply:
             return replies.pop(index)
+    return None
+
+
+def _take_schema(replies: list[dict[str, Any]], name: str | None) -> dict[str, Any] | None:
+    if not name:
+        return None
+    for index, reply in enumerate(replies):
+        if isinstance(reply, dict) and reply.get("_schema") == name:
+            replies.pop(index)
+            return {key: value for key, value in reply.items() if key != "_schema"}
+    return None
+
+
+def _take_match(replies: list[dict[str, Any]], system: str, messages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    blob = system + json.dumps(messages, ensure_ascii=False)
+    for index, reply in enumerate(replies):
+        needle = reply.get("_match") if isinstance(reply, dict) else None
+        if needle and str(needle) in blob:
+            replies.pop(index)
+            return {key: value for key, value in reply.items() if key != "_match"}
     return None
 
 

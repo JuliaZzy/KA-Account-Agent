@@ -188,8 +188,9 @@ add("rpt-06", "report", "ps-liancai-04", "对比2026年9月的采购金额和销
     "需要两个数据源：采购(purchase_order_items) + 销售(report_facts, metric_key='revenue')。")
 
 add("rpt-07", "report", "ps-liancai-01", "出一份2026年10月的采购月报，带品类饼图。",
-    [EMPTY, {"type": "no_chart_or_empty", "hard": True}], {"rows": []}, None, ["empty", "negative"],
-    "2026-10 没有订单。不能画出全 0 / 编造数据的图。")
+    [dict(EMPTY, allow_charts=True), {"type": "no_pie_with_values", "hard": True}], {"rows": []}, None, ["empty", "negative"],
+    "2026-10 没有订单：回答要明确说这个月没有数据，不能画出要求的品类饼图（全 0 / 编造）。"
+    "报告里引用其他月份的趋势图是允许的，所以不再要求完全没有图。")
 
 # ---------- Plan / multi-task ----------
 add("plan-01", "plan", "ps-liancai-04", "查一下2026年9月的采购总金额，再告诉我美元兑人民币汇率。",

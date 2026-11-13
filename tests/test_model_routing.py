@@ -150,6 +150,9 @@ def test_named_purposes_receive_a_compatible_route():
         ("translate", "qwen3.7-flash"),
         ("contract.select", "qwen3.7-flash"),
         ("report", "deepseek-flash"),
+        ("report.write", "deepseek-flash"),
+        ("report.review", "qwen3.7-flash"),
+        ("report.optional", "deepseek-flash"),
         ("contract.extract", "deepseek-flash"),
         ("code.fix", "deepseek-flash"),
     ):
@@ -251,3 +254,19 @@ def test_quality_gate_failure_falls_back_after_model_completed(db, monkeypatch):
     assert types.count("model.completed") == 2
     assert "model.quality_gate_failed" in types
     assert "model.route_fallback" in types
+
+
+def test_report_route_allows_a_full_report_worth_of_calls():
+    # Catch-all still covers a full report if a call forgets a graded purpose.
+    policy = policy_for("report")
+    assert policy is not None
+    assert policy.max_model_calls >= 12
+    assert policy.max_tokens >= 16_000
+    write = policy_for("report.write")
+    review = policy_for("report.review")
+    optional = policy_for("report.optional")
+    assert write is not None and write.max_model_calls == 12
+    assert review is not None and review.max_model_calls == 8
+    assert review.primary.model == "qwen3.7-flash"
+    assert review.fallbacks[0].model == "deepseek-flash"
+    assert optional is not None and optional.max_model_calls == 12

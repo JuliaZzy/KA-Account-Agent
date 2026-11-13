@@ -139,7 +139,7 @@ services:
     # task also has a lease heartbeat and up to 5 tool threads.
     environment:
       <<: *python-env
-      KA_ACCOUNT_POOL_SIZE: "6"
+      KA_ACCOUNT_POOL_SIZE: "${KA_WORKER_POOL:-6}"
       KA_ACCOUNT_MAX_OVERFLOW: "2"
     depends_on:
       postgres:
@@ -156,7 +156,7 @@ services:
       - -Q
       - ka_account
       - --loglevel=INFO
-      - --concurrency=5
+      - --concurrency=${KA_WORKER_CONCURRENCY:-5}
     stop_grace_period: 30s
     healthcheck:
       test:

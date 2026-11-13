@@ -1,0 +1,4020 @@
+{
+ "history": [
+  {
+   "role": "user",
+   "content": "起草一张红牛采购单：Energy Drink 250 ml（BEV-90435324）订 10 箱，不要提交，按协议折扣算应付总额。"
+  },
+  {
+   "role": "assistant",
+   "order": true,
+   "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+   "content": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿。点那个标签上的确认才会下单或入库。",
+   "order_draft": {
+    "lines": [
+     {
+      "sku": "BEV-90435324",
+      "name": "Energy Drink",
+      "cases": 10,
+      "ambiguous": false,
+      "below_moq": false,
+      "moq_cases": 10,
+      "reference": "Energy Drink 250 ml",
+      "candidates": [],
+      "case_price": 14.39,
+      "line_total": 143.9,
+      "unresolved": false,
+      "missing_price": false,
+      "partial_layer": false,
+      "cases_per_layer": 10,
+      "cases_to_full_layer": null
+     }
+    ],
+    "notes": null,
+    "total": 143.9,
+    "currency": "USD",
+    "discount": {
+     "kind": "none",
+     "note": "list price — 1st container of the contract period from 2026-10-01 §6 / 6.4",
+     "value": null,
+     "source": "contract"
+    },
+    "eta_date": "2027-01-11",
+    "subtotal": 143.9,
+    "incoterms": "CIF",
+    "payment_terms": "50_50",
+    "discount_amount": 0.0,
+    "shipping_method": "sea"
+   }
+  }
+ ],
+ "trace": {
+  "run": {
+   "id": "run_89492b67e23c413a8d1d85d6fab35174",
+   "org_id": "dist-liancai",
+   "user_id": "user-liancai-chen",
+   "run_type": "chat",
+   "idempotency_key": "chat:85537b7698bc410c9b6a1ce6c4dc97c6:20fe3760e702435ea6220073ad578e95",
+   "status": "succeeded",
+   "input_json": {
+    "images": [],
+    "message": "起草一张红牛采购单：Energy Drink 250 ml（BEV-90435324）订 10 箱，不要提交，按协议折扣算应付总额。",
+    "documents": [],
+    "session_id": "85537b7698bc410c9b6a1ce6c4dc97c6",
+    "attachments": []
+   },
+   "output_json": {
+    "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿。点那个标签上的确认才会下单或入库。"
+   },
+   "error_json": null,
+   "created_at": "2026-11-12T13:50:25.323764Z",
+   "queued_at": "2026-11-12T13:50:31.095456Z",
+   "started_at": "2026-11-12T13:50:25.330363Z",
+   "ended_at": "2026-11-12T13:50:34.050342Z",
+   "cancel_requested_at": null,
+   "updated_at": "2026-11-12T13:50:34.050342Z",
+   "lease_owner": "celery:10",
+   "lease_expires_at": "2026-11-12T14:00:31.101407Z",
+   "attempts": 2,
+   "redispatch_count": 0,
+   "parent_run_id": null,
+   "owner_run_id": null,
+   "trace_id": "ac43d2b00f984a7086f2ec9e1b8d34e1",
+   "max_model_calls": 8,
+   "max_tokens": 32000,
+   "max_tool_calls": null,
+   "max_duration_seconds": null
+  },
+  "steps": [
+   {
+    "id": "step_32e51a1deff641428f1f5c5920114dcb",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "step_index": 1,
+    "step_type": "model",
+    "name": "model",
+    "status": "succeeded",
+    "input_json": {
+     "purpose": "orchestrator.plan"
+    },
+    "output_json": {
+     "tasks": [
+      {
+       "id": "po_draft_1",
+       "kind": "agent",
+       "name": "po",
+       "input": {
+        "note": "按协议折扣算应付总额，不要提交",
+        "unit": "箱",
+        "action": "draft",
+        "quantity": 10,
+        "product_sku": "BEV-90435324",
+        "product_name": "Energy Drink 250 ml"
+       },
+       "depends_on": []
+      }
+     ]
+    },
+    "error_json": null,
+    "started_at": "2026-11-12T13:50:25.341974Z",
+    "ended_at": "2026-11-12T13:50:30.066396Z"
+   },
+   {
+    "id": "step_d38eedc67bd74b118683fb569fbb0b7c",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "step_index": 2,
+    "step_type": "model",
+    "name": "model",
+    "status": "succeeded",
+    "input_json": {
+     "purpose": "orchestrator.answer"
+    },
+    "output_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿。点那个标签上的确认才会下单或入库。"
+    },
+    "error_json": null,
+    "started_at": "2026-11-12T13:50:31.115603Z",
+    "ended_at": "2026-11-12T13:50:34.038569Z"
+   },
+   {
+    "id": "step_f8ef320b79be4dd3892664c93f7ec6e2",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "step_index": 3,
+    "step_type": "model",
+    "name": "model",
+    "status": "succeeded",
+    "input_json": {
+     "purpose": "orchestrator.history"
+    },
+    "output_json": {
+     "saved": true
+    },
+    "error_json": null,
+    "started_at": "2026-11-12T13:50:34.043524Z",
+    "ended_at": "2026-11-12T13:50:34.047067Z"
+   }
+  ],
+  "events": [
+   {
+    "id": "evt_528f87dff3d74b57bdf81e7fdbb3236f",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 1,
+    "event_type": "run.created",
+    "payload_json": {
+     "status": "queued",
+     "display": "已开始"
+    },
+    "created_at": "2026-11-12T13:50:25.323764Z"
+   },
+   {
+    "id": "evt_c6924382e8074684a6a55fd1b3d74f0a",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 2,
+    "event_type": "run.enqueued",
+    "payload_json": {
+     "outbox_job_id": "obx_7b0cc4e16ebf4d8b8438386faf2527e0"
+    },
+    "created_at": "2026-11-12T13:50:25.327478Z"
+   },
+   {
+    "id": "evt_aaf18e6196c04034925d57949e0d97a5",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 3,
+    "event_type": "run.started",
+    "payload_json": {
+     "actor_id": "celery:10",
+     "to_status": "running",
+     "actor_type": "worker",
+     "from_status": "queued",
+     "lease_owner": "celery:10"
+    },
+    "created_at": "2026-11-12T13:50:25.330363Z"
+   },
+   {
+    "id": "evt_0339f17a56764a0cb7d6fff248395975",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 4,
+    "event_type": "step.started",
+    "payload_json": {
+     "name": "model",
+     "step_id": "step_32e51a1deff641428f1f5c5920114dcb",
+     "step_type": "model",
+     "step_index": 1
+    },
+    "created_at": "2026-11-12T13:50:25.341974Z"
+   },
+   {
+    "id": "evt_d0b02eb9f1ed4bd2861c72fc9712ae63",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 5,
+    "event_type": "model.route_selected",
+    "payload_json": {
+     "reason": "policy_primary",
+     "decision": "primary",
+     "trace_id": "ac43d2b00f984a7086f2ec9e1b8d34e1",
+     "max_tokens": 1200,
+     "route_task": "orchestrator.plan",
+     "quality_gate": "valid_task_plan",
+     "fallback_from": null,
+     "reason_detail": null,
+     "policy_version": "model-routing-v1",
+     "selected_model": "qwen3.7-flash",
+     "candidate_index": 0,
+     "max_model_calls": 2,
+     "selected_provider": "qwen",
+     "routing_policy_version": "model-routing-v1"
+    },
+    "created_at": "2026-11-12T13:50:25.348792Z"
+   },
+   {
+    "id": "evt_998015b112854a48b68eccda72cfa77c",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 6,
+    "event_type": "model.started",
+    "payload_json": {
+     "brand": "qwen",
+     "model": "qwen3.7-flash",
+     "display": "正在思考...",
+     "purpose": "orchestrator.plan",
+     "step_id": "step_32e51a1deff641428f1f5c5920114dcb",
+     "trace_id": "ac43d2b00f984a7086f2ec9e1b8d34e1"
+    },
+    "created_at": "2026-11-12T13:50:25.363176Z"
+   },
+   {
+    "id": "evt_bd2abd8b488847ffbe13f595c4d31ce3",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 7,
+    "event_type": "model.completed",
+    "payload_json": {
+     "brand": "qwen",
+     "model": "qwen3.7-flash",
+     "status": "succeeded",
+     "purpose": "orchestrator.plan",
+     "step_id": "step_32e51a1deff641428f1f5c5920114dcb",
+     "trace_id": "ac43d2b00f984a7086f2ec9e1b8d34e1",
+     "usage_source": "actual",
+     "model_call_id": "mcall_4fc7cee356724d2088c1f220ad093c1c",
+     "prompt_tokens": 2719,
+     "cache_hit_tokens": 2560,
+     "cache_miss_tokens": 159,
+     "completion_tokens": 92,
+     "cache_creation_tokens": null
+    },
+    "created_at": "2026-11-12T13:50:30.062339Z"
+   },
+   {
+    "id": "evt_3f6cc277279b4a29aa9b3f9e15963e24",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 8,
+    "event_type": "step.completed",
+    "payload_json": {
+     "status": "succeeded",
+     "step_id": "step_32e51a1deff641428f1f5c5920114dcb",
+     "step_index": 1
+    },
+    "created_at": "2026-11-12T13:50:30.066396Z"
+   },
+   {
+    "id": "evt_0cb8043817b84e799f32874ed151ede2",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 9,
+    "event_type": "tool.started",
+    "payload_json": {
+     "display": "po.draft",
+     "task_id": "po_draft_1",
+     "tool_name": "po.draft"
+    },
+    "created_at": "2026-11-12T13:50:30.073542Z"
+   },
+   {
+    "id": "evt_d3dfb17b385c438e893fa31ac9814cc3",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 10,
+    "event_type": "run.waiting_for_tasks",
+    "payload_json": {
+     "display": "正在执行任务",
+     "wave_id": "7be92f6d63ab4bd0bf78cee11a127f37",
+     "actor_id": "celery:10",
+     "task_ids": [
+      "po_draft_1"
+     ],
+     "to_status": "waiting_for_tasks",
+     "actor_type": "worker",
+     "from_status": "running"
+    },
+    "created_at": "2026-11-12T13:50:30.073542Z"
+   },
+   {
+    "id": "evt_5b5e31fe69ec4c57aa1d58860e0b6936",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 11,
+    "event_type": "step.started",
+    "payload_json": {
+     "name": "po.draft",
+     "step_id": "step_bd55161eaba94ad498f81c83fd055b07",
+     "step_type": "tool",
+     "step_index": 1,
+     "child_run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+     "projected_from": "run_125ea100bc0549e1aa8a439a8113d267"
+    },
+    "created_at": "2026-11-12T13:50:30.100481Z"
+   },
+   {
+    "id": "evt_027cd21c361d47909b7c269150acc62f",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 12,
+    "event_type": "model.route_selected",
+    "payload_json": {
+     "reason": "policy_primary",
+     "decision": "primary",
+     "trace_id": "23c51fca40b648dbb5d64db6365e0093",
+     "max_tokens": 1200,
+     "route_task": "po.extract",
+     "child_run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+     "quality_gate": "valid_po_slots",
+     "fallback_from": null,
+     "reason_detail": null,
+     "policy_version": "model-routing-v1",
+     "projected_from": "run_125ea100bc0549e1aa8a439a8113d267",
+     "selected_model": "deepseek-flash",
+     "candidate_index": 0,
+     "max_model_calls": 2,
+     "selected_provider": "deepseek",
+     "routing_policy_version": "model-routing-v1"
+    },
+    "created_at": "2026-11-12T13:50:30.111245Z"
+   },
+   {
+    "id": "evt_86026cca63dd4805b18bfc1928da4bf6",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 13,
+    "event_type": "model.started",
+    "payload_json": {
+     "brand": "deepseek",
+     "model": "deepseek-flash",
+     "display": "正在思考...",
+     "purpose": "po.extract",
+     "step_id": "step_bd55161eaba94ad498f81c83fd055b07",
+     "trace_id": "23c51fca40b648dbb5d64db6365e0093",
+     "child_run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+     "projected_from": "run_125ea100bc0549e1aa8a439a8113d267"
+    },
+    "created_at": "2026-11-12T13:50:30.127983Z"
+   },
+   {
+    "id": "evt_5a1c707c5127437e976ecb3482c3fc01",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 14,
+    "event_type": "model.completed",
+    "payload_json": {
+     "brand": "deepseek",
+     "model": "deepseek-flash",
+     "status": "succeeded",
+     "purpose": "po.extract",
+     "step_id": "step_bd55161eaba94ad498f81c83fd055b07",
+     "trace_id": "23c51fca40b648dbb5d64db6365e0093",
+     "child_run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+     "usage_source": "actual",
+     "model_call_id": "mcall_e578c2a811834f7dad6a4530bd375388",
+     "prompt_tokens": 1677,
+     "projected_from": "run_125ea100bc0549e1aa8a439a8113d267",
+     "cache_hit_tokens": 1536,
+     "cache_miss_tokens": 141,
+     "completion_tokens": 96,
+     "cache_creation_tokens": null
+    },
+    "created_at": "2026-11-12T13:50:31.081516Z"
+   },
+   {
+    "id": "evt_76b1738077614d61b0d001fed9a8ded2",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 15,
+    "event_type": "step.completed",
+    "payload_json": {
+     "status": "succeeded",
+     "step_id": "step_bd55161eaba94ad498f81c83fd055b07",
+     "step_index": 1,
+     "child_run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+     "projected_from": "run_125ea100bc0549e1aa8a439a8113d267"
+    },
+    "created_at": "2026-11-12T13:50:31.086529Z"
+   },
+   {
+    "id": "evt_8407d6f5246344fab2e9caaef0a910aa",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 16,
+    "event_type": "tool.completed",
+    "payload_json": {
+     "ok": true,
+     "task_id": "po_draft_1",
+     "tool_name": "po.draft"
+    },
+    "created_at": "2026-11-12T13:50:31.092685Z"
+   },
+   {
+    "id": "evt_c8a23b044a914461a8358a5fd25068b8",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 17,
+    "event_type": "run.resumed",
+    "payload_json": {
+     "wave_id": "7be92f6d63ab4bd0bf78cee11a127f37",
+     "actor_id": "user-liancai-chen",
+     "to_status": "queued",
+     "actor_type": "worker",
+     "from_status": "waiting_for_tasks"
+    },
+    "created_at": "2026-11-12T13:50:31.095456Z"
+   },
+   {
+    "id": "evt_f88d0081dffe47f99be9bc2476ee2783",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 18,
+    "event_type": "run.enqueued",
+    "payload_json": {
+     "outbox_job_id": "obx_8dada4bfc66042a7b9a159a98f9d9508"
+    },
+    "created_at": "2026-11-12T13:50:31.098782Z"
+   },
+   {
+    "id": "evt_100a43c5da354f38a4d368d64e315ccf",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 19,
+    "event_type": "run.started",
+    "payload_json": {
+     "actor_id": "celery:10",
+     "to_status": "running",
+     "actor_type": "worker",
+     "from_status": "queued",
+     "lease_owner": "celery:10"
+    },
+    "created_at": "2026-11-12T13:50:31.101409Z"
+   },
+   {
+    "id": "evt_6f176616d56f4bcb93b3949ccd6aad99",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 20,
+    "event_type": "step.started",
+    "payload_json": {
+     "name": "model",
+     "step_id": "step_d38eedc67bd74b118683fb569fbb0b7c",
+     "step_type": "model",
+     "step_index": 2
+    },
+    "created_at": "2026-11-12T13:50:31.115603Z"
+   },
+   {
+    "id": "evt_ccaa6b536e4b495c86378a442930163b",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 21,
+    "event_type": "model.route_selected",
+    "payload_json": {
+     "reason": "policy_primary",
+     "decision": "primary",
+     "trace_id": "ac43d2b00f984a7086f2ec9e1b8d34e1",
+     "max_tokens": 1600,
+     "route_task": "orchestrator.answer",
+     "quality_gate": "non_empty_answer",
+     "fallback_from": null,
+     "reason_detail": null,
+     "policy_version": "model-routing-v1",
+     "selected_model": "qwen3.7-flash",
+     "candidate_index": 0,
+     "max_model_calls": 2,
+     "selected_provider": "qwen",
+     "routing_policy_version": "model-routing-v1"
+    },
+    "created_at": "2026-11-12T13:50:31.122499Z"
+   },
+   {
+    "id": "evt_2f1260e80e384fdb97fa0daf8c0694bf",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 22,
+    "event_type": "model.started",
+    "payload_json": {
+     "brand": "qwen",
+     "model": "qwen3.7-flash",
+     "display": "正在思考...",
+     "purpose": "orchestrator.answer",
+     "step_id": "step_d38eedc67bd74b118683fb569fbb0b7c",
+     "trace_id": "ac43d2b00f984a7086f2ec9e1b8d34e1"
+    },
+    "created_at": "2026-11-12T13:50:31.137142Z"
+   },
+   {
+    "id": "evt_8ff16824a047401da8576278e58ebe7d",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 23,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.024555Z"
+   },
+   {
+    "id": "evt_fa37f06c965c44b9a181ac99717bdd78",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 24,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.030336Z"
+   },
+   {
+    "id": "evt_ccf1b208068b4a67a33d13085ea4349c",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 25,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.033896Z"
+   },
+   {
+    "id": "evt_d337a56cc8d04440a3901d08ce98adec",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 26,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.037087Z"
+   },
+   {
+    "id": "evt_1413640b6b5c40a2a2f42e34016014f7",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 27,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.128605Z"
+   },
+   {
+    "id": "evt_321bef0f7bc24266972b7298d2df7c3c",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 28,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-9",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.134742Z"
+   },
+   {
+    "id": "evt_5b0c255bc68748aa85c560eebc82d4a0",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 29,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.138948Z"
+   },
+   {
+    "id": "evt_303b9d5349fc4756b33b704f5a06b47a",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 30,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.142321Z"
+   },
+   {
+    "id": "evt_1867cbe31dcc442faf1ad5be2e67f329",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 31,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.176232Z"
+   },
+   {
+    "id": "evt_2c68698248f1459490e28b5b65dee411",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 32,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.179843Z"
+   },
+   {
+    "id": "evt_fbb1ff1bb2e4428ba03f86e92ac99709",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 33,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.319512Z"
+   },
+   {
+    "id": "evt_a50bae5ba5a4412ca19df41ffa89e169",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 34,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.323634Z"
+   },
+   {
+    "id": "evt_1644e7b42a924056b5e7f58c921bc7fe",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 35,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.341669Z"
+   },
+   {
+    "id": "evt_3d07a58f82c44f5cbe15c5a7343272b7",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 36,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.461238Z"
+   },
+   {
+    "id": "evt_6775c585204645789fe2e0f623253395",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 37,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.468080Z"
+   },
+   {
+    "id": "evt_9931e31497fa4442bcfdbcaf7d032b7c",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 38,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.474270Z"
+   },
+   {
+    "id": "evt_29d466b180934c42aa93e4e211271126",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 39,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.479905Z"
+   },
+   {
+    "id": "evt_c72a6a6e700f4403abb0fd5848ddf2bc",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 40,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.507488Z"
+   },
+   {
+    "id": "evt_06b3d67e0e4a4d7681c5ec23618adf71",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 41,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.553710Z"
+   },
+   {
+    "id": "evt_47c96ca5db834828ba353b0affdcb060",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 42,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.595944Z"
+   },
+   {
+    "id": "evt_7f204535662d49d384d60d3ccf27dbb8",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 43,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 ",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.600170Z"
+   },
+   {
+    "id": "evt_848252f712b74feaa1612d5a44ec0754",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 44,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.660895Z"
+   },
+   {
+    "id": "evt_e621dd189dd34b598c2ce4297c64bd05",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 45,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.666252Z"
+   },
+   {
+    "id": "evt_8ec358309f154d719267dee67cb46567",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 46,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.681776Z"
+   },
+   {
+    "id": "evt_4da3eb619c704af79e10d4296974f14c",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 47,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.774134Z"
+   },
+   {
+    "id": "evt_1eb9632730dc4469a083eeacbe4a27cc",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 48,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.777380Z"
+   },
+   {
+    "id": "evt_59ccd6ee99394012906f96b00297108e",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 49,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.779890Z"
+   },
+   {
+    "id": "evt_a2d3177673fa4cdb981f700f04113672",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 50,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.865682Z"
+   },
+   {
+    "id": "evt_16379d15ba634ef8b63798fe23ee4187",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 51,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.869532Z"
+   },
+   {
+    "id": "evt_1196a932a4cc4f82b5324b77ce406b49",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 52,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:33.872946Z"
+   },
+   {
+    "id": "evt_1fe0f857abea4af5a3f8404316096244",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 53,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:34.018009Z"
+   },
+   {
+    "id": "evt_3381fab7c9d3454cac4cb4833318bad4",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 54,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿。",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:34.021392Z"
+   },
+   {
+    "id": "evt_fd4e70f1794049e8bd7e83e332b486aa",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 55,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿。点那个标签上的",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:34.024406Z"
+   },
+   {
+    "id": "evt_9004cf01b0cd4ad0b964e31aa10c098e",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 56,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿。点那个标签上的确认",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:34.026789Z"
+   },
+   {
+    "id": "evt_7012f5259d714f54b6bbae14f68fdbc9",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 57,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿。点那个标签上的确认才会下单或入库",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:34.029308Z"
+   },
+   {
+    "id": "evt_9317a292f9474902bdaa1c24fa50ead9",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 58,
+    "event_type": "run.reply_updated",
+    "payload_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿。点那个标签上的确认才会下单或入库。",
+     "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+    },
+    "created_at": "2026-11-12T13:50:34.032162Z"
+   },
+   {
+    "id": "evt_b2c854e8b8cc4e56b5988387b8ecb6c6",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 59,
+    "event_type": "model.completed",
+    "payload_json": {
+     "brand": "qwen",
+     "model": "qwen3.7-flash",
+     "status": "succeeded",
+     "purpose": "orchestrator.answer",
+     "step_id": "step_d38eedc67bd74b118683fb569fbb0b7c",
+     "trace_id": "ac43d2b00f984a7086f2ec9e1b8d34e1",
+     "usage_source": "actual",
+     "model_call_id": "mcall_e805bc00061c423a9ce3e56717b7f640",
+     "prompt_tokens": 1434,
+     "cache_hit_tokens": 0,
+     "cache_miss_tokens": 1434,
+     "completion_tokens": 110,
+     "cache_creation_tokens": null
+    },
+    "created_at": "2026-11-12T13:50:34.036442Z"
+   },
+   {
+    "id": "evt_2a6114f2c8e7418ba745525152db8fd8",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 60,
+    "event_type": "step.completed",
+    "payload_json": {
+     "status": "succeeded",
+     "step_id": "step_d38eedc67bd74b118683fb569fbb0b7c",
+     "step_index": 2
+    },
+    "created_at": "2026-11-12T13:50:34.038569Z"
+   },
+   {
+    "id": "evt_6301850a78a54e0d9306d55bd6e72e0c",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 61,
+    "event_type": "step.started",
+    "payload_json": {
+     "name": "model",
+     "step_id": "step_f8ef320b79be4dd3892664c93f7ec6e2",
+     "step_type": "model",
+     "step_index": 3
+    },
+    "created_at": "2026-11-12T13:50:34.043524Z"
+   },
+   {
+    "id": "evt_e63a58a88b1740cfaea2c11b8a7f7109",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 62,
+    "event_type": "step.completed",
+    "payload_json": {
+     "status": "succeeded",
+     "step_id": "step_f8ef320b79be4dd3892664c93f7ec6e2",
+     "step_index": 3
+    },
+    "created_at": "2026-11-12T13:50:34.047067Z"
+   },
+   {
+    "id": "evt_368757933b484f64b575df956a0aac7b",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "sequence": 63,
+    "event_type": "run.completed",
+    "payload_json": {
+     "status": "succeeded",
+     "display": "回复结束",
+     "actor_id": "celery:10",
+     "to_status": "succeeded",
+     "actor_type": "worker",
+     "from_status": "running"
+    },
+    "created_at": "2026-11-12T13:50:34.050342Z"
+   }
+  ],
+  "model_calls": [
+   {
+    "id": "mcall_4fc7cee356724d2088c1f220ad093c1c",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "step_id": "step_32e51a1deff641428f1f5c5920114dcb",
+    "provider": "qwen",
+    "model": "qwen3.7-flash",
+    "request_json": {
+     "model": "qwen3.7-flash",
+     "schema": {
+      "name": "orchestrator_plan",
+      "schema": {
+       "type": "object",
+       "required": [
+        "tasks"
+       ],
+       "properties": {
+        "tasks": {
+         "type": "array",
+         "items": {
+          "type": "object",
+          "required": [
+           "id",
+           "name",
+           "input",
+           "depends_on"
+          ],
+          "properties": {
+           "id": {
+            "type": "string"
+           },
+           "name": {
+            "type": "string"
+           },
+           "input": {
+            "type": "object"
+           },
+           "depends_on": {
+            "type": "array",
+            "items": {
+             "type": "string"
+            }
+           }
+          },
+          "additionalProperties": false
+         }
+        }
+       },
+       "additionalProperties": false
+      },
+      "strict": true
+     },
+     "system": "你是品牌经销商工作台的编排器。你不跟用户聊天或查询工具，只根据现在已有的工具（包含原生 tools，agent，MCP 等）输出运行时要执行的计划。\n\n## 可用工具（与 tools= 相同的 JSON；name 用 function.name，input 按 parameters 填）\n[\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"web_search\",\n      \"description\": \"检索公开网页，查找模型还不知道的当前信息、新闻或报告。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"query\": {\n            \"type\": \"string\",\n            \"description\": \"检索关键词\"\n          }\n        },\n        \"required\": [\n          \"query\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"translate\",\n      \"description\": \"用户要求翻译时，把文字译成另一种语言。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"target_language\": {\n            \"type\": \"string\",\n            \"description\": \"要译成的语言，例如英语、德语、中文\"\n          },\n          \"text\": {\n            \"type\": \"string\",\n            \"description\": \"要翻译的原话，当这些话就在这条用户消息里时填写\"\n          },\n          \"source\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"message\",\n              \"last_assistant\",\n              \"report\"\n            ],\n            \"description\": \"`text` 为空时，从哪里取文字\"\n          }\n        },\n        \"required\": [\n          \"target_language\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"exchange_rate\",\n      \"description\": \"查询汇率（欧洲央行，经由 Frankfurter）。用于货币换算的问题；不要编造汇率。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"base_currency\": {\n            \"type\": \"string\",\n            \"description\": \"源货币的 ISO 代码，例如 CNY、USD、EUR（也接受 RMB）\"\n          },\n          \"target_currency\": {\n            \"type\": \"string\",\n            \"description\": \"目标货币的 ISO 代码，例如 EUR、USD、CNY\"\n          },\n          \"amount\": {\n            \"type\": \"number\",\n            \"description\": \"要换算的源货币金额（默认 1）\"\n          }\n        },\n        \"required\": [\n          \"base_currency\",\n          \"target_currency\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"send_email\",\n      \"description\": \"用户明确要求给某人发邮件时发送。不要编造收件人。主题和正文尽量短、清楚。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"to\": {\n            \"type\": \"string\",\n            \"description\": \"收件人邮箱\"\n          },\n          \"subject\": {\n            \"type\": \"string\",\n            \"description\": \"邮件主题\"\n          },\n          \"body\": {\n            \"type\": \"string\",\n            \"description\": \"纯文本正文\"\n          },\n          \"cc\": {\n            \"type\": \"string\",\n            \"description\": \"可选的抄送地址\"\n          }\n        },\n        \"required\": [\n          \"to\",\n          \"subject\",\n          \"body\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_find\",\n      \"description\": \"Start here: a task in plain words -> the best endpoints (3 by default) of 733, each with the params the task supplies (URLs and @handles resolved), the params still missing, the credit cost and the exact call. With no task it lists platforms, or one platform's endpoints. Free; no key needed.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_endpoint\",\n      \"description\": \"Read before calling: one endpoint's purpose, params, where the rows are and up to 25 response fields, cost rule, paging, latency, timeout, next endpoints and a sample link. id (or platform+resource, path), a platform slug (its endpoints) or a guide topic. Free.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_estimate\",\n      \"description\": \"Exact credits before you spend: one call (id, platform+resource or path, plus the params you will send; calls for a job total; items for a walk) or a plan of several calls. Uses the API's estimator when available, else the bundled pricing. A platform slug gives its price table; no id gives the pricing overview. Free.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_request\",\n      \"description\": \"Call one endpoint (platform+resource, or id, or path). Validated locally first (a bad call is free), quoted, refused above max_credits and confirmed above the threshold. A large page is cut at row boundaries; socialcrawl_collect result_id reads the rest. Spends credits; needs SOCIALCRAWL_API_KEY.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_collect\",\n      \"description\": \"Walk a paged endpoint (id, platform+resource or path) to `items` unique rows, the last page or max_credits: cursors supplied, duplicates dropped, stops on a 402, refused free when one page exceeds max_credits. Small results come back whole. result_id (+offset, limit, format) reads a stored result, free. Spends credits.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_account\",\n      \"description\": \"Free: balance (default, with this session's spend), transactions (ledger), usage (per key per day; from/to YYYY-MM-DD, ≤92 days), status (health; check before retrying a 502/503), freshness (vs live catalogue), notifications (inbox).\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_manage\",\n      \"description\": \"By area + action: monitors, cohorts, web (scrape, crawl, agents, page monitors, sessions), jobs, discover, search_runs (search lists, watches), creator_runs, review_history, events (feed, webhooks). Wrong fields refused free. Managing is free; scrapes, jobs, queries, run_more/include, monitor runs bill.\\ndry_run: true quotes, creating nothing. rows_new alerts need track. Docs: discover-runs, search-runs.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  }\n]\n\n## 5 个 Agent 代理（name 必须写完整的代理名，带 _agent 后缀）\n- po_agent — 用户要求下采购单、修改采购单，或延续一张未完成的采购订单。系统不支持删除、取消或撤回采购单；用户要这类操作时不要排 po_agent，也不要排其他任务，返回空计划，由作答模型说明不支持。\n- contract_agent — 合同上传解析。用户上传合同文件后，你需要调用这个 agent。这里需要文件字节，不能只有文件名称。如果用户没有明确说要上传、解析合同（或相似含义），则不排这个任务。\n- report_agent — 按标准大纲以及用户要求写一份报告草稿。Report Agent 自己会有调用工具的计划，因此你只需要调用 report_agent 即可，即使判断需要有其他工具来辅助它，也不需要调用。\n- brand_agent — 关于品牌自有材料的问题（故事、规格、营销文案）。\n- data_agent — 判断用户需要的内容需要从已有数据库中获取，比如关于这个合作关系的订单、付款、动销、合同条款或产品目录的问题。\n  用户要一张图（饼图、折线图、柱状图、趋势图、占比图等）时，排一个 data_agent，input 里写 `\"chart\": true`，`columns` 写出画图需要的维度列和全部度量列；只有用户要的是整份月报或报告时才排 report_agent。\n\n规则：\n- 先快速判断是否需要使用工具，如果不需要，直接返回空数组。空计划不会进工具循环，由作答模型直接回复。\n- 这一轮真正要做的事都写进 tasks，可以有多项，可以根据用户要求有串行或并行的逻辑，tasks之间需要判断是否有依赖关系，实际运行时会把没有依赖的任务交给不同的 worker 一起执行。\n- 代理的 name 只能是上面写的代理名（`po_agent` 等）。工具的 name 只能是上一节「可用工具」里的函数名。不需要写 kind，运行时按 name 判断是代理还是工具。\n- 写报表时只排 report_agent，不要为同一份草稿再排 data_agent。用户另外问了一个数字问题时，再排一个 data_agent，并且不要放进 report_agent 的 depends_on。\n- po_agent、contract_agent、report_agent 这一轮只产出草稿。确认入库发生在各自的浮窗里，所以这三项可以同时出现。\n- 同一个会话里有未完成的采购单（收集中 / 待确认）时，计划里保留这一个 po_agent，同时仍可排其它任务，但不要再排第二个 po_agent。\n- 只有下一步要用上一步的结果时才填 depends_on。彼此独立的任务把 depends_on 留空。\n- 每个 data_agent 任务的 input 必须包含 `question`、`deliver` 和 `columns`。`columns` 写下游实际需要的结果列名；只要问题需要多个字段，全部列出，不要只写一个代表列。\n- `deliver` 只填 `answer` 或 `data`：本轮唯一任务是 data_agent、没有下游依赖时填 `answer`；有其他任务、需要汇总或存在下游依赖时填 `data`。\n- 某一步依赖上一步的正文时，不要在 input 里编占位句。运行时会把依赖步骤的结果补进后续工具的参数（例如检索结果补进 translate 的 text）。\n- 只有用户明确要求发邮件时才排 send_email；若用户要「翻译后发邮件」，再排 send_email 并 depends_on 翻译，运行时可将译文补进 body。\n- 不要编造 SKU、价格、日期或国家。每个任务的 input 里只放用户说过的内容。\n\n只返回一个原始 JSON 对象：\n{\"tasks\": [{\"id\": string, \"name\": string, \"input\": object, \"depends_on\": [string]}]}\n",
+     "messages": [
+      {
+       "role": "user",
+       "content": "=== 未完成采购单 ===\n有\n\n=== 附件 ===\n（无）\n\n=== 最近对话 ===\n（无）\n\n=== 消息 ===\n起草一张红牛采购单：Energy Drink 250 ml（BEV-90435324）订 10 箱，不要提交，按协议折扣算应付总额。"
+      }
+     ]
+    },
+    "response_json": {
+     "json": {
+      "tasks": [
+       {
+        "id": "po_draft_1",
+        "name": "po_agent",
+        "input": {
+         "note": "按协议折扣算应付总额，不要提交",
+         "unit": "箱",
+         "action": "draft",
+         "quantity": 10,
+         "product_sku": "BEV-90435324",
+         "product_name": "Energy Drink 250 ml"
+        },
+        "depends_on": []
+       }
+      ]
+     }
+    },
+    "prompt_tokens": 2719,
+    "completion_tokens": 92,
+    "latency_ms": 4690,
+    "status": "succeeded",
+    "cache_hit_tokens": 2560,
+    "cache_miss_tokens": 159,
+    "cache_creation_tokens": null,
+    "usage_source": "actual",
+    "error_json": {},
+    "created_at": "2026-11-12T13:50:30.055391Z"
+   },
+   {
+    "id": "mcall_e805bc00061c423a9ce3e56717b7f640",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "step_id": "step_d38eedc67bd74b118683fb569fbb0b7c",
+    "provider": "qwen",
+    "model": "qwen3.7-flash",
+    "request_json": {
+     "model": "qwen3.7-flash",
+     "system": "你是品牌与已入驻经销商对话时的工作台助手。你只负责开口回复。请使用用户的语言。\n\n这一轮要跑的采购单、合同、报表、查数、检索和工具，如果已经执行，结果会放在给你的材料里。没有这些材料时，就直接回答用户这一句。\n\n规则：\n- 不要编造 SKU、价格、总额、汇率或合同折扣。数字、汇率、合同条款只引用材料里有的。品牌资料只根据给出的段落说。\n- 查数材料里 `shown_rows` 小于 `row_count` 时，你只看到前 `shown_rows` 行，没看到的行不要下结论；`truncated: true` 表示查询本身触到行数上限，只能说结果被截断，不能把 `row_count` 当成完整记录总数。\n- 查数结果带 `no_matching_records: true` 时，说明没有匹配的记录，要明确说\"没有数据\"，不要说成 0 或\"金额为 0\"。\n- 问的是比较、变化、增减或占比时，把参与比较的每个原始数字和结果一起写出来（例如「9 月 6731.82，8 月 7405.53，减少 673.71，约 -9.1%」），不要只给差值或百分比。\n- 查数材料里的 `scope` 是这些数字所属的品牌和经销商。只有 `scope.user_named_other` 非空（用户点名了别的经销商或品牌）时，回复第一句才必须明确说\"我只能查看 {scope 里的经销商}（{品牌}）的数据，看不到 {user_named_other 里的那一方} 的数据\"；之后如果还要引用数字，必须标明它属于 `scope`，不能说成是那一方的数据。`user_named_other` 不存在时不要提这句话，也不要自己去猜用户有没有点名别人。\n- 图表：只有材料里 `charts_drawn` 非空（或报告草稿已出图）时，才能说图已经附在回复里。用户要图但 `chart.produced` 为 false，或材料里根本没有图表，就明确说这次没能生成图表，只给数字；不要说\"已生成图表\"\"请在右侧查看图表\"。\n- 某一项失败或没有跑到，就说明没拿到，不要补一个听起来合理的数。\n- 采购单、合同、报表如果出了草稿，告诉用户在右侧对应标签里查看。点那个标签上的确认才会下单或入库。不要说已经下单、已经归档或已经保存报表。\n- 只有用户明确要求发邮件、并且材料里有发送结果时，才提发信。不要编造收件地址。\n- 寒暄、澄清或材料里没有可引用的事实时，短答即可。需要文件却没有附件时，请他们附上。\n- 回复要短，把这一轮的结果说清楚，不要重复材料原文。\n",
+     "messages": [
+      {
+       "role": "user",
+       "content": "=== 用户 ===\n起草一张红牛采购单：Energy Drink 250 ml（BEV-90435324）订 10 箱，不要提交，按协议折扣算应付总额。\n\n=== 这一轮结果 ===\n[{\"id\": \"po_draft_1\", \"ok\": true, \"kind\": \"agent\", \"name\": \"po.draft\", \"error\": null, \"status\": \"succeeded\", \"payload\": {\"gaps\": [], \"draft\": {\"lines\": [{\"sku\": \"BEV-90435324\", \"name\": \"Energy Drink\", \"cases\": 10, \"ambiguous\": false, \"below_moq\": false, \"moq_cases\": 10, \"reference\": \"Energy Drink 250 ml\", \"candidates\": [], \"case_price\": 14.39, \"line_total\": 143.9, \"unresolved\": false, \"missing_price\": false, \"partial_layer\": false, \"cases_per_layer\": 10, \"cases_to_full_layer\": null}], \"notes\": null, \"total\": 143.9, \"currency\": \"USD\", \"discount\": {\"kind\": \"none\", \"note\": \"list price — 1st container of the contract period from 2026-10-01 §6 / 6.4\", \"value\": null, \"source\": \"contract\"}, \"eta_date\": \"2027-01-11\", \"subtotal\": 143.9, \"incoterms\": \"CIF\", \"payment_terms\": \"50_50\", \"discount_amount\": 0.0, \"shipping_method\": \"sea\"}, \"slots\": {\"notes\": null, \"discount\": {\"kind\": \"none\", \"note\": \"list price — 1st container of the contract period from 2026-10-01 §6 / 6.4\", \"value\": null, \"source\": \"contract\"}, \"eta_date\": null, \"incoterms\": null, \"line_items\": [{\"sku\": \"BEV-90435324\", \"cases\": 10, \"reference\": \"BEV-90435324\"}], \"payment_terms\": null, \"shipping_method\": null}, \"stage\": \"confirm\", \"summary\": \"10 箱 Energy Drink。付款 50_50（下单时预付 50%，货到验收后再付 50% 尾款），CIF，sea，预计到货 2027-01-11，按合同为目录价（list price — 1st container of the contract period from 2026-10-01 §6 / 6.4）。 小计 USD 143.90，合计 USD 143.90。\", \"clear_po\": false, \"advisories\": [], \"gaps_detail\": [], \"confirm_hash\": \"9296f02f5abac0393cf654cb5643448a2d19a520eb4e78b29ec58789ad429afc\", \"confirm_token\": \"NkZxYeZeF8H4vZPk2o30zE7YqeacuqUrYzkq_AfGy4I\", \"confirm_expires_at\": \"2026-11-13T13:50:31.086466+00:00\"}}]"
+      }
+     ]
+    },
+    "response_json": {
+     "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿。点那个标签上的确认才会下单或入库。"
+    },
+    "prompt_tokens": 1434,
+    "completion_tokens": 110,
+    "latency_ms": 2896,
+    "status": "succeeded",
+    "cache_hit_tokens": 0,
+    "cache_miss_tokens": 1434,
+    "cache_creation_tokens": null,
+    "usage_source": "actual",
+    "error_json": {},
+    "created_at": "2026-11-12T13:50:34.034699Z"
+   }
+  ],
+  "tool_calls": [],
+  "checkpoints": [
+   {
+    "id": "ckpt_de4f4c7f32474df483b6e4d9fd26f450",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "checkpoint_index": 1,
+    "state_json": {
+     "last": "user",
+     "context": [],
+     "orchestrator": {
+      "phase": "planned",
+      "tasks": [
+       {
+        "id": "po_draft_1",
+        "kind": "agent",
+        "name": "po",
+        "input": {
+         "note": "按协议折扣算应付总额，不要提交",
+         "unit": "箱",
+         "action": "draft",
+         "quantity": 10,
+         "product_sku": "BEV-90435324",
+         "product_name": "Energy Drink 250 ml"
+        },
+        "depends_on": []
+       }
+      ],
+      "results": {},
+      "wave_id": null,
+      "finished": [],
+      "wave_ids": []
+     },
+     "completed_tool_calls": []
+    },
+    "created_at": "2026-11-12T13:50:30.066396Z"
+   },
+   {
+    "id": "ckpt_26c98200558e408fb5097d91800393e7",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "checkpoint_index": 2,
+    "state_json": {
+     "last": "user",
+     "context": [],
+     "orchestrator": {
+      "tasks": [
+       {
+        "id": "po_draft_1",
+        "kind": "agent",
+        "name": "po",
+        "input": {
+         "note": "按协议折扣算应付总额，不要提交",
+         "unit": "箱",
+         "action": "draft",
+         "quantity": 10,
+         "product_sku": "BEV-90435324",
+         "product_name": "Energy Drink 250 ml"
+        },
+        "depends_on": []
+       }
+      ],
+      "results": {},
+      "wave_id": "7be92f6d63ab4bd0bf78cee11a127f37",
+      "finished": [],
+      "wave_ids": [
+       "po_draft_1"
+      ]
+     },
+     "completed_tool_calls": []
+    },
+    "created_at": "2026-11-12T13:50:30.073542Z"
+   },
+   {
+    "id": "ckpt_06c16a6a30e2482c86108bfda052bc98",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "checkpoint_index": 3,
+    "state_json": {
+     "last": "user",
+     "context": [],
+     "orchestrator": {
+      "tasks": [
+       {
+        "id": "po_draft_1",
+        "kind": "agent",
+        "name": "po",
+        "input": {
+         "note": "按协议折扣算应付总额，不要提交",
+         "unit": "箱",
+         "action": "draft",
+         "quantity": 10,
+         "product_sku": "BEV-90435324",
+         "product_name": "Energy Drink 250 ml"
+        },
+        "depends_on": []
+       }
+      ],
+      "results": {
+       "po_draft_1": {
+        "id": "po_draft_1",
+        "ok": true,
+        "kind": "agent",
+        "name": "po.draft",
+        "error": null,
+        "status": "succeeded",
+        "payload": {
+         "gaps": [],
+         "draft": {
+          "lines": [
+           {
+            "sku": "BEV-90435324",
+            "name": "Energy Drink",
+            "cases": 10,
+            "ambiguous": false,
+            "below_moq": false,
+            "moq_cases": 10,
+            "reference": "Energy Drink 250 ml",
+            "candidates": [],
+            "case_price": 14.39,
+            "line_total": 143.9,
+            "unresolved": false,
+            "missing_price": false,
+            "partial_layer": false,
+            "cases_per_layer": 10,
+            "cases_to_full_layer": null
+           }
+          ],
+          "notes": null,
+          "total": 143.9,
+          "currency": "USD",
+          "discount": {
+           "kind": "none",
+           "note": "list price — 1st container of the contract period from 2026-10-01 §6 / 6.4",
+           "value": null,
+           "source": "contract"
+          },
+          "eta_date": "2027-01-11",
+          "subtotal": 143.9,
+          "incoterms": "CIF",
+          "payment_terms": "50_50",
+          "discount_amount": 0.0,
+          "shipping_method": "sea"
+         },
+         "slots": {
+          "notes": null,
+          "discount": {
+           "kind": "none",
+           "note": "list price — 1st container of the contract period from 2026-10-01 §6 / 6.4",
+           "value": null,
+           "source": "contract"
+          },
+          "eta_date": null,
+          "incoterms": null,
+          "line_items": [
+           {
+            "sku": "BEV-90435324",
+            "cases": 10,
+            "reference": "BEV-90435324"
+           }
+          ],
+          "payment_terms": null,
+          "shipping_method": null
+         },
+         "stage": "confirm",
+         "summary": "10 箱 Energy Drink。付款 50_50（下单时预付 50%，货到验收后再付 50% 尾款），CIF，sea，预计到货 2027-01-11，按合同为目录价（list price — 1st container of the contract period from 2026-10-01 §6 / 6.4）。 小计 USD 143.90，合计 USD 143.90。",
+         "clear_po": false,
+         "advisories": [],
+         "gaps_detail": [],
+         "confirm_hash": "9296f02f5abac0393cf654cb5643448a2d19a520eb4e78b29ec58789ad429afc",
+         "confirm_token": "NkZxYeZeF8H4vZPk2o30zE7YqeacuqUrYzkq_AfGy4I",
+         "confirm_expires_at": "2026-11-13T13:50:31.086466+00:00"
+        }
+       }
+      },
+      "wave_id": "7be92f6d63ab4bd0bf78cee11a127f37",
+      "finished": [
+       "po_draft_1"
+      ],
+      "wave_ids": [
+       "po_draft_1"
+      ]
+     },
+     "completed_tool_calls": []
+    },
+    "created_at": "2026-11-12T13:50:31.092685Z"
+   },
+   {
+    "id": "ckpt_cea6d66e91c44498bc546fef6c4e72e4",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "checkpoint_index": 4,
+    "state_json": {
+     "last": "user",
+     "context": [],
+     "orchestrator": {
+      "phase": "answer_done",
+      "tasks": [
+       {
+        "id": "po_draft_1",
+        "kind": "agent",
+        "name": "po",
+        "input": {
+         "note": "按协议折扣算应付总额，不要提交",
+         "unit": "箱",
+         "action": "draft",
+         "quantity": 10,
+         "product_sku": "BEV-90435324",
+         "product_name": "Energy Drink 250 ml"
+        },
+        "depends_on": []
+       }
+      ],
+      "answer": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿。点那个标签上的确认才会下单或入库。",
+      "results": {
+       "po_draft_1": {
+        "id": "po_draft_1",
+        "ok": true,
+        "kind": "agent",
+        "name": "po.draft",
+        "error": null,
+        "status": "succeeded",
+        "payload": {
+         "gaps": [],
+         "draft": {
+          "lines": [
+           {
+            "sku": "BEV-90435324",
+            "name": "Energy Drink",
+            "cases": 10,
+            "ambiguous": false,
+            "below_moq": false,
+            "moq_cases": 10,
+            "reference": "Energy Drink 250 ml",
+            "candidates": [],
+            "case_price": 14.39,
+            "line_total": 143.9,
+            "unresolved": false,
+            "missing_price": false,
+            "partial_layer": false,
+            "cases_per_layer": 10,
+            "cases_to_full_layer": null
+           }
+          ],
+          "notes": null,
+          "total": 143.9,
+          "currency": "USD",
+          "discount": {
+           "kind": "none",
+           "note": "list price — 1st container of the contract period from 2026-10-01 §6 / 6.4",
+           "value": null,
+           "source": "contract"
+          },
+          "eta_date": "2027-01-11",
+          "subtotal": 143.9,
+          "incoterms": "CIF",
+          "payment_terms": "50_50",
+          "discount_amount": 0.0,
+          "shipping_method": "sea"
+         },
+         "slots": {
+          "notes": null,
+          "discount": {
+           "kind": "none",
+           "note": "list price — 1st container of the contract period from 2026-10-01 §6 / 6.4",
+           "value": null,
+           "source": "contract"
+          },
+          "eta_date": null,
+          "incoterms": null,
+          "line_items": [
+           {
+            "sku": "BEV-90435324",
+            "cases": 10,
+            "reference": "BEV-90435324"
+           }
+          ],
+          "payment_terms": null,
+          "shipping_method": null
+         },
+         "stage": "confirm",
+         "summary": "10 箱 Energy Drink。付款 50_50（下单时预付 50%，货到验收后再付 50% 尾款），CIF，sea，预计到货 2027-01-11，按合同为目录价（list price — 1st container of the contract period from 2026-10-01 §6 / 6.4）。 小计 USD 143.90，合计 USD 143.90。",
+         "clear_po": false,
+         "advisories": [],
+         "gaps_detail": [],
+         "confirm_hash": "9296f02f5abac0393cf654cb5643448a2d19a520eb4e78b29ec58789ad429afc",
+         "confirm_token": "NkZxYeZeF8H4vZPk2o30zE7YqeacuqUrYzkq_AfGy4I",
+         "confirm_expires_at": "2026-11-13T13:50:31.086466+00:00"
+        }
+       }
+      },
+      "wave_id": null,
+      "finished": [
+       "po_draft_1"
+      ],
+      "wave_ids": []
+     },
+     "completed_tool_calls": []
+    },
+    "created_at": "2026-11-12T13:50:34.038569Z"
+   }
+  ],
+  "usage_records": [
+   {
+    "id": "usage_9e0d62692563467786b6bc760fdb6161",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "org_id": "dist-liancai",
+    "user_id": "user-liancai-chen",
+    "provider": "qwen",
+    "model": "qwen3.7-flash",
+    "prompt_tokens": 2719,
+    "completion_tokens": 92,
+    "total_tokens": 2811,
+    "estimated_cost_cents": 0,
+    "cache_hit_tokens": 2560,
+    "cache_miss_tokens": 159,
+    "cache_creation_tokens": null,
+    "usage_source": "actual",
+    "created_at": "2026-11-12T13:50:30.055391Z"
+   },
+   {
+    "id": "usage_f611542c810048259efb2c38af2f760c",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "org_id": "dist-liancai",
+    "user_id": "user-liancai-chen",
+    "provider": "qwen",
+    "model": "qwen3.7-flash",
+    "prompt_tokens": 1434,
+    "completion_tokens": 110,
+    "total_tokens": 1544,
+    "estimated_cost_cents": 0,
+    "cache_hit_tokens": 0,
+    "cache_miss_tokens": 1434,
+    "cache_creation_tokens": null,
+    "usage_source": "actual",
+    "created_at": "2026-11-12T13:50:34.034699Z"
+   }
+  ],
+  "audit_logs": [
+   {
+    "id": "aud_4f2593c02c154bc6a5b86964d390c382",
+    "user_id": "celery:10",
+    "org_id": "dist-liancai",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "action": "run.transition",
+    "target_type": "agent_run",
+    "target_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "metadata_json": {
+     "actor_id": "celery:10",
+     "to_status": "running",
+     "actor_type": "worker",
+     "from_status": "queued",
+     "lease_owner": "celery:10"
+    },
+    "created_at": "2026-11-12T13:50:25.330363Z"
+   },
+   {
+    "id": "aud_2de3706f41094288a60a41572efbe1ec",
+    "user_id": "celery:10",
+    "org_id": "dist-liancai",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "action": "run.transition",
+    "target_type": "agent_run",
+    "target_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "metadata_json": {
+     "wave_id": "7be92f6d63ab4bd0bf78cee11a127f37",
+     "actor_id": "celery:10",
+     "task_ids": [
+      "po_draft_1"
+     ],
+     "to_status": "waiting_for_tasks",
+     "actor_type": "worker",
+     "from_status": "running"
+    },
+    "created_at": "2026-11-12T13:50:30.073542Z"
+   },
+   {
+    "id": "aud_d4f2dc96b5ef4559af04ecbe9629f507",
+    "user_id": "user-liancai-chen",
+    "org_id": "dist-liancai",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "action": "run.transition",
+    "target_type": "agent_run",
+    "target_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "metadata_json": {
+     "wave_id": "7be92f6d63ab4bd0bf78cee11a127f37",
+     "actor_id": "user-liancai-chen",
+     "to_status": "queued",
+     "actor_type": "worker",
+     "from_status": "waiting_for_tasks"
+    },
+    "created_at": "2026-11-12T13:50:31.095456Z"
+   },
+   {
+    "id": "aud_bfb4cee69af34e2da818a647cf1d8a28",
+    "user_id": "celery:10",
+    "org_id": "dist-liancai",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "action": "run.transition",
+    "target_type": "agent_run",
+    "target_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "metadata_json": {
+     "actor_id": "celery:10",
+     "to_status": "running",
+     "actor_type": "worker",
+     "from_status": "queued",
+     "lease_owner": "celery:10"
+    },
+    "created_at": "2026-11-12T13:50:31.101409Z"
+   },
+   {
+    "id": "aud_73f4d23e5aec4e5095dac9d714e65237",
+    "user_id": "celery:10",
+    "org_id": "dist-liancai",
+    "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "action": "run.transition",
+    "target_type": "agent_run",
+    "target_id": "run_89492b67e23c413a8d1d85d6fab35174",
+    "metadata_json": {
+     "status": "succeeded",
+     "actor_id": "celery:10",
+     "to_status": "succeeded",
+     "actor_type": "worker",
+     "from_status": "running"
+    },
+    "created_at": "2026-11-12T13:50:34.050342Z"
+   }
+  ],
+  "outbox": [
+   {
+    "id": "obx_7b0cc4e16ebf4d8b8438386faf2527e0",
+    "job_type": "execute_run",
+    "payload_json": {
+     "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+     "run_type": "chat",
+     "trace_id": "ac43d2b00f984a7086f2ec9e1b8d34e1"
+    },
+    "status": "dispatched",
+    "attempts": 0,
+    "max_attempts": 10,
+    "next_attempt_at": "2026-11-12T13:50:25.323764Z",
+    "last_error_json": null,
+    "created_at": "2026-11-12T13:50:25.323764Z",
+    "dispatch_at": "2026-11-12T13:50:25.327478Z"
+   },
+   {
+    "id": "obx_8dada4bfc66042a7b9a159a98f9d9508",
+    "job_type": "execute_run",
+    "payload_json": {
+     "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+     "run_type": "chat",
+     "trace_id": "ac43d2b00f984a7086f2ec9e1b8d34e1"
+    },
+    "status": "dispatched",
+    "attempts": 0,
+    "max_attempts": 10,
+    "next_attempt_at": "2026-11-12T13:50:31.095456Z",
+    "last_error_json": null,
+    "created_at": "2026-11-12T13:50:31.095456Z",
+    "dispatch_at": "2026-11-12T13:50:31.098782Z"
+   }
+  ],
+  "dead_letters": []
+ },
+ "children": {
+  "run_89492b67e23c413a8d1d85d6fab35174": {
+   "run_type": "chat",
+   "status": "succeeded",
+   "trace": {
+    "run": {
+     "id": "run_89492b67e23c413a8d1d85d6fab35174",
+     "org_id": "dist-liancai",
+     "user_id": "user-liancai-chen",
+     "run_type": "chat",
+     "idempotency_key": "chat:85537b7698bc410c9b6a1ce6c4dc97c6:20fe3760e702435ea6220073ad578e95",
+     "status": "succeeded",
+     "input_json": {
+      "images": [],
+      "message": "起草一张红牛采购单：Energy Drink 250 ml（BEV-90435324）订 10 箱，不要提交，按协议折扣算应付总额。",
+      "documents": [],
+      "session_id": "85537b7698bc410c9b6a1ce6c4dc97c6",
+      "attachments": []
+     },
+     "output_json": {
+      "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿。点那个标签上的确认才会下单或入库。"
+     },
+     "error_json": null,
+     "created_at": "2026-11-12 13:50:25.323764+00:00",
+     "queued_at": "2026-11-12 13:50:31.095456+00:00",
+     "queue_heartbeat_at": null,
+     "started_at": "2026-11-12 13:50:25.330363+00:00",
+     "ended_at": "2026-11-12 13:50:34.050342+00:00",
+     "cancel_requested_at": null,
+     "updated_at": "2026-11-12 13:50:34.050342+00:00",
+     "lease_owner": "celery:10",
+     "lease_expires_at": "2026-11-12 14:00:31.101407+00:00",
+     "attempts": 2,
+     "redispatch_count": 0,
+     "parent_run_id": null,
+     "owner_run_id": null,
+     "trace_id": "ac43d2b00f984a7086f2ec9e1b8d34e1",
+     "max_model_calls": 8,
+     "max_tokens": 32000,
+     "max_tool_calls": null,
+     "max_duration_seconds": null
+    },
+    "steps": [
+     {
+      "id": "step_32e51a1deff641428f1f5c5920114dcb",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "step_index": 1,
+      "step_type": "model",
+      "name": "model",
+      "status": "succeeded",
+      "input_json": {
+       "purpose": "orchestrator.plan"
+      },
+      "output_json": {
+       "tasks": [
+        {
+         "id": "po_draft_1",
+         "kind": "agent",
+         "name": "po",
+         "input": {
+          "note": "按协议折扣算应付总额，不要提交",
+          "unit": "箱",
+          "action": "draft",
+          "quantity": 10,
+          "product_sku": "BEV-90435324",
+          "product_name": "Energy Drink 250 ml"
+         },
+         "depends_on": []
+        }
+       ]
+      },
+      "error_json": null,
+      "started_at": "2026-11-12 13:50:25.341974+00:00",
+      "ended_at": "2026-11-12 13:50:30.066396+00:00"
+     },
+     {
+      "id": "step_d38eedc67bd74b118683fb569fbb0b7c",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "step_index": 2,
+      "step_type": "model",
+      "name": "model",
+      "status": "succeeded",
+      "input_json": {
+       "purpose": "orchestrator.answer"
+      },
+      "output_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿。点那个标签上的确认才会下单或入库。"
+      },
+      "error_json": null,
+      "started_at": "2026-11-12 13:50:31.115603+00:00",
+      "ended_at": "2026-11-12 13:50:34.038569+00:00"
+     },
+     {
+      "id": "step_f8ef320b79be4dd3892664c93f7ec6e2",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "step_index": 3,
+      "step_type": "model",
+      "name": "model",
+      "status": "succeeded",
+      "input_json": {
+       "purpose": "orchestrator.history"
+      },
+      "output_json": {
+       "saved": true
+      },
+      "error_json": null,
+      "started_at": "2026-11-12 13:50:34.043524+00:00",
+      "ended_at": "2026-11-12 13:50:34.047067+00:00"
+     }
+    ],
+    "events": [
+     {
+      "id": "evt_528f87dff3d74b57bdf81e7fdbb3236f",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 1,
+      "event_type": "run.created",
+      "payload_json": {
+       "status": "queued",
+       "display": "已开始"
+      },
+      "created_at": "2026-11-12 13:50:25.323764+00:00"
+     },
+     {
+      "id": "evt_c6924382e8074684a6a55fd1b3d74f0a",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 2,
+      "event_type": "run.enqueued",
+      "payload_json": {
+       "outbox_job_id": "obx_7b0cc4e16ebf4d8b8438386faf2527e0"
+      },
+      "created_at": "2026-11-12 13:50:25.327478+00:00"
+     },
+     {
+      "id": "evt_aaf18e6196c04034925d57949e0d97a5",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 3,
+      "event_type": "run.started",
+      "payload_json": {
+       "actor_id": "celery:10",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:10"
+      },
+      "created_at": "2026-11-12 13:50:25.330363+00:00"
+     },
+     {
+      "id": "evt_0339f17a56764a0cb7d6fff248395975",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 4,
+      "event_type": "step.started",
+      "payload_json": {
+       "name": "model",
+       "step_id": "step_32e51a1deff641428f1f5c5920114dcb",
+       "step_type": "model",
+       "step_index": 1
+      },
+      "created_at": "2026-11-12 13:50:25.341974+00:00"
+     },
+     {
+      "id": "evt_d0b02eb9f1ed4bd2861c72fc9712ae63",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 5,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "ac43d2b00f984a7086f2ec9e1b8d34e1",
+       "max_tokens": 1200,
+       "route_task": "orchestrator.plan",
+       "quality_gate": "valid_task_plan",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "selected_model": "qwen3.7-flash",
+       "candidate_index": 0,
+       "max_model_calls": 2,
+       "selected_provider": "qwen",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-12 13:50:25.348792+00:00"
+     },
+     {
+      "id": "evt_998015b112854a48b68eccda72cfa77c",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 6,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "qwen",
+       "model": "qwen3.7-flash",
+       "display": "正在思考...",
+       "purpose": "orchestrator.plan",
+       "step_id": "step_32e51a1deff641428f1f5c5920114dcb",
+       "trace_id": "ac43d2b00f984a7086f2ec9e1b8d34e1"
+      },
+      "created_at": "2026-11-12 13:50:25.363176+00:00"
+     },
+     {
+      "id": "evt_bd2abd8b488847ffbe13f595c4d31ce3",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 7,
+      "event_type": "model.completed",
+      "payload_json": {
+       "brand": "qwen",
+       "model": "qwen3.7-flash",
+       "status": "succeeded",
+       "purpose": "orchestrator.plan",
+       "step_id": "step_32e51a1deff641428f1f5c5920114dcb",
+       "trace_id": "ac43d2b00f984a7086f2ec9e1b8d34e1",
+       "usage_source": "actual",
+       "model_call_id": "mcall_4fc7cee356724d2088c1f220ad093c1c",
+       "prompt_tokens": 2719,
+       "cache_hit_tokens": 2560,
+       "cache_miss_tokens": 159,
+       "completion_tokens": 92,
+       "cache_creation_tokens": null
+      },
+      "created_at": "2026-11-12 13:50:30.062339+00:00"
+     },
+     {
+      "id": "evt_3f6cc277279b4a29aa9b3f9e15963e24",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 8,
+      "event_type": "step.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "step_id": "step_32e51a1deff641428f1f5c5920114dcb",
+       "step_index": 1
+      },
+      "created_at": "2026-11-12 13:50:30.066396+00:00"
+     },
+     {
+      "id": "evt_0cb8043817b84e799f32874ed151ede2",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 9,
+      "event_type": "tool.started",
+      "payload_json": {
+       "display": "po.draft",
+       "task_id": "po_draft_1",
+       "tool_name": "po.draft"
+      },
+      "created_at": "2026-11-12 13:50:30.073542+00:00"
+     },
+     {
+      "id": "evt_d3dfb17b385c438e893fa31ac9814cc3",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 10,
+      "event_type": "run.waiting_for_tasks",
+      "payload_json": {
+       "display": "正在执行任务",
+       "wave_id": "7be92f6d63ab4bd0bf78cee11a127f37",
+       "actor_id": "celery:10",
+       "task_ids": [
+        "po_draft_1"
+       ],
+       "to_status": "waiting_for_tasks",
+       "actor_type": "worker",
+       "from_status": "running"
+      },
+      "created_at": "2026-11-12 13:50:30.073542+00:00"
+     },
+     {
+      "id": "evt_5b5e31fe69ec4c57aa1d58860e0b6936",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 11,
+      "event_type": "step.started",
+      "payload_json": {
+       "name": "po.draft",
+       "step_id": "step_bd55161eaba94ad498f81c83fd055b07",
+       "step_type": "tool",
+       "step_index": 1,
+       "child_run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+       "projected_from": "run_125ea100bc0549e1aa8a439a8113d267"
+      },
+      "created_at": "2026-11-12 13:50:30.100481+00:00"
+     },
+     {
+      "id": "evt_027cd21c361d47909b7c269150acc62f",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 12,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "23c51fca40b648dbb5d64db6365e0093",
+       "max_tokens": 1200,
+       "route_task": "po.extract",
+       "child_run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+       "quality_gate": "valid_po_slots",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "projected_from": "run_125ea100bc0549e1aa8a439a8113d267",
+       "selected_model": "deepseek-flash",
+       "candidate_index": 0,
+       "max_model_calls": 2,
+       "selected_provider": "deepseek",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-12 13:50:30.111245+00:00"
+     },
+     {
+      "id": "evt_86026cca63dd4805b18bfc1928da4bf6",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 13,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "display": "正在思考...",
+       "purpose": "po.extract",
+       "step_id": "step_bd55161eaba94ad498f81c83fd055b07",
+       "trace_id": "23c51fca40b648dbb5d64db6365e0093",
+       "child_run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+       "projected_from": "run_125ea100bc0549e1aa8a439a8113d267"
+      },
+      "created_at": "2026-11-12 13:50:30.127983+00:00"
+     },
+     {
+      "id": "evt_5a1c707c5127437e976ecb3482c3fc01",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 14,
+      "event_type": "model.completed",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "status": "succeeded",
+       "purpose": "po.extract",
+       "step_id": "step_bd55161eaba94ad498f81c83fd055b07",
+       "trace_id": "23c51fca40b648dbb5d64db6365e0093",
+       "child_run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+       "usage_source": "actual",
+       "model_call_id": "mcall_e578c2a811834f7dad6a4530bd375388",
+       "prompt_tokens": 1677,
+       "projected_from": "run_125ea100bc0549e1aa8a439a8113d267",
+       "cache_hit_tokens": 1536,
+       "cache_miss_tokens": 141,
+       "completion_tokens": 96,
+       "cache_creation_tokens": null
+      },
+      "created_at": "2026-11-12 13:50:31.081516+00:00"
+     },
+     {
+      "id": "evt_76b1738077614d61b0d001fed9a8ded2",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 15,
+      "event_type": "step.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "step_id": "step_bd55161eaba94ad498f81c83fd055b07",
+       "step_index": 1,
+       "child_run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+       "projected_from": "run_125ea100bc0549e1aa8a439a8113d267"
+      },
+      "created_at": "2026-11-12 13:50:31.086529+00:00"
+     },
+     {
+      "id": "evt_8407d6f5246344fab2e9caaef0a910aa",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 16,
+      "event_type": "tool.completed",
+      "payload_json": {
+       "ok": true,
+       "task_id": "po_draft_1",
+       "tool_name": "po.draft"
+      },
+      "created_at": "2026-11-12 13:50:31.092685+00:00"
+     },
+     {
+      "id": "evt_c8a23b044a914461a8358a5fd25068b8",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 17,
+      "event_type": "run.resumed",
+      "payload_json": {
+       "wave_id": "7be92f6d63ab4bd0bf78cee11a127f37",
+       "actor_id": "user-liancai-chen",
+       "to_status": "queued",
+       "actor_type": "worker",
+       "from_status": "waiting_for_tasks"
+      },
+      "created_at": "2026-11-12 13:50:31.095456+00:00"
+     },
+     {
+      "id": "evt_f88d0081dffe47f99be9bc2476ee2783",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 18,
+      "event_type": "run.enqueued",
+      "payload_json": {
+       "outbox_job_id": "obx_8dada4bfc66042a7b9a159a98f9d9508"
+      },
+      "created_at": "2026-11-12 13:50:31.098782+00:00"
+     },
+     {
+      "id": "evt_100a43c5da354f38a4d368d64e315ccf",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 19,
+      "event_type": "run.started",
+      "payload_json": {
+       "actor_id": "celery:10",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:10"
+      },
+      "created_at": "2026-11-12 13:50:31.101409+00:00"
+     },
+     {
+      "id": "evt_6f176616d56f4bcb93b3949ccd6aad99",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 20,
+      "event_type": "step.started",
+      "payload_json": {
+       "name": "model",
+       "step_id": "step_d38eedc67bd74b118683fb569fbb0b7c",
+       "step_type": "model",
+       "step_index": 2
+      },
+      "created_at": "2026-11-12 13:50:31.115603+00:00"
+     },
+     {
+      "id": "evt_ccaa6b536e4b495c86378a442930163b",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 21,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "ac43d2b00f984a7086f2ec9e1b8d34e1",
+       "max_tokens": 1600,
+       "route_task": "orchestrator.answer",
+       "quality_gate": "non_empty_answer",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "selected_model": "qwen3.7-flash",
+       "candidate_index": 0,
+       "max_model_calls": 2,
+       "selected_provider": "qwen",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-12 13:50:31.122499+00:00"
+     },
+     {
+      "id": "evt_2f1260e80e384fdb97fa0daf8c0694bf",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 22,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "qwen",
+       "model": "qwen3.7-flash",
+       "display": "正在思考...",
+       "purpose": "orchestrator.answer",
+       "step_id": "step_d38eedc67bd74b118683fb569fbb0b7c",
+       "trace_id": "ac43d2b00f984a7086f2ec9e1b8d34e1"
+      },
+      "created_at": "2026-11-12 13:50:31.137142+00:00"
+     },
+     {
+      "id": "evt_8ff16824a047401da8576278e58ebe7d",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 23,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.024555+00:00"
+     },
+     {
+      "id": "evt_fa37f06c965c44b9a181ac99717bdd78",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 24,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.030336+00:00"
+     },
+     {
+      "id": "evt_ccf1b208068b4a67a33d13085ea4349c",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 25,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.033896+00:00"
+     },
+     {
+      "id": "evt_d337a56cc8d04440a3901d08ce98adec",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 26,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.037087+00:00"
+     },
+     {
+      "id": "evt_1413640b6b5c40a2a2f42e34016014f7",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 27,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.128605+00:00"
+     },
+     {
+      "id": "evt_321bef0f7bc24266972b7298d2df7c3c",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 28,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-9",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.134742+00:00"
+     },
+     {
+      "id": "evt_5b0c255bc68748aa85c560eebc82d4a0",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 29,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.138948+00:00"
+     },
+     {
+      "id": "evt_303b9d5349fc4756b33b704f5a06b47a",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 30,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.142321+00:00"
+     },
+     {
+      "id": "evt_1867cbe31dcc442faf1ad5be2e67f329",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 31,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.176232+00:00"
+     },
+     {
+      "id": "evt_2c68698248f1459490e28b5b65dee411",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 32,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.179843+00:00"
+     },
+     {
+      "id": "evt_fbb1ff1bb2e4428ba03f86e92ac99709",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 33,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.319512+00:00"
+     },
+     {
+      "id": "evt_a50bae5ba5a4412ca19df41ffa89e169",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 34,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.323634+00:00"
+     },
+     {
+      "id": "evt_1644e7b42a924056b5e7f58c921bc7fe",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 35,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.341669+00:00"
+     },
+     {
+      "id": "evt_3d07a58f82c44f5cbe15c5a7343272b7",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 36,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.461238+00:00"
+     },
+     {
+      "id": "evt_6775c585204645789fe2e0f623253395",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 37,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.468080+00:00"
+     },
+     {
+      "id": "evt_9931e31497fa4442bcfdbcaf7d032b7c",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 38,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.474270+00:00"
+     },
+     {
+      "id": "evt_29d466b180934c42aa93e4e211271126",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 39,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.479905+00:00"
+     },
+     {
+      "id": "evt_c72a6a6e700f4403abb0fd5848ddf2bc",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 40,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.507488+00:00"
+     },
+     {
+      "id": "evt_06b3d67e0e4a4d7681c5ec23618adf71",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 41,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.553710+00:00"
+     },
+     {
+      "id": "evt_47c96ca5db834828ba353b0affdcb060",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 42,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.595944+00:00"
+     },
+     {
+      "id": "evt_7f204535662d49d384d60d3ccf27dbb8",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 43,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 ",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.600170+00:00"
+     },
+     {
+      "id": "evt_848252f712b74feaa1612d5a44ec0754",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 44,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.660895+00:00"
+     },
+     {
+      "id": "evt_e621dd189dd34b598c2ce4297c64bd05",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 45,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.666252+00:00"
+     },
+     {
+      "id": "evt_8ec358309f154d719267dee67cb46567",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 46,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.681776+00:00"
+     },
+     {
+      "id": "evt_4da3eb619c704af79e10d4296974f14c",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 47,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.774134+00:00"
+     },
+     {
+      "id": "evt_1eb9632730dc4469a083eeacbe4a27cc",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 48,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.777380+00:00"
+     },
+     {
+      "id": "evt_59ccd6ee99394012906f96b00297108e",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 49,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.779890+00:00"
+     },
+     {
+      "id": "evt_a2d3177673fa4cdb981f700f04113672",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 50,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.865682+00:00"
+     },
+     {
+      "id": "evt_16379d15ba634ef8b63798fe23ee4187",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 51,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.869532+00:00"
+     },
+     {
+      "id": "evt_1196a932a4cc4f82b5324b77ce406b49",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 52,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:33.872946+00:00"
+     },
+     {
+      "id": "evt_1fe0f857abea4af5a3f8404316096244",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 53,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:34.018009+00:00"
+     },
+     {
+      "id": "evt_3381fab7c9d3454cac4cb4833318bad4",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 54,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿。",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:34.021392+00:00"
+     },
+     {
+      "id": "evt_fd4e70f1794049e8bd7e83e332b486aa",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 55,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿。点那个标签上的",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:34.024406+00:00"
+     },
+     {
+      "id": "evt_9004cf01b0cd4ad0b964e31aa10c098e",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 56,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿。点那个标签上的确认",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:34.026789+00:00"
+     },
+     {
+      "id": "evt_7012f5259d714f54b6bbae14f68fdbc9",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 57,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿。点那个标签上的确认才会下单或入库",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:34.029308+00:00"
+     },
+     {
+      "id": "evt_9317a292f9474902bdaa1c24fa50ead9",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 58,
+      "event_type": "run.reply_updated",
+      "payload_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿。点那个标签上的确认才会下单或入库。",
+       "generation_id": "48c97858fa6c4975a68f0eb9e0a2ea3c"
+      },
+      "created_at": "2026-11-12 13:50:34.032162+00:00"
+     },
+     {
+      "id": "evt_b2c854e8b8cc4e56b5988387b8ecb6c6",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 59,
+      "event_type": "model.completed",
+      "payload_json": {
+       "brand": "qwen",
+       "model": "qwen3.7-flash",
+       "status": "succeeded",
+       "purpose": "orchestrator.answer",
+       "step_id": "step_d38eedc67bd74b118683fb569fbb0b7c",
+       "trace_id": "ac43d2b00f984a7086f2ec9e1b8d34e1",
+       "usage_source": "actual",
+       "model_call_id": "mcall_e805bc00061c423a9ce3e56717b7f640",
+       "prompt_tokens": 1434,
+       "cache_hit_tokens": 0,
+       "cache_miss_tokens": 1434,
+       "completion_tokens": 110,
+       "cache_creation_tokens": null
+      },
+      "created_at": "2026-11-12 13:50:34.036442+00:00"
+     },
+     {
+      "id": "evt_2a6114f2c8e7418ba745525152db8fd8",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 60,
+      "event_type": "step.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "step_id": "step_d38eedc67bd74b118683fb569fbb0b7c",
+       "step_index": 2
+      },
+      "created_at": "2026-11-12 13:50:34.038569+00:00"
+     },
+     {
+      "id": "evt_6301850a78a54e0d9306d55bd6e72e0c",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 61,
+      "event_type": "step.started",
+      "payload_json": {
+       "name": "model",
+       "step_id": "step_f8ef320b79be4dd3892664c93f7ec6e2",
+       "step_type": "model",
+       "step_index": 3
+      },
+      "created_at": "2026-11-12 13:50:34.043524+00:00"
+     },
+     {
+      "id": "evt_e63a58a88b1740cfaea2c11b8a7f7109",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 62,
+      "event_type": "step.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "step_id": "step_f8ef320b79be4dd3892664c93f7ec6e2",
+       "step_index": 3
+      },
+      "created_at": "2026-11-12 13:50:34.047067+00:00"
+     },
+     {
+      "id": "evt_368757933b484f64b575df956a0aac7b",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "sequence": 63,
+      "event_type": "run.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "display": "回复结束",
+       "actor_id": "celery:10",
+       "to_status": "succeeded",
+       "actor_type": "worker",
+       "from_status": "running"
+      },
+      "created_at": "2026-11-12 13:50:34.050342+00:00"
+     }
+    ],
+    "model_calls": [
+     {
+      "id": "mcall_4fc7cee356724d2088c1f220ad093c1c",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "step_id": "step_32e51a1deff641428f1f5c5920114dcb",
+      "provider": "qwen",
+      "model": "qwen3.7-flash",
+      "request_json": {
+       "model": "qwen3.7-flash",
+       "schema": {
+        "name": "orchestrator_plan",
+        "schema": {
+         "type": "object",
+         "required": [
+          "tasks"
+         ],
+         "properties": {
+          "tasks": {
+           "type": "array",
+           "items": {
+            "type": "object",
+            "required": [
+             "id",
+             "name",
+             "input",
+             "depends_on"
+            ],
+            "properties": {
+             "id": {
+              "type": "string"
+             },
+             "name": {
+              "type": "string"
+             },
+             "input": {
+              "type": "object"
+             },
+             "depends_on": {
+              "type": "array",
+              "items": {
+               "type": "string"
+              }
+             }
+            },
+            "additionalProperties": false
+           }
+          }
+         },
+         "additionalProperties": false
+        },
+        "strict": true
+       },
+       "system": "你是品牌经销商工作台的编排器。你不跟用户聊天或查询工具，只根据现在已有的工具（包含原生 tools，agent，MCP 等）输出运行时要执行的计划。\n\n## 可用工具（与 tools= 相同的 JSON；name 用 function.name，input 按 parameters 填）\n[\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"web_search\",\n      \"description\": \"检索公开网页，查找模型还不知道的当前信息、新闻或报告。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"query\": {\n            \"type\": \"string\",\n            \"description\": \"检索关键词\"\n          }\n        },\n        \"required\": [\n          \"query\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"translate\",\n      \"description\": \"用户要求翻译时，把文字译成另一种语言。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"target_language\": {\n            \"type\": \"string\",\n            \"description\": \"要译成的语言，例如英语、德语、中文\"\n          },\n          \"text\": {\n            \"type\": \"string\",\n            \"description\": \"要翻译的原话，当这些话就在这条用户消息里时填写\"\n          },\n          \"source\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"message\",\n              \"last_assistant\",\n              \"report\"\n            ],\n            \"description\": \"`text` 为空时，从哪里取文字\"\n          }\n        },\n        \"required\": [\n          \"target_language\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"exchange_rate\",\n      \"description\": \"查询汇率（欧洲央行，经由 Frankfurter）。用于货币换算的问题；不要编造汇率。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"base_currency\": {\n            \"type\": \"string\",\n            \"description\": \"源货币的 ISO 代码，例如 CNY、USD、EUR（也接受 RMB）\"\n          },\n          \"target_currency\": {\n            \"type\": \"string\",\n            \"description\": \"目标货币的 ISO 代码，例如 EUR、USD、CNY\"\n          },\n          \"amount\": {\n            \"type\": \"number\",\n            \"description\": \"要换算的源货币金额（默认 1）\"\n          }\n        },\n        \"required\": [\n          \"base_currency\",\n          \"target_currency\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"send_email\",\n      \"description\": \"用户明确要求给某人发邮件时发送。不要编造收件人。主题和正文尽量短、清楚。\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"to\": {\n            \"type\": \"string\",\n            \"description\": \"收件人邮箱\"\n          },\n          \"subject\": {\n            \"type\": \"string\",\n            \"description\": \"邮件主题\"\n          },\n          \"body\": {\n            \"type\": \"string\",\n            \"description\": \"纯文本正文\"\n          },\n          \"cc\": {\n            \"type\": \"string\",\n            \"description\": \"可选的抄送地址\"\n          }\n        },\n        \"required\": [\n          \"to\",\n          \"subject\",\n          \"body\"\n        ]\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_find\",\n      \"description\": \"Start here: a task in plain words -> the best endpoints (3 by default) of 733, each with the params the task supplies (URLs and @handles resolved), the params still missing, the credit cost and the exact call. With no task it lists platforms, or one platform's endpoints. Free; no key needed.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_endpoint\",\n      \"description\": \"Read before calling: one endpoint's purpose, params, where the rows are and up to 25 response fields, cost rule, paging, latency, timeout, next endpoints and a sample link. id (or platform+resource, path), a platform slug (its endpoints) or a guide topic. Free.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_estimate\",\n      \"description\": \"Exact credits before you spend: one call (id, platform+resource or path, plus the params you will send; calls for a job total; items for a walk) or a plan of several calls. Uses the API's estimator when available, else the bundled pricing. A platform slug gives its price table; no id gives the pricing overview. Free.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_request\",\n      \"description\": \"Call one endpoint (platform+resource, or id, or path). Validated locally first (a bad call is free), quoted, refused above max_credits and confirmed above the threshold. A large page is cut at row boundaries; socialcrawl_collect result_id reads the rest. Spends credits; needs SOCIALCRAWL_API_KEY.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_collect\",\n      \"description\": \"Walk a paged endpoint (id, platform+resource or path) to `items` unique rows, the last page or max_credits: cursors supplied, duplicates dropped, stops on a 402, refused free when one page exceeds max_credits. Small results come back whole. result_id (+offset, limit, format) reads a stored result, free. Spends credits.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_account\",\n      \"description\": \"Free: balance (default, with this session's spend), transactions (ledger), usage (per key per day; from/to YYYY-MM-DD, ≤92 days), status (health; check before retrying a 502/503), freshness (vs live catalogue), notifications (inbox).\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  },\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"socialcrawl_manage\",\n      \"description\": \"By area + action: monitors, cohorts, web (scrape, crawl, agents, page monitors, sessions), jobs, discover, search_runs (search lists, watches), creator_runs, review_history, events (feed, webhooks). Wrong fields refused free. Managing is free; scrapes, jobs, queries, run_more/include, monitor runs bill.\\ndry_run: true quotes, creating nothing. rows_new alerts need track. Docs: discover-runs, search-runs.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {}\n      }\n    }\n  }\n]\n\n## 5 个 Agent 代理（name 必须写完整的代理名，带 _agent 后缀）\n- po_agent — 用户要求下采购单、修改采购单，或延续一张未完成的采购订单。系统不支持删除、取消或撤回采购单；用户要这类操作时不要排 po_agent，也不要排其他任务，返回空计划，由作答模型说明不支持。\n- contract_agent — 合同上传解析。用户上传合同文件后，你需要调用这个 agent。这里需要文件字节，不能只有文件名称。如果用户没有明确说要上传、解析合同（或相似含义），则不排这个任务。\n- report_agent — 按标准大纲以及用户要求写一份报告草稿。Report Agent 自己会有调用工具的计划，因此你只需要调用 report_agent 即可，即使判断需要有其他工具来辅助它，也不需要调用。\n- brand_agent — 关于品牌自有材料的问题（故事、规格、营销文案）。\n- data_agent — 判断用户需要的内容需要从已有数据库中获取，比如关于这个合作关系的订单、付款、动销、合同条款或产品目录的问题。\n  用户要一张图（饼图、折线图、柱状图、趋势图、占比图等）时，排一个 data_agent，input 里写 `\"chart\": true`，`columns` 写出画图需要的维度列和全部度量列；只有用户要的是整份月报或报告时才排 report_agent。\n\n规则：\n- 先快速判断是否需要使用工具，如果不需要，直接返回空数组。空计划不会进工具循环，由作答模型直接回复。\n- 这一轮真正要做的事都写进 tasks，可以有多项，可以根据用户要求有串行或并行的逻辑，tasks之间需要判断是否有依赖关系，实际运行时会把没有依赖的任务交给不同的 worker 一起执行。\n- 代理的 name 只能是上面写的代理名（`po_agent` 等）。工具的 name 只能是上一节「可用工具」里的函数名。不需要写 kind，运行时按 name 判断是代理还是工具。\n- 写报表时只排 report_agent，不要为同一份草稿再排 data_agent。用户另外问了一个数字问题时，再排一个 data_agent，并且不要放进 report_agent 的 depends_on。\n- po_agent、contract_agent、report_agent 这一轮只产出草稿。确认入库发生在各自的浮窗里，所以这三项可以同时出现。\n- 同一个会话里有未完成的采购单（收集中 / 待确认）时，计划里保留这一个 po_agent，同时仍可排其它任务，但不要再排第二个 po_agent。\n- 只有下一步要用上一步的结果时才填 depends_on。彼此独立的任务把 depends_on 留空。\n- 每个 data_agent 任务的 input 必须包含 `question`、`deliver` 和 `columns`。`columns` 写下游实际需要的结果列名；只要问题需要多个字段，全部列出，不要只写一个代表列。\n- `deliver` 只填 `answer` 或 `data`：本轮唯一任务是 data_agent、没有下游依赖时填 `answer`；有其他任务、需要汇总或存在下游依赖时填 `data`。\n- 某一步依赖上一步的正文时，不要在 input 里编占位句。运行时会把依赖步骤的结果补进后续工具的参数（例如检索结果补进 translate 的 text）。\n- 只有用户明确要求发邮件时才排 send_email；若用户要「翻译后发邮件」，再排 send_email 并 depends_on 翻译，运行时可将译文补进 body。\n- 不要编造 SKU、价格、日期或国家。每个任务的 input 里只放用户说过的内容。\n\n只返回一个原始 JSON 对象：\n{\"tasks\": [{\"id\": string, \"name\": string, \"input\": object, \"depends_on\": [string]}]}\n",
+       "messages": [
+        {
+         "role": "user",
+         "content": "=== 未完成采购单 ===\n有\n\n=== 附件 ===\n（无）\n\n=== 最近对话 ===\n（无）\n\n=== 消息 ===\n起草一张红牛采购单：Energy Drink 250 ml（BEV-90435324）订 10 箱，不要提交，按协议折扣算应付总额。"
+        }
+       ]
+      },
+      "response_json": {
+       "json": {
+        "tasks": [
+         {
+          "id": "po_draft_1",
+          "name": "po_agent",
+          "input": {
+           "note": "按协议折扣算应付总额，不要提交",
+           "unit": "箱",
+           "action": "draft",
+           "quantity": 10,
+           "product_sku": "BEV-90435324",
+           "product_name": "Energy Drink 250 ml"
+          },
+          "depends_on": []
+         }
+        ]
+       }
+      },
+      "prompt_tokens": 2719,
+      "completion_tokens": 92,
+      "cache_hit_tokens": 2560,
+      "cache_miss_tokens": 159,
+      "cache_creation_tokens": null,
+      "usage_source": "actual",
+      "latency_ms": 4690,
+      "status": "succeeded",
+      "error_json": {},
+      "created_at": "2026-11-12 13:50:30.055391+00:00"
+     },
+     {
+      "id": "mcall_e805bc00061c423a9ce3e56717b7f640",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "step_id": "step_d38eedc67bd74b118683fb569fbb0b7c",
+      "provider": "qwen",
+      "model": "qwen3.7-flash",
+      "request_json": {
+       "model": "qwen3.7-flash",
+       "system": "你是品牌与已入驻经销商对话时的工作台助手。你只负责开口回复。请使用用户的语言。\n\n这一轮要跑的采购单、合同、报表、查数、检索和工具，如果已经执行，结果会放在给你的材料里。没有这些材料时，就直接回答用户这一句。\n\n规则：\n- 不要编造 SKU、价格、总额、汇率或合同折扣。数字、汇率、合同条款只引用材料里有的。品牌资料只根据给出的段落说。\n- 查数材料里 `shown_rows` 小于 `row_count` 时，你只看到前 `shown_rows` 行，没看到的行不要下结论；`truncated: true` 表示查询本身触到行数上限，只能说结果被截断，不能把 `row_count` 当成完整记录总数。\n- 查数结果带 `no_matching_records: true` 时，说明没有匹配的记录，要明确说\"没有数据\"，不要说成 0 或\"金额为 0\"。\n- 问的是比较、变化、增减或占比时，把参与比较的每个原始数字和结果一起写出来（例如「9 月 6731.82，8 月 7405.53，减少 673.71，约 -9.1%」），不要只给差值或百分比。\n- 查数材料里的 `scope` 是这些数字所属的品牌和经销商。只有 `scope.user_named_other` 非空（用户点名了别的经销商或品牌）时，回复第一句才必须明确说\"我只能查看 {scope 里的经销商}（{品牌}）的数据，看不到 {user_named_other 里的那一方} 的数据\"；之后如果还要引用数字，必须标明它属于 `scope`，不能说成是那一方的数据。`user_named_other` 不存在时不要提这句话，也不要自己去猜用户有没有点名别人。\n- 图表：只有材料里 `charts_drawn` 非空（或报告草稿已出图）时，才能说图已经附在回复里。用户要图但 `chart.produced` 为 false，或材料里根本没有图表，就明确说这次没能生成图表，只给数字；不要说\"已生成图表\"\"请在右侧查看图表\"。\n- 某一项失败或没有跑到，就说明没拿到，不要补一个听起来合理的数。\n- 采购单、合同、报表如果出了草稿，告诉用户在右侧对应标签里查看。点那个标签上的确认才会下单或入库。不要说已经下单、已经归档或已经保存报表。\n- 只有用户明确要求发邮件、并且材料里有发送结果时，才提发信。不要编造收件地址。\n- 寒暄、澄清或材料里没有可引用的事实时，短答即可。需要文件却没有附件时，请他们附上。\n- 回复要短，把这一轮的结果说清楚，不要重复材料原文。\n",
+       "messages": [
+        {
+         "role": "user",
+         "content": "=== 用户 ===\n起草一张红牛采购单：Energy Drink 250 ml（BEV-90435324）订 10 箱，不要提交，按协议折扣算应付总额。\n\n=== 这一轮结果 ===\n[{\"id\": \"po_draft_1\", \"ok\": true, \"kind\": \"agent\", \"name\": \"po.draft\", \"error\": null, \"status\": \"succeeded\", \"payload\": {\"gaps\": [], \"draft\": {\"lines\": [{\"sku\": \"BEV-90435324\", \"name\": \"Energy Drink\", \"cases\": 10, \"ambiguous\": false, \"below_moq\": false, \"moq_cases\": 10, \"reference\": \"Energy Drink 250 ml\", \"candidates\": [], \"case_price\": 14.39, \"line_total\": 143.9, \"unresolved\": false, \"missing_price\": false, \"partial_layer\": false, \"cases_per_layer\": 10, \"cases_to_full_layer\": null}], \"notes\": null, \"total\": 143.9, \"currency\": \"USD\", \"discount\": {\"kind\": \"none\", \"note\": \"list price — 1st container of the contract period from 2026-10-01 §6 / 6.4\", \"value\": null, \"source\": \"contract\"}, \"eta_date\": \"2027-01-11\", \"subtotal\": 143.9, \"incoterms\": \"CIF\", \"payment_terms\": \"50_50\", \"discount_amount\": 0.0, \"shipping_method\": \"sea\"}, \"slots\": {\"notes\": null, \"discount\": {\"kind\": \"none\", \"note\": \"list price — 1st container of the contract period from 2026-10-01 §6 / 6.4\", \"value\": null, \"source\": \"contract\"}, \"eta_date\": null, \"incoterms\": null, \"line_items\": [{\"sku\": \"BEV-90435324\", \"cases\": 10, \"reference\": \"BEV-90435324\"}], \"payment_terms\": null, \"shipping_method\": null}, \"stage\": \"confirm\", \"summary\": \"10 箱 Energy Drink。付款 50_50（下单时预付 50%，货到验收后再付 50% 尾款），CIF，sea，预计到货 2027-01-11，按合同为目录价（list price — 1st container of the contract period from 2026-10-01 §6 / 6.4）。 小计 USD 143.90，合计 USD 143.90。\", \"clear_po\": false, \"advisories\": [], \"gaps_detail\": [], \"confirm_hash\": \"9296f02f5abac0393cf654cb5643448a2d19a520eb4e78b29ec58789ad429afc\", \"confirm_token\": \"NkZxYeZeF8H4vZPk2o30zE7YqeacuqUrYzkq_AfGy4I\", \"confirm_expires_at\": \"2026-11-13T13:50:31.086466+00:00\"}}]"
+        }
+       ]
+      },
+      "response_json": {
+       "text": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿。点那个标签上的确认才会下单或入库。"
+      },
+      "prompt_tokens": 1434,
+      "completion_tokens": 110,
+      "cache_hit_tokens": 0,
+      "cache_miss_tokens": 1434,
+      "cache_creation_tokens": null,
+      "usage_source": "actual",
+      "latency_ms": 2896,
+      "status": "succeeded",
+      "error_json": {},
+      "created_at": "2026-11-12 13:50:34.034699+00:00"
+     }
+    ],
+    "tool_calls": [],
+    "checkpoints": [
+     {
+      "id": "ckpt_de4f4c7f32474df483b6e4d9fd26f450",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "checkpoint_index": 1,
+      "state_json": {
+       "last": "user",
+       "context": [],
+       "orchestrator": {
+        "phase": "planned",
+        "tasks": [
+         {
+          "id": "po_draft_1",
+          "kind": "agent",
+          "name": "po",
+          "input": {
+           "note": "按协议折扣算应付总额，不要提交",
+           "unit": "箱",
+           "action": "draft",
+           "quantity": 10,
+           "product_sku": "BEV-90435324",
+           "product_name": "Energy Drink 250 ml"
+          },
+          "depends_on": []
+         }
+        ],
+        "results": {},
+        "wave_id": null,
+        "finished": [],
+        "wave_ids": []
+       },
+       "completed_tool_calls": []
+      },
+      "created_at": "2026-11-12 13:50:30.066396+00:00"
+     },
+     {
+      "id": "ckpt_26c98200558e408fb5097d91800393e7",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "checkpoint_index": 2,
+      "state_json": {
+       "last": "user",
+       "context": [],
+       "orchestrator": {
+        "tasks": [
+         {
+          "id": "po_draft_1",
+          "kind": "agent",
+          "name": "po",
+          "input": {
+           "note": "按协议折扣算应付总额，不要提交",
+           "unit": "箱",
+           "action": "draft",
+           "quantity": 10,
+           "product_sku": "BEV-90435324",
+           "product_name": "Energy Drink 250 ml"
+          },
+          "depends_on": []
+         }
+        ],
+        "results": {},
+        "wave_id": "7be92f6d63ab4bd0bf78cee11a127f37",
+        "finished": [],
+        "wave_ids": [
+         "po_draft_1"
+        ]
+       },
+       "completed_tool_calls": []
+      },
+      "created_at": "2026-11-12 13:50:30.073542+00:00"
+     },
+     {
+      "id": "ckpt_06c16a6a30e2482c86108bfda052bc98",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "checkpoint_index": 3,
+      "state_json": {
+       "last": "user",
+       "context": [],
+       "orchestrator": {
+        "tasks": [
+         {
+          "id": "po_draft_1",
+          "kind": "agent",
+          "name": "po",
+          "input": {
+           "note": "按协议折扣算应付总额，不要提交",
+           "unit": "箱",
+           "action": "draft",
+           "quantity": 10,
+           "product_sku": "BEV-90435324",
+           "product_name": "Energy Drink 250 ml"
+          },
+          "depends_on": []
+         }
+        ],
+        "results": {
+         "po_draft_1": {
+          "id": "po_draft_1",
+          "ok": true,
+          "kind": "agent",
+          "name": "po.draft",
+          "error": null,
+          "status": "succeeded",
+          "payload": {
+           "gaps": [],
+           "draft": {
+            "lines": [
+             {
+              "sku": "BEV-90435324",
+              "name": "Energy Drink",
+              "cases": 10,
+              "ambiguous": false,
+              "below_moq": false,
+              "moq_cases": 10,
+              "reference": "Energy Drink 250 ml",
+              "candidates": [],
+              "case_price": 14.39,
+              "line_total": 143.9,
+              "unresolved": false,
+              "missing_price": false,
+              "partial_layer": false,
+              "cases_per_layer": 10,
+              "cases_to_full_layer": null
+             }
+            ],
+            "notes": null,
+            "total": 143.9,
+            "currency": "USD",
+            "discount": {
+             "kind": "none",
+             "note": "list price — 1st container of the contract period from 2026-10-01 §6 / 6.4",
+             "value": null,
+             "source": "contract"
+            },
+            "eta_date": "2027-01-11",
+            "subtotal": 143.9,
+            "incoterms": "CIF",
+            "payment_terms": "50_50",
+            "discount_amount": 0.0,
+            "shipping_method": "sea"
+           },
+           "slots": {
+            "notes": null,
+            "discount": {
+             "kind": "none",
+             "note": "list price — 1st container of the contract period from 2026-10-01 §6 / 6.4",
+             "value": null,
+             "source": "contract"
+            },
+            "eta_date": null,
+            "incoterms": null,
+            "line_items": [
+             {
+              "sku": "BEV-90435324",
+              "cases": 10,
+              "reference": "BEV-90435324"
+             }
+            ],
+            "payment_terms": null,
+            "shipping_method": null
+           },
+           "stage": "confirm",
+           "summary": "10 箱 Energy Drink。付款 50_50（下单时预付 50%，货到验收后再付 50% 尾款），CIF，sea，预计到货 2027-01-11，按合同为目录价（list price — 1st container of the contract period from 2026-10-01 §6 / 6.4）。 小计 USD 143.90，合计 USD 143.90。",
+           "clear_po": false,
+           "advisories": [],
+           "gaps_detail": [],
+           "confirm_hash": "9296f02f5abac0393cf654cb5643448a2d19a520eb4e78b29ec58789ad429afc",
+           "confirm_token": "NkZxYeZeF8H4vZPk2o30zE7YqeacuqUrYzkq_AfGy4I",
+           "confirm_expires_at": "2026-11-13T13:50:31.086466+00:00"
+          }
+         }
+        },
+        "wave_id": "7be92f6d63ab4bd0bf78cee11a127f37",
+        "finished": [
+         "po_draft_1"
+        ],
+        "wave_ids": [
+         "po_draft_1"
+        ]
+       },
+       "completed_tool_calls": []
+      },
+      "created_at": "2026-11-12 13:50:31.092685+00:00"
+     },
+     {
+      "id": "ckpt_cea6d66e91c44498bc546fef6c4e72e4",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "checkpoint_index": 4,
+      "state_json": {
+       "last": "user",
+       "context": [],
+       "orchestrator": {
+        "phase": "answer_done",
+        "tasks": [
+         {
+          "id": "po_draft_1",
+          "kind": "agent",
+          "name": "po",
+          "input": {
+           "note": "按协议折扣算应付总额，不要提交",
+           "unit": "箱",
+           "action": "draft",
+           "quantity": 10,
+           "product_sku": "BEV-90435324",
+           "product_name": "Energy Drink 250 ml"
+          },
+          "depends_on": []
+         }
+        ],
+        "answer": "已为您起草红牛采购单（SKU: BEV-90435324，10 箱），未提交。\n\n**应付总额：USD 143.90**\n*注：按合同条款（2026-10-01 起第 1 个集装箱 §6 / 6.4），当前适用目录价（list price），无协议折扣。*\n\n请在右侧对应标签里查看草稿。点那个标签上的确认才会下单或入库。",
+        "results": {
+         "po_draft_1": {
+          "id": "po_draft_1",
+          "ok": true,
+          "kind": "agent",
+          "name": "po.draft",
+          "error": null,
+          "status": "succeeded",
+          "payload": {
+           "gaps": [],
+           "draft": {
+            "lines": [
+             {
+              "sku": "BEV-90435324",
+              "name": "Energy Drink",
+              "cases": 10,
+              "ambiguous": false,
+              "below_moq": false,
+              "moq_cases": 10,
+              "reference": "Energy Drink 250 ml",
+              "candidates": [],
+              "case_price": 14.39,
+              "line_total": 143.9,
+              "unresolved": false,
+              "missing_price": false,
+              "partial_layer": false,
+              "cases_per_layer": 10,
+              "cases_to_full_layer": null
+             }
+            ],
+            "notes": null,
+            "total": 143.9,
+            "currency": "USD",
+            "discount": {
+             "kind": "none",
+             "note": "list price — 1st container of the contract period from 2026-10-01 §6 / 6.4",
+             "value": null,
+             "source": "contract"
+            },
+            "eta_date": "2027-01-11",
+            "subtotal": 143.9,
+            "incoterms": "CIF",
+            "payment_terms": "50_50",
+            "discount_amount": 0.0,
+            "shipping_method": "sea"
+           },
+           "slots": {
+            "notes": null,
+            "discount": {
+             "kind": "none",
+             "note": "list price — 1st container of the contract period from 2026-10-01 §6 / 6.4",
+             "value": null,
+             "source": "contract"
+            },
+            "eta_date": null,
+            "incoterms": null,
+            "line_items": [
+             {
+              "sku": "BEV-90435324",
+              "cases": 10,
+              "reference": "BEV-90435324"
+             }
+            ],
+            "payment_terms": null,
+            "shipping_method": null
+           },
+           "stage": "confirm",
+           "summary": "10 箱 Energy Drink。付款 50_50（下单时预付 50%，货到验收后再付 50% 尾款），CIF，sea，预计到货 2027-01-11，按合同为目录价（list price — 1st container of the contract period from 2026-10-01 §6 / 6.4）。 小计 USD 143.90，合计 USD 143.90。",
+           "clear_po": false,
+           "advisories": [],
+           "gaps_detail": [],
+           "confirm_hash": "9296f02f5abac0393cf654cb5643448a2d19a520eb4e78b29ec58789ad429afc",
+           "confirm_token": "NkZxYeZeF8H4vZPk2o30zE7YqeacuqUrYzkq_AfGy4I",
+           "confirm_expires_at": "2026-11-13T13:50:31.086466+00:00"
+          }
+         }
+        },
+        "wave_id": null,
+        "finished": [
+         "po_draft_1"
+        ],
+        "wave_ids": []
+       },
+       "completed_tool_calls": []
+      },
+      "created_at": "2026-11-12 13:50:34.038569+00:00"
+     }
+    ],
+    "usage_records": [
+     {
+      "id": "usage_9e0d62692563467786b6bc760fdb6161",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "org_id": "dist-liancai",
+      "user_id": "user-liancai-chen",
+      "provider": "qwen",
+      "model": "qwen3.7-flash",
+      "prompt_tokens": 2719,
+      "completion_tokens": 92,
+      "cache_hit_tokens": 2560,
+      "cache_miss_tokens": 159,
+      "cache_creation_tokens": null,
+      "total_tokens": 2811,
+      "estimated_cost_cents": 0,
+      "usage_source": "actual",
+      "created_at": "2026-11-12 13:50:30.055391+00:00"
+     },
+     {
+      "id": "usage_f611542c810048259efb2c38af2f760c",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "org_id": "dist-liancai",
+      "user_id": "user-liancai-chen",
+      "provider": "qwen",
+      "model": "qwen3.7-flash",
+      "prompt_tokens": 1434,
+      "completion_tokens": 110,
+      "cache_hit_tokens": 0,
+      "cache_miss_tokens": 1434,
+      "cache_creation_tokens": null,
+      "total_tokens": 1544,
+      "estimated_cost_cents": 0,
+      "usage_source": "actual",
+      "created_at": "2026-11-12 13:50:34.034699+00:00"
+     }
+    ],
+    "audit_logs": [
+     {
+      "id": "aud_4f2593c02c154bc6a5b86964d390c382",
+      "user_id": "celery:10",
+      "org_id": "dist-liancai",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "metadata_json": {
+       "actor_id": "celery:10",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:10"
+      },
+      "created_at": "2026-11-12 13:50:25.330363+00:00"
+     },
+     {
+      "id": "aud_2de3706f41094288a60a41572efbe1ec",
+      "user_id": "celery:10",
+      "org_id": "dist-liancai",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "metadata_json": {
+       "wave_id": "7be92f6d63ab4bd0bf78cee11a127f37",
+       "actor_id": "celery:10",
+       "task_ids": [
+        "po_draft_1"
+       ],
+       "to_status": "waiting_for_tasks",
+       "actor_type": "worker",
+       "from_status": "running"
+      },
+      "created_at": "2026-11-12 13:50:30.073542+00:00"
+     },
+     {
+      "id": "aud_d4f2dc96b5ef4559af04ecbe9629f507",
+      "user_id": "user-liancai-chen",
+      "org_id": "dist-liancai",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "metadata_json": {
+       "wave_id": "7be92f6d63ab4bd0bf78cee11a127f37",
+       "actor_id": "user-liancai-chen",
+       "to_status": "queued",
+       "actor_type": "worker",
+       "from_status": "waiting_for_tasks"
+      },
+      "created_at": "2026-11-12 13:50:31.095456+00:00"
+     },
+     {
+      "id": "aud_bfb4cee69af34e2da818a647cf1d8a28",
+      "user_id": "celery:10",
+      "org_id": "dist-liancai",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "metadata_json": {
+       "actor_id": "celery:10",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:10"
+      },
+      "created_at": "2026-11-12 13:50:31.101409+00:00"
+     },
+     {
+      "id": "aud_73f4d23e5aec4e5095dac9d714e65237",
+      "user_id": "celery:10",
+      "org_id": "dist-liancai",
+      "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "metadata_json": {
+       "status": "succeeded",
+       "actor_id": "celery:10",
+       "to_status": "succeeded",
+       "actor_type": "worker",
+       "from_status": "running"
+      },
+      "created_at": "2026-11-12 13:50:34.050342+00:00"
+     }
+    ],
+    "outbox": [
+     {
+      "id": "obx_7b0cc4e16ebf4d8b8438386faf2527e0",
+      "job_type": "execute_run",
+      "payload_json": {
+       "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+       "run_type": "chat",
+       "trace_id": "ac43d2b00f984a7086f2ec9e1b8d34e1"
+      },
+      "status": "dispatched",
+      "attempts": 0,
+      "max_attempts": 10,
+      "next_attempt_at": "2026-11-12 13:50:25.323764+00:00",
+      "last_error_json": null,
+      "created_at": "2026-11-12 13:50:25.323764+00:00",
+      "dispatch_at": "2026-11-12 13:50:25.327478+00:00"
+     },
+     {
+      "id": "obx_8dada4bfc66042a7b9a159a98f9d9508",
+      "job_type": "execute_run",
+      "payload_json": {
+       "run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+       "run_type": "chat",
+       "trace_id": "ac43d2b00f984a7086f2ec9e1b8d34e1"
+      },
+      "status": "dispatched",
+      "attempts": 0,
+      "max_attempts": 10,
+      "next_attempt_at": "2026-11-12 13:50:31.095456+00:00",
+      "last_error_json": null,
+      "created_at": "2026-11-12 13:50:31.095456+00:00",
+      "dispatch_at": "2026-11-12 13:50:31.098782+00:00"
+     }
+    ],
+    "dead_letters": []
+   }
+  },
+  "run_125ea100bc0549e1aa8a439a8113d267": {
+   "run_type": "po",
+   "status": "succeeded",
+   "trace": {
+    "run": {
+     "id": "run_125ea100bc0549e1aa8a439a8113d267",
+     "org_id": "dist-liancai",
+     "user_id": "user-liancai-chen",
+     "run_type": "po",
+     "idempotency_key": "chat:85537b7698bc410c9b6a1ce6c4dc97c6:run_89492b67e23c413a8d1d85d6fab35174:po_draft_1",
+     "status": "succeeded",
+     "input_json": {
+      "kind": "agent",
+      "name": "po",
+      "input": {
+       "note": "按协议折扣算应付总额，不要提交",
+       "unit": "箱",
+       "action": "draft",
+       "quantity": 10,
+       "product_sku": "BEV-90435324",
+       "product_name": "Energy Drink 250 ml"
+      },
+      "prior": [],
+      "images": [],
+      "message": "起草一张红牛采购单：Energy Drink 250 ml（BEV-90435324）订 10 箱，不要提交，按协议折扣算应付总额。",
+      "task_id": "po_draft_1",
+      "wave_id": "7be92f6d63ab4bd0bf78cee11a127f37",
+      "documents": [],
+      "tool_name": "po.draft",
+      "session_id": "85537b7698bc410c9b6a1ce6c4dc97c6",
+      "attachments": [],
+      "owner_run_id": "run_89492b67e23c413a8d1d85d6fab35174"
+     },
+     "output_json": {
+      "id": "po_draft_1",
+      "ok": true,
+      "kind": "agent",
+      "name": "po.draft",
+      "error": null,
+      "status": "succeeded",
+      "payload": {
+       "gaps": [],
+       "draft": {
+        "lines": [
+         {
+          "sku": "BEV-90435324",
+          "name": "Energy Drink",
+          "cases": 10,
+          "ambiguous": false,
+          "below_moq": false,
+          "moq_cases": 10,
+          "reference": "Energy Drink 250 ml",
+          "candidates": [],
+          "case_price": 14.39,
+          "line_total": 143.9,
+          "unresolved": false,
+          "missing_price": false,
+          "partial_layer": false,
+          "cases_per_layer": 10,
+          "cases_to_full_layer": null
+         }
+        ],
+        "notes": null,
+        "total": 143.9,
+        "currency": "USD",
+        "discount": {
+         "kind": "none",
+         "note": "list price — 1st container of the contract period from 2026-10-01 §6 / 6.4",
+         "value": null,
+         "source": "contract"
+        },
+        "eta_date": "2027-01-11",
+        "subtotal": 143.9,
+        "incoterms": "CIF",
+        "payment_terms": "50_50",
+        "discount_amount": 0.0,
+        "shipping_method": "sea"
+       },
+       "slots": {
+        "notes": null,
+        "discount": {
+         "kind": "none",
+         "note": "list price — 1st container of the contract period from 2026-10-01 §6 / 6.4",
+         "value": null,
+         "source": "contract"
+        },
+        "eta_date": null,
+        "incoterms": null,
+        "line_items": [
+         {
+          "sku": "BEV-90435324",
+          "cases": 10,
+          "reference": "BEV-90435324"
+         }
+        ],
+        "payment_terms": null,
+        "shipping_method": null
+       },
+       "stage": "confirm",
+       "summary": "10 箱 Energy Drink。付款 50_50（下单时预付 50%，货到验收后再付 50% 尾款），CIF，sea，预计到货 2027-01-11，按合同为目录价（list price — 1st container of the contract period from 2026-10-01 §6 / 6.4）。 小计 USD 143.90，合计 USD 143.90。",
+       "clear_po": false,
+       "advisories": [],
+       "gaps_detail": [],
+       "confirm_hash": "9296f02f5abac0393cf654cb5643448a2d19a520eb4e78b29ec58789ad429afc",
+       "confirm_token": "NkZxYeZeF8H4vZPk2o30zE7YqeacuqUrYzkq_AfGy4I",
+       "confirm_expires_at": "2026-11-13T13:50:31.086466+00:00"
+      }
+     },
+     "error_json": null,
+     "created_at": "2026-11-12 13:50:30.073542+00:00",
+     "queued_at": "2026-11-12 13:50:30.073542+00:00",
+     "queue_heartbeat_at": null,
+     "started_at": "2026-11-12 13:50:30.089072+00:00",
+     "ended_at": "2026-11-12 13:50:31.101802+00:00",
+     "cancel_requested_at": null,
+     "updated_at": "2026-11-12 13:50:31.101802+00:00",
+     "lease_owner": "celery:11",
+     "lease_expires_at": "2026-11-12 14:00:30.089070+00:00",
+     "attempts": 1,
+     "redispatch_count": 0,
+     "parent_run_id": null,
+     "owner_run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+     "trace_id": "23c51fca40b648dbb5d64db6365e0093",
+     "max_model_calls": null,
+     "max_tokens": null,
+     "max_tool_calls": null,
+     "max_duration_seconds": null
+    },
+    "steps": [
+     {
+      "id": "step_bd55161eaba94ad498f81c83fd055b07",
+      "run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+      "step_index": 1,
+      "step_type": "tool",
+      "name": "po.draft",
+      "status": "succeeded",
+      "input_json": {
+       "note": "按协议折扣算应付总额，不要提交",
+       "unit": "箱",
+       "action": "draft",
+       "message": "起草一张红牛采购单：Energy Drink 250 ml（BEV-90435324）订 10 箱，不要提交，按协议折扣算应付总额。",
+       "quantity": 10,
+       "product_sku": "BEV-90435324",
+       "product_name": "Energy Drink 250 ml"
+      },
+      "output_json": {
+       "gaps": [],
+       "draft": {
+        "lines": [
+         {
+          "sku": "BEV-90435324",
+          "name": "Energy Drink",
+          "cases": 10,
+          "ambiguous": false,
+          "below_moq": false,
+          "moq_cases": 10,
+          "reference": "Energy Drink 250 ml",
+          "candidates": [],
+          "case_price": 14.39,
+          "line_total": 143.9,
+          "unresolved": false,
+          "missing_price": false,
+          "partial_layer": false,
+          "cases_per_layer": 10,
+          "cases_to_full_layer": null
+         }
+        ],
+        "notes": null,
+        "total": 143.9,
+        "currency": "USD",
+        "discount": {
+         "kind": "none",
+         "note": "list price — 1st container of the contract period from 2026-10-01 §6 / 6.4",
+         "value": null,
+         "source": "contract"
+        },
+        "eta_date": "2027-01-11",
+        "subtotal": 143.9,
+        "incoterms": "CIF",
+        "payment_terms": "50_50",
+        "discount_amount": 0.0,
+        "shipping_method": "sea"
+       },
+       "slots": {
+        "notes": null,
+        "discount": {
+         "kind": "none",
+         "note": "list price — 1st container of the contract period from 2026-10-01 §6 / 6.4",
+         "value": null,
+         "source": "contract"
+        },
+        "eta_date": null,
+        "incoterms": null,
+        "line_items": [
+         {
+          "sku": "BEV-90435324",
+          "cases": 10,
+          "reference": "BEV-90435324"
+         }
+        ],
+        "payment_terms": null,
+        "shipping_method": null
+       },
+       "stage": "confirm",
+       "summary": "10 箱 Energy Drink。付款 50_50（下单时预付 50%，货到验收后再付 50% 尾款），CIF，sea，预计到货 2027-01-11，按合同为目录价（list price — 1st container of the contract period from 2026-10-01 §6 / 6.4）。 小计 USD 143.90，合计 USD 143.90。",
+       "clear_po": false,
+       "advisories": [],
+       "gaps_detail": [],
+       "confirm_hash": "9296f02f5abac0393cf654cb5643448a2d19a520eb4e78b29ec58789ad429afc",
+       "confirm_token": "NkZxYeZeF8H4vZPk2o30zE7YqeacuqUrYzkq_AfGy4I",
+       "confirm_expires_at": "2026-11-13T13:50:31.086466+00:00"
+      },
+      "error_json": null,
+      "started_at": "2026-11-12 13:50:30.100481+00:00",
+      "ended_at": "2026-11-12 13:50:31.086529+00:00"
+     }
+    ],
+    "events": [
+     {
+      "id": "evt_cd7be7812d6d4e50bc985bb0111f72da",
+      "run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+      "sequence": 1,
+      "event_type": "run.created",
+      "payload_json": {
+       "status": "queued",
+       "display": "已开始",
+       "owner_run_id": "run_89492b67e23c413a8d1d85d6fab35174"
+      },
+      "created_at": "2026-11-12 13:50:30.073542+00:00"
+     },
+     {
+      "id": "evt_6ed2b6450d47497aa9704ad90b1fffd9",
+      "run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+      "sequence": 2,
+      "event_type": "run.enqueued",
+      "payload_json": {
+       "outbox_job_id": "obx_ae239de91349435e8440a1caf6ce93d9"
+      },
+      "created_at": "2026-11-12 13:50:30.084779+00:00"
+     },
+     {
+      "id": "evt_a7d787acb5f14e85a2e765872388dff7",
+      "run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+      "sequence": 3,
+      "event_type": "run.started",
+      "payload_json": {
+       "actor_id": "celery:11",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:11"
+      },
+      "created_at": "2026-11-12 13:50:30.089072+00:00"
+     },
+     {
+      "id": "evt_f0e5bfd401b9475a925513901b15281d",
+      "run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+      "sequence": 4,
+      "event_type": "step.started",
+      "payload_json": {
+       "name": "po.draft",
+       "step_id": "step_bd55161eaba94ad498f81c83fd055b07",
+       "step_type": "tool",
+       "step_index": 1
+      },
+      "created_at": "2026-11-12 13:50:30.100481+00:00"
+     },
+     {
+      "id": "evt_a3de3e640d3d468ea3c85df6b5664a15",
+      "run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+      "sequence": 5,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "23c51fca40b648dbb5d64db6365e0093",
+       "max_tokens": 1200,
+       "route_task": "po.extract",
+       "quality_gate": "valid_po_slots",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "selected_model": "deepseek-flash",
+       "candidate_index": 0,
+       "max_model_calls": 2,
+       "selected_provider": "deepseek",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-12 13:50:30.111245+00:00"
+     },
+     {
+      "id": "evt_0b0f80c357524c2fa1d7666eee00a168",
+      "run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+      "sequence": 6,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "display": "正在思考...",
+       "purpose": "po.extract",
+       "step_id": "step_bd55161eaba94ad498f81c83fd055b07",
+       "trace_id": "23c51fca40b648dbb5d64db6365e0093"
+      },
+      "created_at": "2026-11-12 13:50:30.127983+00:00"
+     },
+     {
+      "id": "evt_a5b7a8c30fb14e55ab63ca5f57d4609e",
+      "run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+      "sequence": 7,
+      "event_type": "model.completed",
+      "payload_json": {
+       "brand": "deepseek",
+       "model": "deepseek-flash",
+       "status": "succeeded",
+       "purpose": "po.extract",
+       "step_id": "step_bd55161eaba94ad498f81c83fd055b07",
+       "trace_id": "23c51fca40b648dbb5d64db6365e0093",
+       "usage_source": "actual",
+       "model_call_id": "mcall_e578c2a811834f7dad6a4530bd375388",
+       "prompt_tokens": 1677,
+       "cache_hit_tokens": 1536,
+       "cache_miss_tokens": 141,
+       "completion_tokens": 96,
+       "cache_creation_tokens": null
+      },
+      "created_at": "2026-11-12 13:50:31.081516+00:00"
+     },
+     {
+      "id": "evt_78bf736e40a64ef288d3ef2995e635db",
+      "run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+      "sequence": 8,
+      "event_type": "tool.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "step_id": "step_bd55161eaba94ad498f81c83fd055b07",
+       "tool_name": "po.draft",
+       "tool_call_id": "tcall_cbdb3330bb0a4a17a9908cad08d2d337"
+      },
+      "created_at": "2026-11-12 13:50:31.086529+00:00"
+     },
+     {
+      "id": "evt_c6943ea6d1d0495d8cd50be86106e676",
+      "run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+      "sequence": 9,
+      "event_type": "step.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "step_id": "step_bd55161eaba94ad498f81c83fd055b07",
+       "step_index": 1
+      },
+      "created_at": "2026-11-12 13:50:31.086529+00:00"
+     },
+     {
+      "id": "evt_0fc2a948593d4029a4c4b3d5ab3672ee",
+      "run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+      "sequence": 10,
+      "event_type": "run.completed",
+      "payload_json": {
+       "status": "succeeded",
+       "display": "回复结束",
+       "actor_id": "celery:11",
+       "to_status": "succeeded",
+       "actor_type": "worker",
+       "from_status": "running"
+      },
+      "created_at": "2026-11-12 13:50:31.101802+00:00"
+     }
+    ],
+    "model_calls": [
+     {
+      "id": "mcall_e578c2a811834f7dad6a4530bd375388",
+      "run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+      "step_id": "step_bd55161eaba94ad498f81c83fd055b07",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "request_json": {
+       "model": "deepseek-flash",
+       "schema": {
+        "name": "po_turn_extraction",
+        "schema": {
+         "type": "object",
+         "required": [
+          "line_items",
+          "user_confirmed",
+          "reply_language"
+         ],
+         "properties": {
+          "notes": {
+           "type": [
+            "string",
+            "null"
+           ]
+          },
+          "eta_date": {
+           "type": [
+            "string",
+            "null"
+           ]
+          },
+          "incoterms": {
+           "type": [
+            "string",
+            "null"
+           ]
+          },
+          "line_items": {
+           "type": "array",
+           "items": {
+            "type": "object",
+            "required": [
+             "reference",
+             "cases",
+             "sku"
+            ],
+            "properties": {
+             "sku": {
+              "type": [
+               "string",
+               "null"
+              ]
+             },
+             "cases": {
+              "type": "number"
+             },
+             "reference": {
+              "type": "string"
+             }
+            }
+           }
+          },
+          "discount_kind": {
+           "type": [
+            "string",
+            "null"
+           ]
+          },
+          "payment_terms": {
+           "type": [
+            "string",
+            "null"
+           ]
+          },
+          "discount_value": {
+           "type": [
+            "number",
+            "null"
+           ]
+          },
+          "reply_language": {
+           "type": "string"
+          },
+          "user_confirmed": {
+           "type": "boolean"
+          },
+          "shipping_method": {
+           "type": [
+            "string",
+            "null"
+           ]
+          }
+         }
+        },
+        "strict": false
+       },
+       "system": "你是品牌经销商的采购单助手。你在这里的唯一工作，是阅读最新一条消息（连同历史），并把它合并进下面的订单槽位。你不决定采购单需要哪些字段（模板是固定的），也不做任何校验。绝不要编造产品、SKU、数量或价格。\n\n=== 目录（SKU ▸ 名称 ▸ 箱规/价格/起订量） ===\nBEV-0611269716467 ▸ Red Bull Sugarfree ▸ 355 ml Single ▸ 20/箱，$19.43/箱，起订量 100 件，Beverages ▸ 10 箱/层, 200 件/层, 8 层/托, 80 箱/托, 8.5 千克/箱\nBEV-8850228000106 ▸ Kratingdaeng Energy Drink (Thai Style) ▸ 150 ml Single ▸ 24/箱，$9.48/箱，起订量 240 件，Beverages ▸ 12 箱/层, 288 件/层, 8 层/托, 96 箱/托, 4.5 千克/箱\nBEV-90433221 ▸ Acai ▸ 250 ml Single ▸ 20/箱，$11.64/箱，起订量 200 件，Beverages ▸ 10 箱/层, 200 件/层, 8 层/托, 80 箱/托, 6.1 千克/箱\nBEV-90435324 ▸ Energy Drink ▸ 250 ml Single ▸ 20/箱，$14.39/箱，起订量 200 件，Beverages ▸ 10 箱/层, 200 件/层, 8 层/托, 80 箱/托, 6.1 千克/箱\nBEV-90446832 ▸ Kaktusfrucht ▸ 250 ml Single ▸ 20/箱，$15.65/箱，起订量 200 件，Beverages ▸ 10 箱/层, 200 件/层, 8 层/托, 80 箱/托, 6.1 千克/箱\nBEV-90456220 ▸ The Pink Edition Sugarfree ▸ 250 ml Single ▸ 20/箱，$13.66/箱，起订量 100 件，Beverages ▸ 10 箱/层, 200 件/层, 8 层/托, 80 箱/托, 6.1 千克/箱\nBEV-90474514 ▸ Summer Edition White Peach ▸ 250 ml Single ▸ 20/箱，$13.22/箱，起订量 200 件，Beverages ▸ 10 箱/层, 200 件/层, 8 层/托, 80 箱/托, 6.1 千克/箱\nBEV-90486517 ▸ Winter Edition ▸ 250 ml Single ▸ 20/箱，$11.74/箱，起订量 60 件，Beverages ▸ 10 箱/层, 200 件/层, 8 层/托, 80 箱/托, 6.1 千克/箱\n\n=== 已经收集到的订单槽位 ===\n{\n  \"line_items\": [],\n  \"payment_terms\": null,\n  \"incoterms\": null,\n  \"shipping_method\": null,\n  \"eta_date\": null,\n  \"discount\": {\n    \"kind\": \"none\",\n    \"value\": null,\n    \"source\": \"contract\",\n    \"note\": \"list price — 1st container of the contract period from 2026-10-01 §6 / 6.4\"\n  },\n  \"notes\": null\n}\n\n=== 合同折扣（已经在这张单上——由代码确定） ===\nlist price — 1st container of the contract period from 2026-10-01 §6 / 6.4\n除非客户明确说出另一个折扣，或明确说不要折扣，否则 discount_kind 保持 null。不要让他们去申请或谈判这个费率。\n\n只根据用户实际说的话填写槽位：\n- line_items：[{\"reference\": string, \"cases\": number, \"sku\": string|null}] — reference 是用户自己对产品的说法（「鱼油」「那款精华」）。不要为一个含糊的说法编造或猜测 SKU——sku 留 null，由系统去解析（多个产品都匹配时再问用户）。某一行已经解析过时，保留已收集槽位里的 sku（不要丢掉）。cases 是箱数。与已收集的内容合并（按用户的意思新增、调整或删除）；返回完整的最新列表。\n- payment_terms：\"50_50\" | \"100_prepaid\" | \"net_30\" | \"net_60\" | null\n- incoterms：\"FOB\" | \"CIF\" | \"EXW\" | \"DDP\" | \"DAP\" | \"CFR\" | null\n- shipping_method：\"sea\" | \"air\" | \"express\" | \"land\" | null\n- eta_date：\"YYYY-MM-DD\" | null\n- discount_kind：只有用户明确表示不要折扣时才填 \"none\"；他们要求折扣时填 \"amount\" 或 \"percent\"；从未提及时填 null。discount_value：number | null\n- notes：string | null\n- user_confirmed：只有用户明确同意提交这张完整订单时才为 true（例如「好的，提交」「确认」「就这么下」）。否则为 false。\n- reply_language：客户整段对话使用的语言，写成中文名称（例如「英语」「中文」「西班牙语」）。一句很短的「好的」也要沿用已经确立的语言。\n\n只返回一个原始 JSON 对象（不要 markdown 代码围栏）：\n{\"line_items\": [{\"reference\": string, \"cases\": number, \"sku\": string|null}], \"payment_terms\": string|null, \"incoterms\": string|null, \"shipping_method\": string|null, \"eta_date\": string|null, \"discount_kind\": \"none\"|\"amount\"|\"percent\"|null, \"discount_value\": number|null, \"notes\": string|null, \"user_confirmed\": boolean, \"reply_language\": string}\n",
+       "messages": [
+        {
+         "role": "user",
+         "content": "起草一张红牛采购单：Energy Drink 250 ml（BEV-90435324）订 10 箱，不要提交，按协议折扣算应付总额。"
+        }
+       ]
+      },
+      "response_json": {
+       "json": {
+        "notes": null,
+        "eta_date": null,
+        "incoterms": null,
+        "line_items": [
+         {
+          "sku": "BEV-90435324",
+          "cases": 10,
+          "reference": "Energy Drink 250 ml"
+         }
+        ],
+        "discount_kind": null,
+        "payment_terms": null,
+        "discount_value": null,
+        "reply_language": "中文",
+        "user_confirmed": false,
+        "shipping_method": null
+       }
+      },
+      "prompt_tokens": 1677,
+      "completion_tokens": 96,
+      "cache_hit_tokens": 1536,
+      "cache_miss_tokens": 141,
+      "cache_creation_tokens": null,
+      "usage_source": "actual",
+      "latency_ms": 946,
+      "status": "succeeded",
+      "error_json": {},
+      "created_at": "2026-11-12 13:50:31.077295+00:00"
+     }
+    ],
+    "tool_calls": [
+     {
+      "id": "tcall_cbdb3330bb0a4a17a9908cad08d2d337",
+      "run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+      "org_id": "dist-liancai",
+      "user_id": "user-liancai-chen",
+      "step_id": "step_bd55161eaba94ad498f81c83fd055b07",
+      "tool_name": "po.draft",
+      "args_json": {
+       "note": "按协议折扣算应付总额，不要提交",
+       "unit": "箱",
+       "action": "draft",
+       "message": "起草一张红牛采购单：Energy Drink 250 ml（BEV-90435324）订 10 箱，不要提交，按协议折扣算应付总额。",
+       "quantity": 10,
+       "product_sku": "BEV-90435324",
+       "product_name": "Energy Drink 250 ml"
+      },
+      "result_json": {
+       "gaps": [],
+       "draft": {
+        "lines": [
+         {
+          "sku": "BEV-90435324",
+          "name": "Energy Drink",
+          "cases": 10,
+          "ambiguous": false,
+          "below_moq": false,
+          "moq_cases": 10,
+          "reference": "Energy Drink 250 ml",
+          "candidates": [],
+          "case_price": 14.39,
+          "line_total": 143.9,
+          "unresolved": false,
+          "missing_price": false,
+          "partial_layer": false,
+          "cases_per_layer": 10,
+          "cases_to_full_layer": null
+         }
+        ],
+        "notes": null,
+        "total": 143.9,
+        "currency": "USD",
+        "discount": {
+         "kind": "none",
+         "note": "list price — 1st container of the contract period from 2026-10-01 §6 / 6.4",
+         "value": null,
+         "source": "contract"
+        },
+        "eta_date": "2027-01-11",
+        "subtotal": 143.9,
+        "incoterms": "CIF",
+        "payment_terms": "50_50",
+        "discount_amount": 0.0,
+        "shipping_method": "sea"
+       },
+       "slots": {
+        "notes": null,
+        "discount": {
+         "kind": "none",
+         "note": "list price — 1st container of the contract period from 2026-10-01 §6 / 6.4",
+         "value": null,
+         "source": "contract"
+        },
+        "eta_date": null,
+        "incoterms": null,
+        "line_items": [
+         {
+          "sku": "BEV-90435324",
+          "cases": 10,
+          "reference": "BEV-90435324"
+         }
+        ],
+        "payment_terms": null,
+        "shipping_method": null
+       },
+       "stage": "confirm",
+       "summary": "10 箱 Energy Drink。付款 50_50（下单时预付 50%，货到验收后再付 50% 尾款），CIF，sea，预计到货 2027-01-11，按合同为目录价（list price — 1st container of the contract period from 2026-10-01 §6 / 6.4）。 小计 USD 143.90，合计 USD 143.90。",
+       "clear_po": false,
+       "advisories": [],
+       "gaps_detail": [],
+       "confirm_hash": "9296f02f5abac0393cf654cb5643448a2d19a520eb4e78b29ec58789ad429afc",
+       "confirm_token": "NkZxYeZeF8H4vZPk2o30zE7YqeacuqUrYzkq_AfGy4I",
+       "confirm_expires_at": "2026-11-13T13:50:31.086466+00:00"
+      },
+      "status": "succeeded",
+      "idempotency_key": "po.draft:run_125ea100bc0549e1aa8a439a8113d267:po_draft_1",
+      "latency_ms": 0,
+      "error_json": {},
+      "created_at": "2026-11-12 13:50:31.086529+00:00",
+      "started_at": "2026-11-12 13:50:31.086529+00:00",
+      "ended_at": "2026-11-12 13:50:31.086529+00:00"
+     }
+    ],
+    "checkpoints": [
+     {
+      "id": "ckpt_06ab7ce1b214417ca71395583f6a7106",
+      "run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+      "checkpoint_index": 1,
+      "state_json": {
+       "last": "user",
+       "context": [],
+       "orchestrator": {
+        "phase": "tool_done",
+        "tasks": [],
+        "result": {
+         "id": "po_draft_1",
+         "ok": true,
+         "kind": "agent",
+         "name": "po.draft",
+         "error": null,
+         "payload": {
+          "gaps": [],
+          "draft": {
+           "lines": [
+            {
+             "sku": "BEV-90435324",
+             "name": "Energy Drink",
+             "cases": 10,
+             "ambiguous": false,
+             "below_moq": false,
+             "moq_cases": 10,
+             "reference": "Energy Drink 250 ml",
+             "candidates": [],
+             "case_price": 14.39,
+             "line_total": 143.9,
+             "unresolved": false,
+             "missing_price": false,
+             "partial_layer": false,
+             "cases_per_layer": 10,
+             "cases_to_full_layer": null
+            }
+           ],
+           "notes": null,
+           "total": 143.9,
+           "currency": "USD",
+           "discount": {
+            "kind": "none",
+            "note": "list price — 1st container of the contract period from 2026-10-01 §6 / 6.4",
+            "value": null,
+            "source": "contract"
+           },
+           "eta_date": "2027-01-11",
+           "subtotal": 143.9,
+           "incoterms": "CIF",
+           "payment_terms": "50_50",
+           "discount_amount": 0.0,
+           "shipping_method": "sea"
+          },
+          "slots": {
+           "notes": null,
+           "discount": {
+            "kind": "none",
+            "note": "list price — 1st container of the contract period from 2026-10-01 §6 / 6.4",
+            "value": null,
+            "source": "contract"
+           },
+           "eta_date": null,
+           "incoterms": null,
+           "line_items": [
+            {
+             "sku": "BEV-90435324",
+             "cases": 10,
+             "reference": "BEV-90435324"
+            }
+           ],
+           "payment_terms": null,
+           "shipping_method": null
+          },
+          "stage": "confirm",
+          "summary": "10 箱 Energy Drink。付款 50_50（下单时预付 50%，货到验收后再付 50% 尾款），CIF，sea，预计到货 2027-01-11，按合同为目录价（list price — 1st container of the contract period from 2026-10-01 §6 / 6.4）。 小计 USD 143.90，合计 USD 143.90。",
+          "clear_po": false,
+          "advisories": [],
+          "gaps_detail": [],
+          "confirm_hash": "9296f02f5abac0393cf654cb5643448a2d19a520eb4e78b29ec58789ad429afc",
+          "confirm_token": "NkZxYeZeF8H4vZPk2o30zE7YqeacuqUrYzkq_AfGy4I",
+          "confirm_expires_at": "2026-11-13T13:50:31.086466+00:00"
+         }
+        },
+        "results": {},
+        "wave_id": null,
+        "finished": [],
+        "wave_ids": []
+       },
+       "completed_tool_calls": []
+      },
+      "created_at": "2026-11-12 13:50:31.086529+00:00"
+     }
+    ],
+    "usage_records": [
+     {
+      "id": "usage_70ec0f9aa83345bb881342522d6d9ddb",
+      "run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+      "org_id": "dist-liancai",
+      "user_id": "user-liancai-chen",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "prompt_tokens": 1677,
+      "completion_tokens": 96,
+      "cache_hit_tokens": 1536,
+      "cache_miss_tokens": 141,
+      "cache_creation_tokens": null,
+      "total_tokens": 1773,
+      "estimated_cost_cents": 0,
+      "usage_source": "actual",
+      "created_at": "2026-11-12 13:50:31.077295+00:00"
+     }
+    ],
+    "audit_logs": [
+     {
+      "id": "aud_fe61fa685076446e9173ab83665b10d7",
+      "user_id": "celery:11",
+      "org_id": "dist-liancai",
+      "run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_125ea100bc0549e1aa8a439a8113d267",
+      "metadata_json": {
+       "actor_id": "celery:11",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:11"
+      },
+      "created_at": "2026-11-12 13:50:30.089072+00:00"
+     },
+     {
+      "id": "aud_a3649fb4a6604b12ad7d57e7e5f1da9d",
+      "user_id": "celery:11",
+      "org_id": "dist-liancai",
+      "run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_125ea100bc0549e1aa8a439a8113d267",
+      "metadata_json": {
+       "status": "succeeded",
+       "actor_id": "celery:11",
+       "to_status": "succeeded",
+       "actor_type": "worker",
+       "from_status": "running"
+      },
+      "created_at": "2026-11-12 13:50:31.101802+00:00"
+     }
+    ],
+    "outbox": [
+     {
+      "id": "obx_ae239de91349435e8440a1caf6ce93d9",
+      "job_type": "execute_run",
+      "payload_json": {
+       "run_id": "run_125ea100bc0549e1aa8a439a8113d267",
+       "run_type": "po",
+       "trace_id": "23c51fca40b648dbb5d64db6365e0093"
+      },
+      "status": "dispatched",
+      "attempts": 0,
+      "max_attempts": 10,
+      "next_attempt_at": "2026-11-12 13:50:30.073542+00:00",
+      "last_error_json": null,
+      "created_at": "2026-11-12 13:50:30.073542+00:00",
+      "dispatch_at": "2026-11-12 13:50:30.084779+00:00"
+     }
+    ],
+    "dead_letters": []
+   }
+  },
+  "run_8fee6af87ac34482a37d01e5fc403fd2": {
+   "run_type": "open",
+   "status": "running",
+   "trace": {
+    "run": {
+     "id": "run_8fee6af87ac34482a37d01e5fc403fd2",
+     "org_id": "dist-liancai",
+     "user_id": "user-liancai-chen",
+     "run_type": "open",
+     "idempotency_key": "title:85537b7698bc410c9b6a1ce6c4dc97c6",
+     "status": "running",
+     "input_json": {
+      "message": "起草一张红牛采购单：Energy Drink 250 ml（BEV-90435324）订 10 箱，不要提交，按协议折扣算应付总额。",
+      "session_id": "85537b7698bc410c9b6a1ce6c4dc97c6",
+      "attachments": [],
+      "chat_run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+      "provisional_title": "起草一张红牛采购单：Energy Drink 250 ml（BEV-90435324）订 10 箱，不要提交，按协议折扣算应付总额。"
+     },
+     "output_json": null,
+     "error_json": null,
+     "created_at": "2026-11-12 13:50:34.054144+00:00",
+     "queued_at": "2026-11-12 13:50:34.054144+00:00",
+     "queue_heartbeat_at": null,
+     "started_at": "2026-11-12 13:50:34.060973+00:00",
+     "ended_at": null,
+     "cancel_requested_at": null,
+     "updated_at": "2026-11-12 13:50:34.060973+00:00",
+     "lease_owner": "celery:10",
+     "lease_expires_at": "2026-11-12 14:00:34.060971+00:00",
+     "attempts": 1,
+     "redispatch_count": 0,
+     "parent_run_id": null,
+     "owner_run_id": "run_89492b67e23c413a8d1d85d6fab35174",
+     "trace_id": "d4009de7c79843ac91e5870677933a73",
+     "max_model_calls": 2,
+     "max_tokens": 8000,
+     "max_tool_calls": null,
+     "max_duration_seconds": null
+    },
+    "steps": [
+     {
+      "id": "step_d595d11288c143e6b60b005d6d30a31f",
+      "run_id": "run_8fee6af87ac34482a37d01e5fc403fd2",
+      "step_index": 1,
+      "step_type": "model",
+      "name": "model",
+      "status": "running",
+      "input_json": {},
+      "output_json": null,
+      "error_json": null,
+      "started_at": "2026-11-12 13:50:34.064008+00:00",
+      "ended_at": null
+     }
+    ],
+    "events": [
+     {
+      "id": "evt_6b6b3ec816d74278be8cef96b99c3742",
+      "run_id": "run_8fee6af87ac34482a37d01e5fc403fd2",
+      "sequence": 1,
+      "event_type": "run.created",
+      "payload_json": {
+       "status": "queued",
+       "display": "已开始",
+       "owner_run_id": "run_89492b67e23c413a8d1d85d6fab35174"
+      },
+      "created_at": "2026-11-12 13:50:34.054144+00:00"
+     },
+     {
+      "id": "evt_2847275790cd40dd84a5172f62530558",
+      "run_id": "run_8fee6af87ac34482a37d01e5fc403fd2",
+      "sequence": 2,
+      "event_type": "run.enqueued",
+      "payload_json": {
+       "outbox_job_id": "obx_ca2282447742404f8c3be8f099171039"
+      },
+      "created_at": "2026-11-12 13:50:34.057505+00:00"
+     },
+     {
+      "id": "evt_35703f926cf04f04ab34cd334d35b49d",
+      "run_id": "run_8fee6af87ac34482a37d01e5fc403fd2",
+      "sequence": 3,
+      "event_type": "run.started",
+      "payload_json": {
+       "actor_id": "celery:10",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:10"
+      },
+      "created_at": "2026-11-12 13:50:34.060973+00:00"
+     },
+     {
+      "id": "evt_a80d08ab0b4e4def830bcc606e5ad5c5",
+      "run_id": "run_8fee6af87ac34482a37d01e5fc403fd2",
+      "sequence": 4,
+      "event_type": "step.started",
+      "payload_json": {
+       "name": "model",
+       "step_id": "step_d595d11288c143e6b60b005d6d30a31f",
+       "step_type": "model",
+       "step_index": 1
+      },
+      "created_at": "2026-11-12 13:50:34.064008+00:00"
+     },
+     {
+      "id": "evt_23e06bac91f1428d83eaf89dd99443a3",
+      "run_id": "run_8fee6af87ac34482a37d01e5fc403fd2",
+      "sequence": 5,
+      "event_type": "model.route_selected",
+      "payload_json": {
+       "reason": "policy_primary",
+       "decision": "primary",
+       "trace_id": "d4009de7c79843ac91e5870677933a73",
+       "max_tokens": 800,
+       "route_task": "session.title",
+       "quality_gate": "response_parsed",
+       "fallback_from": null,
+       "reason_detail": null,
+       "policy_version": "model-routing-v1",
+       "selected_model": "qwen3.7-flash",
+       "candidate_index": 0,
+       "max_model_calls": 2,
+       "selected_provider": "qwen",
+       "routing_policy_version": "model-routing-v1"
+      },
+      "created_at": "2026-11-12 13:50:34.071312+00:00"
+     },
+     {
+      "id": "evt_e92947afbca140749131129600bd9c76",
+      "run_id": "run_8fee6af87ac34482a37d01e5fc403fd2",
+      "sequence": 6,
+      "event_type": "model.started",
+      "payload_json": {
+       "brand": "qwen",
+       "model": "qwen3.7-flash",
+       "display": "正在思考...",
+       "purpose": "session.title",
+       "step_id": "step_d595d11288c143e6b60b005d6d30a31f",
+       "trace_id": "d4009de7c79843ac91e5870677933a73"
+      },
+      "created_at": "2026-11-12 13:50:34.088001+00:00"
+     }
+    ],
+    "model_calls": [],
+    "tool_calls": [],
+    "checkpoints": [],
+    "usage_records": [],
+    "audit_logs": [
+     {
+      "id": "aud_0a0833fd8c0141e1a7ae88a2f097d84b",
+      "user_id": "celery:10",
+      "org_id": "dist-liancai",
+      "run_id": "run_8fee6af87ac34482a37d01e5fc403fd2",
+      "action": "run.transition",
+      "target_type": "agent_run",
+      "target_id": "run_8fee6af87ac34482a37d01e5fc403fd2",
+      "metadata_json": {
+       "actor_id": "celery:10",
+       "to_status": "running",
+       "actor_type": "worker",
+       "from_status": "queued",
+       "lease_owner": "celery:10"
+      },
+      "created_at": "2026-11-12 13:50:34.060973+00:00"
+     }
+    ],
+    "outbox": [
+     {
+      "id": "obx_ca2282447742404f8c3be8f099171039",
+      "job_type": "execute_run",
+      "payload_json": {
+       "run_id": "run_8fee6af87ac34482a37d01e5fc403fd2",
+       "run_type": "open",
+       "trace_id": "d4009de7c79843ac91e5870677933a73"
+      },
+      "status": "dispatched",
+      "attempts": 0,
+      "max_attempts": 10,
+      "next_attempt_at": "2026-11-12 13:50:34.054144+00:00",
+      "last_error_json": null,
+      "created_at": "2026-11-12 13:50:34.054144+00:00",
+      "dispatch_at": "2026-11-12 13:50:34.057505+00:00"
+     }
+    ],
+    "dead_letters": []
+   }
+  }
+ }
+}

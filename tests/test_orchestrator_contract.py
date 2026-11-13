@@ -6,7 +6,11 @@ from sqlalchemy import text
 
 from backend.llm import FakeLLM
 from backend.orchestrator.gather import load_state
-from backend.orchestrator.parent import _materials
+from backend.orchestrator.parent import (
+    _materials,
+    empty_named_period_line,
+    ensure_empty_period_opening,
+)
 from backend.orchestrator.plan import (
     _accept,
     _normalize_data_contract,
@@ -87,10 +91,26 @@ def test_answer_materials_replace_chart_options_with_what_was_drawn():
     text = _materials([{
         "id": "d", "status": "succeeded", "ok": True, "error": None,
         "payload": {"chart": {"requested": True, "produced": True},
-                    "charts": [{"title": "渠道占比", "echarts_option": {"series": [1] * 500}}]},
+                    "charts": [{"title": "渠道占比", "echarts_option": {"series": [1] * 500}}],
+                    "chart_status": [{"role": "pie_category", "status": "skipped", "reason": "no_data"}]},
     }])
     assert "渠道占比" in text and "charts_drawn" in text
     assert "echarts_option" not in text
+    assert "pie_category" in text and "skipped" in text
+
+
+def test_empty_named_month_opens_the_chat_with_no_data():
+    results = [{
+        "id": "r", "status": "succeeded", "ok": True, "error": None,
+        "payload": {"named_period": "2026-10", "named_period_empty": True, "text": "近半年趋势"},
+    }]
+    line = empty_named_period_line("出一份2026年10月的采购月报，带品类饼图。", results)
+    assert line == "2026年10月没有数据。"
+    assert ensure_empty_period_opening("月报已生成，请在右侧查看。", line).startswith(line)
+    assert ensure_empty_period_opening("2026年10月没有数据。右侧是近半年。", line).startswith(line)
+    assert empty_named_period_line("出一份2026年9月的采购月报", [{
+        "id": "r", "payload": {"named_period": "2026-09", "named_period_empty": False},
+    }]) is None
 
 
 def test_kind_is_derived_from_the_name_and_never_asked_of_the_model():
