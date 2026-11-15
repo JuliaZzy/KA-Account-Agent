@@ -17,7 +17,7 @@ from typing import Any
 
 from openai import AsyncOpenAI, OpenAI
 
-from ..config import LLMSettings, vendor_endpoint
+from ..config import LLMSettings, vendor_endpoint, vendor_http_timeout
 
 
 def _usage_count(usage: Any, *names: str) -> int:
@@ -142,7 +142,7 @@ class GLMClient:
         self._client = OpenAI(
             api_key=endpoint.api_key,
             base_url=endpoint.base_url,
-            timeout=self.settings.timeout,
+            timeout=vendor_http_timeout("glm", self.settings),
             max_retries=0,
         )
 
@@ -385,7 +385,7 @@ class DeepSeekClient:
         self._client = OpenAI(
             api_key=endpoint.api_key,
             base_url=endpoint.base_url,
-            timeout=self.settings.timeout,
+            timeout=vendor_http_timeout("deepseek", self.settings),
             max_retries=0,
         )
 

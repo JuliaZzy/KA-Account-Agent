@@ -265,6 +265,36 @@ def test_provider_rate_limit_requeues_with_retry_after(make_db, monkeypatch):
     assert 11 <= wait <= 13
 
 
+def test_provider_timeout_requeues_without_spending_an_attempt(make_db, monkeypatch):
+    from backend.llm.errors import ProviderError
+    from backend.services.dispatcher import dispatch_pending
+    from backend.services.run_worker import work_once
+
+    monkeypatch.setattr("backend.db.database.queue.random.uniform", lambda _a, _b: 1.0)
+    db = _db(make_db, "provider-timeout-requeue")
+    client = TestClient(create_app(db))
+    run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
+    dispatch_pending(db)
+
+    def execute(_run):
+        raise ProviderError("deepseek", "deepseek-flash", "timeout", retryable=True)
+
+    before = utcnow()
+    assert work_once(db, "worker-a", execute, run_id=run_id) is True
+    row = client.get(f"/runs/{run_id}", headers=HEADERS).json()
+    assert row["status"] == "queued"
+    pending = [
+        item for item in db.run_trace("org-1", run_id)["outbox"]
+        if item["job_type"] == "execute_run" and item["status"] == "pending"
+    ]
+    assert len(pending) == 1
+    assert pending[0]["attempts"] == 0
+    assert pending[0]["last_error_json"]["code"] == "PROVIDER_TIMEOUT"
+    assert pending[0]["last_error_json"]["infrastructure_attempts"] == 1
+    wait = (pending[0]["next_attempt_at"] - before).total_seconds()
+    assert 0.9 <= wait <= 1.2
+
+
 def test_provider_authentication_fails_the_run(make_db):
     from backend.llm.errors import ProviderError
     from backend.services.dispatcher import dispatch_pending

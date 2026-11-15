@@ -230,6 +230,79 @@ def test_qwen_call_inside_both_limits_completes(monkeypatch):
     assert called.response.choices[0].message.content == "012"
 
 
+def _slow_deepseek_client(first_delay: float, gap: float, chunks: int = 3):
+    import time
+    from types import SimpleNamespace
+
+    def _chunk(text: str):
+        return SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(
+            content=text, reasoning_content=None,
+        ))])
+
+    def _stream():
+        time.sleep(first_delay)
+        for index in range(chunks):
+            yield _chunk(str(index))
+            time.sleep(gap)
+
+    class _Client:
+        def chat_completion(self, **_kwargs):
+            return _stream()
+
+    return _Client()
+
+
+def _deepseek_call(client, *, stream=True):
+    from backend.llm.calls import _call_deepseek
+
+    return _call_deepseek(
+        client, kind="chat_completion", model="deepseek-flash", system="s", messages=[],
+        stream=stream, temperature=None, top_p=None, schema=None, tools=None,
+        tool_choice=None, reasoning_effort="none",
+        on_text=(lambda *_a, **_k: None) if stream else None,
+    )
+
+
+def test_deepseek_stream_that_goes_silent_times_out_as_a_retryable_provider_error(monkeypatch):
+    from backend.llm.errors import translate_provider_error
+
+    monkeypatch.setenv("KA_ACCOUNT_DEEPSEEK_TIMEOUT_SECONDS", "5")
+    monkeypatch.setenv("KA_ACCOUNT_DEEPSEEK_CHUNK_IDLE_SECONDS", "0.05")
+    with pytest.raises(TimeoutError) as caught:
+        _deepseek_call(_slow_deepseek_client(first_delay=0, gap=1.0))
+    error = translate_provider_error(caught.value, provider="deepseek", model="deepseek-flash")
+    assert (error.kind, error.code, error.retryable) == ("timeout", "PROVIDER_TIMEOUT", True)
+
+
+def test_deepseek_call_over_the_total_budget_times_out(monkeypatch):
+    monkeypatch.setenv("KA_ACCOUNT_DEEPSEEK_TIMEOUT_SECONDS", "0.2")
+    monkeypatch.setenv("KA_ACCOUNT_DEEPSEEK_CHUNK_IDLE_SECONDS", "5")
+    with pytest.raises(TimeoutError):
+        _deepseek_call(_slow_deepseek_client(first_delay=0, gap=0.1, chunks=50))
+
+
+def test_deepseek_blocking_call_over_the_total_budget_times_out(monkeypatch):
+    import time
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("KA_ACCOUNT_DEEPSEEK_TIMEOUT_SECONDS", "0.2")
+
+    class _Client:
+        def chat_completion(self, **_kwargs):
+            time.sleep(1)
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="late"))])
+
+    with pytest.raises(TimeoutError):
+        _deepseek_call(_Client(), stream=False)
+
+
+def test_deepseek_call_inside_both_limits_completes(monkeypatch):
+    monkeypatch.setenv("KA_ACCOUNT_DEEPSEEK_TIMEOUT_SECONDS", "5")
+    monkeypatch.setenv("KA_ACCOUNT_DEEPSEEK_CHUNK_IDLE_SECONDS", "1")
+    called = _deepseek_call(_slow_deepseek_client(first_delay=0.05, gap=0.01))
+    assert called.response.choices[0].message.content == "012"
+
+
 def test_qwen_json_sends_schema_and_turns_thinking_off(monkeypatch):
     from types import SimpleNamespace
 

@@ -234,27 +234,58 @@ def _call_deepseek(
     stream: bool, temperature: float | None, top_p: float | None,
     schema: dict[str, Any] | None, tools: list[dict[str, Any]] | None,
     tool_choice: str | None, reasoning_effort: str | None,
+    on_text: Callable[..., None] | None = None,
 ) -> Any:
-    if kind == "response":
-        return client.response(
-            model=model, instructions=system, input=_flash_input(messages),
-            text=_json_format(schema), reasoning_effort=reasoning_effort,
-            temperature=temperature, **({} if top_p is None else {"top_p": top_p}),
+    def _sync_invoke() -> Any:
+        if kind == "response":
+            return client.response(
+                model=model, instructions=system, input=_flash_input(messages),
+                text=_json_format(schema), reasoning_effort=reasoning_effort,
+                temperature=temperature, **({} if top_p is None else {"top_p": top_p}),
+            )
+        kwargs: dict[str, Any] = {"model": model, "messages": [{"role": "system", "content": system}, *messages]}
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if top_p is not None:
+            kwargs["top_p"] = top_p
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = tool_choice or "auto"
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
+        if stream:
+            kwargs["stream"] = True
+            kwargs["stream_options"] = {"include_usage": True}
+        return client.chat_completion(**kwargs)
+
+    async def _consume(resp: Any) -> Any:
+        assembler = _StreamAssembler(on_text) if on_text is not None else None
+        chunks: list[Any] = []
+        source = (
+            _with_idle_timeout(resp, deepseek_chunk_idle_seconds())
+            if _is_async_stream(resp)
+            else _with_sync_idle_timeout(resp, deepseek_chunk_idle_seconds())
         )
-    kwargs: dict[str, Any] = {"model": model, "messages": [{"role": "system", "content": system}, *messages]}
-    if temperature is not None:
-        kwargs["temperature"] = temperature
-    if top_p is not None:
-        kwargs["top_p"] = top_p
-    if tools:
-        kwargs["tools"] = tools
-        kwargs["tool_choice"] = tool_choice or "auto"
-    if reasoning_effort:
-        kwargs["reasoning_effort"] = reasoning_effort
-    if stream:
-        kwargs["stream"] = True
-        kwargs["stream_options"] = {"include_usage": True}
-    return client.chat_completion(**kwargs)
+        async for item in source:
+            if assembler is not None:
+                assembler.feed(item)
+            else:
+                chunks.append(item)
+        return _Assembled(assembler.result()) if assembler is not None else chunks
+
+    async def _run() -> Any:
+        # The OpenAI SDK is synchronous. wait_for cannot interrupt a blocking call
+        # on this loop, so the invoke itself runs in a worker thread.
+        resp = await asyncio.to_thread(_sync_invoke)
+        if inspect.isawaitable(resp):
+            resp = await resp
+        if stream and (_is_async_stream(resp) or _is_sync_stream(resp)):
+            return await _consume(resp)
+        return resp
+
+    # SDK timeout is also 30s (see vendor_http_timeout). This wrap is what tests
+    # can inject against, and it covers stream drain after the HTTP call returns.
+    return _await(asyncio.wait_for(_run(), timeout=deepseek_total_timeout_seconds()))
 
 
 def _call_glm(
@@ -303,12 +334,25 @@ def qwen_chunk_idle_seconds() -> float:
     return _env_seconds("KA_ACCOUNT_QWEN_CHUNK_IDLE_SECONDS", 10.0)
 
 
+def deepseek_total_timeout_seconds() -> float:
+    """Ceiling for one DeepSeek call. B1 saw a 30.2s extract with the SDK at 7200s."""
+    return _env_seconds("KA_ACCOUNT_DEEPSEEK_TIMEOUT_SECONDS", 30.0)
+
+
+def deepseek_chunk_idle_seconds() -> float:
+    """Longest silence tolerated between two stream chunks once the stream has started."""
+    return _env_seconds("KA_ACCOUNT_DEEPSEEK_CHUNK_IDLE_SECONDS", 10.0)
+
+
 def _env_seconds(name: str, default: float) -> float:
     try:
         value = float(os.environ.get(name, default))
     except ValueError:
         return default
     return value if value > 0 else default
+
+
+_STREAM_END = object()
 
 
 async def _with_idle_timeout(stream: Any, idle_seconds: float) -> Any:
@@ -327,6 +371,37 @@ async def _with_idle_timeout(stream: Any, idle_seconds: float) -> Any:
             # Best effort: the error that ended the stream matters more than a failed close.
             with contextlib.suppress(Exception):
                 await close()
+
+
+async def _with_sync_idle_timeout(stream: Any, idle_seconds: float) -> Any:
+    """Yield sync stream items, raising TimeoutError when the next one takes too long."""
+    iterator = iter(stream)
+    try:
+        while True:
+            item = await asyncio.wait_for(
+                asyncio.to_thread(next, iterator, _STREAM_END),
+                timeout=idle_seconds,
+            )
+            if item is _STREAM_END:
+                return
+            yield item
+    finally:
+        close = getattr(stream, "close", None)
+        if callable(close):
+            with contextlib.suppress(Exception):
+                close()
+
+
+def _is_async_stream(resp: Any) -> bool:
+    return inspect.isasyncgen(resp) or (
+        hasattr(resp, "__aiter__") and not hasattr(resp, "__iter__")
+    )
+
+
+def _is_sync_stream(resp: Any) -> bool:
+    if isinstance(resp, (dict, str, bytes, list, tuple)):
+        return False
+    return hasattr(resp, "__iter__") and not hasattr(resp, "choices")
 
 
 def _call_qwen(
@@ -673,6 +748,7 @@ def _invoke(
                 client, kind=kind, model=model_name, system=system, messages=messages,
                 stream=stream, temperature=temperature, top_p=top_p, schema=schema,
                 tools=tools, tool_choice=tool_choice, reasoning_effort=reasoning_effort,
+                on_text=on_text if stream else None,
             )
         elif brand == "glm":
             response = _call_glm(

@@ -27,6 +27,31 @@ class LLMSettings:
     max_retries: int = 0
 
 
+def vendor_http_timeout(brand: str, settings: LLMSettings | None = None) -> float:
+    """Seconds the OpenAI-compatible SDK waits on one HTTP call.
+
+    Qwen keeps `LLMSettings.timeout` because `_call_qwen` already bounds the async
+    stream. DeepSeek and GLM are synchronous: `asyncio.wait_for` cannot interrupt
+    them, so this value is the real ceiling. B1 saw a 30.2s DeepSeek extract while
+    the SDK still sat at 7200s.
+    """
+    settings = settings or LLMSettings()
+    if brand == "qwen":
+        return float(settings.timeout)
+    names = {
+        "deepseek": "KA_ACCOUNT_DEEPSEEK_TIMEOUT_SECONDS",
+        "glm": "KA_ACCOUNT_GLM_TIMEOUT_SECONDS",
+    }
+    env_name = names.get(brand)
+    if env_name is None:
+        return float(settings.timeout)
+    try:
+        value = float(os.environ.get(env_name, "30"))
+    except ValueError:
+        value = 30.0
+    return value if value > 0 else 30.0
+
+
 @dataclass(frozen=True)
 class VendorEndpoint:
     """URL and key for one vendor. Both come from `{BRAND}_BASE_URL` / `{BRAND}_API_KEY`."""

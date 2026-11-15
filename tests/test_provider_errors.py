@@ -97,6 +97,13 @@ def test_closed_event_loop_is_bad_response_not_network():
     assert err.cause_type == "RuntimeError"
 
 
+def _sdk_timeout_seconds(client) -> float:
+    value = client._client.timeout
+    if isinstance(value, (int, float)):
+        return float(value)
+    return float(value.read)
+
+
 def test_openai_compatible_clients_disable_sdk_retries(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-key")
@@ -107,6 +114,19 @@ def test_openai_compatible_clients_disable_sdk_retries(monkeypatch):
     assert DeepSeekClient()._client.max_retries == 0
     assert GLMClient()._client.max_retries == 0
     assert QwenClient()._client.max_retries == 0
+
+
+def test_deepseek_and_glm_sdk_timeout_is_thirty_seconds_not_two_hours(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-key")
+    monkeypatch.setenv("GLM_BASE_URL", "https://glm.example/v1")
+    monkeypatch.setenv("GLM_API_KEY", "glm-key")
+    monkeypatch.setenv("QWEN_BASE_URL", "https://qwen.example/v1")
+    monkeypatch.setenv("QWEN_API_KEY", "qwen-key")
+    assert _sdk_timeout_seconds(DeepSeekClient()) == 30
+    assert _sdk_timeout_seconds(GLMClient()) == 30
+    # Qwen's stream is bounded in `_call_qwen`; the SDK stays at LLMSettings.timeout.
+    assert _sdk_timeout_seconds(QwenClient()) == 7200
 
 
 def test_translate_maps_status_codes():
