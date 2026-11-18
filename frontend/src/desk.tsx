@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 
-import { api } from "./api";
+import { api, withUser } from "./api";
 import { chatPresence, forgetChat, isForgotten, useChatPresence } from "./chat-live";
 import { chatTitle, tagLabel, type Partnership } from "./format";
 
@@ -295,8 +295,11 @@ export function DeskProvider({ children }: { children: ReactNode }) {
       return;
     }
     const gen = ++reloadGen.current;
-    const params = new URLSearchParams({ partnership_id: pid });
-    if (pick.user) params.set("user_id", pick.user.id);
+    if (!pick.user) {
+      setSessions([]);
+      return;
+    }
+    const params = new URLSearchParams({ partnership_id: pid, user_id: pick.user.id });
     const rows = await api<SessionSummary[]>(`/api/sessions?${params}`);
     if (gen !== reloadGen.current) return;
     setSessions(rows.filter((row) => !isForgotten(row.id)));
@@ -329,12 +332,20 @@ export function DeskProvider({ children }: { children: ReactNode }) {
     }
   }, [dropChat]);
   const archiveChat = useCallback(
-    (id: string) => closeChat(id, `/api/sessions/${id}/archive`, "POST", "Could not archive the chat"),
-    [closeChat],
+    (id: string) => {
+      const uid = pick.user?.id;
+      if (!uid) return Promise.resolve();
+      return closeChat(id, withUser(`/api/sessions/${id}/archive`, uid), "POST", "Could not archive the chat");
+    },
+    [closeChat, pick.user],
   );
   const deleteChat = useCallback(
-    (id: string) => closeChat(id, `/api/sessions/${id}`, "DELETE", "Could not delete the chat"),
-    [closeChat],
+    (id: string) => {
+      const uid = pick.user?.id;
+      if (!uid) return Promise.resolve();
+      return closeChat(id, withUser(`/api/sessions/${id}`, uid), "DELETE", "Could not delete the chat");
+    },
+    [closeChat, pick.user],
   );
 
   const nameSession = useCallback((id: string, title: string | null, tags: string[]) => {

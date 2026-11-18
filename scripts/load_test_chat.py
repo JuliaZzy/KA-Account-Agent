@@ -218,10 +218,10 @@ async def _create_session(client: httpx.AsyncClient, base_url: str, partnership_
 
 
 async def _wait_for_reply(
-    client: httpx.AsyncClient, base_url: str, session_id: str, deadline: float,
+    client: httpx.AsyncClient, base_url: str, session_id: str, user_id: str, deadline: float,
 ) -> bool:
     while time.monotonic() < deadline:
-        response = await client.get(f"{base_url}/api/sessions/{session_id}")
+        response = await client.get(f"{base_url}/api/sessions/{session_id}", params={"user_id": user_id})
         response.raise_for_status()
         history = response.json().get("history") or []
         if any(isinstance(item, dict) and item.get("role") == "assistant" for item in history):
@@ -273,6 +273,7 @@ async def _one(
     try:
         response = await client.post(
             f"{base_url}/api/sessions/{session_id}/message",
+            params={"user_id": user_id},
             json={"message": message},
         )
         result["enqueue_status"] = response.status_code
@@ -285,7 +286,7 @@ async def _one(
         result["run_event"] = True
         phase = "poll"
         result["completed"] = await _wait_for_reply(
-            client, base_url, session_id, time.monotonic() + timeout_seconds,
+            client, base_url, session_id, user_id, time.monotonic() + timeout_seconds,
         )
         result["total_ms"] = round((time.perf_counter() - started) * 1000, 2)
         result["outcome"] = "completed" if result["completed"] else "client_timeout"

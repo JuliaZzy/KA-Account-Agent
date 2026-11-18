@@ -5,7 +5,6 @@ OPEN 只写标题和标签，不进 tasks，也不向聊天 SSE 推事件。见 
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -14,18 +13,12 @@ from typing import Any
 from ..db import Database
 from ..llm import calls as model_calls
 from ..llm.errors import ModelCapacityExceeded, ProviderError
-from ..llm.types import AssistantTurn
-from ..memory import attach, prompt_turns
 from ..services.chat_run import enqueue_chat_run
 from ..services.run_names import StepStatus, StepType, step_name
-from ..tools import all_schemas, all_tools
-from .prompt import OPEN, REACT
+from .prompt import OPEN
 
-_HANDOFF = {"po": "采购单", "contract": "合同", "report": "报表", "data": "查数", "brand": "品牌资料"}
 log = logging.getLogger(__name__)
 MAX_IMAGES = 5
-MAX_TOOL_ROUNDS = 4
-
 TOPIC_KEYS = ("po", "contract", "report", "brand", "data")
 
 
@@ -143,62 +136,6 @@ def execute_open(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
         clear_provisional(session_id)
     return {"ok": True, "title": fields.get("title", now_title), "tags": opened.tags}
 
-def _run_one_tool(
-    call: Any, runners: dict[str, Any], llm: Any, context: dict[str, Any],
-) -> dict[str, Any]:
-    fn = runners.get(call.name)
-    if fn is None:
-        result: dict[str, Any] = {"ok": False, "data": None, "error": f"unknown tool {call.name}"}
-    else:
-        try:
-            result = fn(call.arguments, llm=llm, context=context)
-        except (ModelCapacityExceeded, ProviderError):
-            raise
-        except Exception as err:
-            result = {"ok": False, "data": None, "error": str(err)}
-    return {
-        "role": "tool",
-        "tool_call_id": call.id,
-        "content": json.dumps(result, ensure_ascii=False),
-    }
-
-
-def run_tool_calls(
-    llm: Any, *, text: str, history: list[dict[str, Any]], extra: dict[str, Any] | None = None,
-    include_mcp: bool | None = None, memory: str | None = None, folded_through: int = 0,
-) -> str | None:
-    """Native function-calling loop for tests and leftover callers.
-
-    Chat turns do not use this. They go through PLAN and child runs.
-    """
-    schemas = all_schemas(include_mcp=include_mcp)
-    runners = all_tools(include_mcp=include_mcp)
-    if not schemas:
-        return None
-    messages: list[dict[str, Any]] = [
-        {"role": m.get("role"), "content": str(m.get("content") or "")}
-        for m in prompt_turns(history, folded_through)
-        if m.get("role") in ("user", "assistant")
-    ]
-    messages.append({"role": "user", "content": text})
-    context = {"history": history, **(extra or {})}
-    used = False
-    last: AssistantTurn | None = None
-    for _ in range(MAX_TOOL_ROUNDS):
-        last = model_calls.flash_tools(
-            client=llm, system=attach(REACT, memory or ""), messages=messages, tools=schemas,
-            purpose="session.tools",
-        )
-        if not last.tool_calls:
-            if used:
-                return (last.content or "").strip() or "Done."
-            return None
-        used = True
-        messages.append(last.as_message())
-        # Not the chat worker path. Chat parallelism is child runs, not a thread pool.
-        for call in last.tool_calls:
-            messages.append(_run_one_tool(call, runners, llm, context))
-    return (last.content if last else None) or "Done."
 
 def handle_message(
     db: Database, llm: Any, session_id: str, text: str, images: list[str] | None = None, attachments: list[str] | None = None,

@@ -7,7 +7,7 @@ import json
 import pytest
 
 from backend.llm import AssistantTurn, FakeLLM, ToolCall
-from backend.orchestrator import run_tool_calls
+from tests.support.react_tools import run_tool_calls
 from backend.tools import SCHEMAS, TOOLS
 from backend.tools.exchange_rate import quote
 from backend.tools.exchange_rate import run as fx_run

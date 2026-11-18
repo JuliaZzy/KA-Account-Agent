@@ -26,12 +26,31 @@ def partnership_or_404(db: Database, pid: str) -> Partnership:
 
 
 def user_on_partnership(db: Database, partnership: Partnership, user_id: str | None) -> None:
-    """A person may only open chats and memories for their own distributor. Omit the id to skip."""
-    if not user_id:
-        return
-    person = db.user(user_id)
+    """The caller must name a user of this partnership's distributor."""
+    token = (user_id or "").strip()
+    if not token:
+        raise HTTPException(400, "user_id is required")
+    person = db.user(token)
     if person is None or person.distributor_id != partnership.distributor_id:
         raise HTTPException(400, "user is not on this distributor")
+
+
+def partnership_for_user(db: Database, partnership_id: str, user_id: str | None) -> Partnership:
+    """The partnership exists and this user belongs to its distributor."""
+    found = partnership_or_404(db, partnership_id)
+    user_on_partnership(db, found, user_id)
+    return found
+
+
+def session_for_user(db: Database, session_id: str, user_id: str | None) -> dict[str, Any]:
+    """The chat exists, belongs to this user, and that user is on its distributor."""
+    session = db.session(session_id)
+    if not session:
+        raise HTTPException(404, "session not found")
+    partnership_for_user(db, session["partnership_id"], user_id)
+    if session.get("user_id") != (user_id or "").strip():
+        raise HTTPException(404, "session not found")
+    return session
 
 
 async def read_upload(file: UploadFile) -> tuple[str, bytes]:

@@ -1,11 +1,10 @@
-"""聊天入口：打开会话，然后运行工具循环。"""
+"""Chat entry: open session metadata, enqueue a run."""
 
-from .turn import MAX_IMAGES, TOPIC_KEYS, handle_message, open_session, run_tool_calls
+from .turn import MAX_IMAGES, TOPIC_KEYS, handle_message, open_session
 
 __all__ = [
     "MAX_IMAGES",
     "TOPIC_KEYS",
     "handle_message",
     "open_session",
-    "run_tool_calls",
 ]

@@ -1,10 +1,11 @@
 # 聊天回合：计划、入队、ANSWER
 
-改编排器、`run_loop`、Celery 投递或会话锁之前先读这份。`docs/run.md` 讲租约、事件、重跑和清扫。本文件只讲**这一轮对话**怎么拆成任务、怎么进 worker、怎么回到用户看得到的那一句。
+改编排器、`run_loop`、Celery 投递或会话锁之前先读这份。`docs/run.md` 讲租约、事件、重跑和清扫。想按时间顺序过一遍发消息到回复，见 [chat-flow.md](chat-flow.md)。本文件只讲**这一轮对话**怎么拆成任务、怎么进 worker、怎么回到用户看得到的那一句。
 
-旧代码没有 Celery，计划在进程里用线程池跑完。新代码已经有 Redis + outbox + Celery，并行交给**不同 worker 领不同子 run**，不要再在一个 worker 里开线程池。路径图见 `docs/agent-call-paths.html`。
+新代码已经有 Redis + outbox + Celery，并行交给**不同 worker 领不同子 run**，不要再在一个 worker 里开线程池。路径图见 `docs/agent-call-paths.html`。
 
-聊天路径已经按这个骨架接上。`parent_run_id` **只表示 rerun**（`POST /runs/{id}/rerun`，新行指向旧行），不要拿它当「谁派了这个工具」。调度边是 `owner_run_id`。
+`parent_run_id` 指**rerun**（`POST /runs/{id}/rerun`）的上一任连接。
+`owner_run_id`指**谁派了这个工具**。
 
 ## 目标骨架
 
@@ -174,16 +175,16 @@ Redis 只做这一波的计数和暂存，**账本在 Postgres**：子 run 的 `
 
 **聊天路径禁止 `ThreadPoolExecutor`。** 并行 = 同一波多条 outbox。Celery `--concurrency` 和多 worker 进程就是并行度。进程内线程只留给工具自己必须的短超时守护（现有 `timeout_seconds` 那种），不要用来跑另一条业务任务。
 
-## 代码在哪
+## 路径
 
 | 文件 | 职责 |
 |---|---|
-| `backend/orchestrator/prompt.py` | `plan_system()` / `ANSWER`。父 run 不用 `REACT` |
+| `backend/orchestrator/prompt.py` | `plan_system()` / `ANSWER` / `OPEN` |
 | `backend/orchestrator/plan.py` | schema、解析、`scheduled`、`ready_wave`、`make_plan` |
 | `backend/orchestrator/gather.py` | 按波入队、`begin_turn`、建子 run、投影 `tool.started` / `tool.completed`、唤醒 owner |
 | `backend/orchestrator/parent.py` | 父 run：PLAN → 按波入队 → ANSWER |
 | `backend/orchestrator/report.py` | 报表子 run：规划后入队 data，恢复后续撰写 |
-| `backend/orchestrator/turn.py` | `execute_open`；`run_tool_calls` 只串行，聊天父 run 不再走这里 |
+| `backend/orchestrator/turn.py` | `execute_open`、`handle_message`（入队 chat run） |
 | `backend/services/chat_run.py` | 入队写临时标题；`execute_chat`：open / 父 PLAN / 子任务。`hold_session` 只包会话写入 |
 | `backend/services/session_title.py` | 临时标题、终态后建 OPEN、title 队列忙闲判断 |
 | `backend/services/task_run.py` | 一条子 run 调一个工具，写 `tool_calls` + step，再进回合箱 |

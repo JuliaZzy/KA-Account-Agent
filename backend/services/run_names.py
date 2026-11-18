@@ -161,7 +161,7 @@ PUBLIC_RUN_EVENTS = frozenset({
 
 # The page paints `display` and does not keep a second copy of these sentences.
 EVENT_DISPLAY: dict[str, str] = {
-    StepEvent.RUN_CREATED: "已开始",
+    StepEvent.RUN_STARTED: "正在运行",
     StepEvent.MODEL_STARTED: "正在思考",
     StepEvent.RUN_WAITING_FOR_USER: "等待确认",
     StepEvent.RUN_WAITING_FOR_TASKS: "正在执行任务",

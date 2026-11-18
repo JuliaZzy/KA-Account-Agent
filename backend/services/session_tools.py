@@ -21,7 +21,7 @@ from ..po.turn import load_bundle
 from ..report.turn import ReportDraft, chart_for_query, iter_draft
 from ..text2sql.impl import answer_question_impl
 from ..tools import exchange_rate, lang_translate, send_email, web_search
-from .run_loop import Tool, ToolRegistry
+from .tool_registry import Tool, ToolRegistry
 from .run_names import TOOL_STARTED_DISPLAY, StepType, ToolErrorCode, step_name
 
 # Read tools may be retried by the executor. Side effects are not.

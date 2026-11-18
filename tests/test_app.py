@@ -30,11 +30,13 @@ def test_full_flow(db):
     c = TestClient(create_app(db=db, llm=llm))
 
     assert c.get("/").json()["service"] == "ka-account-agent"
-    sid = c.post("/api/sessions", json={"partnership_id": "ps-1", "user_id": None}).json()["id"]
     db.upsert_user("u-a", "dist-1", "Ada")
-    db.update_session(sid, user_id="u-a")
+    sid = c.post("/api/sessions", json={"partnership_id": "ps-1", "user_id": "u-a"}).json()["id"]
 
-    ev = events(c.post(f"/api/sessions/{sid}/message", json={"message": "10 cases of fish oil, no discount"}))
+    ev = events(c.post(
+        f"/api/sessions/{sid}/message", params={"user_id": "u-a"},
+        json={"message": "10 cases of fish oil, no discount"},
+    ))
     assert [event["type"] for event in ev if event["type"] == "session"] == []
     run_id = _of(ev, "run")["run_id"]
     assert db.find_agent_run("dist-1", run_id)["status"] == "queued"
@@ -70,7 +72,7 @@ def test_empty_plan_answers_directly(db):
     db.upsert_user("u-a", "dist-1", "Ada")
     c = TestClient(create_app(db=db, llm=llm))
     sid = c.post("/api/sessions", json={"user_id": "u-a"}).json()["id"]
-    ev = events(c.post(f"/api/sessions/{sid}/message", json={"message": "happy new year!"}))
+    ev = events(c.post(f"/api/sessions/{sid}/message", params={"user_id": "u-a"}, json={"message": "happy new year!"}))
     assert [event["type"] for event in ev if event["type"] == "session"] == []
     run_id = _of(ev, "run")["run_id"]
     assert db.session(sid)["title"] == "happy new year!"
@@ -88,7 +90,10 @@ def test_contract_plan_without_bytes_still_answers(db):
     db.upsert_user("u-a", "dist-1", "Ada")
     c = TestClient(create_app(db=db, llm=llm))
     sid = c.post("/api/sessions", json={"user_id": "u-a"}).json()["id"]
-    ev = events(c.post(f"/api/sessions/{sid}/message", json={"message": "new agreement attached", "attachments": ["agreement.pdf"]}))
+    ev = events(c.post(
+        f"/api/sessions/{sid}/message", params={"user_id": "u-a"},
+        json={"message": "new agreement attached", "attachments": ["agreement.pdf"]},
+    ))
     assert work_chat(db, llm, _of(ev, "run")["run_id"]) is True
     assert "attach" in db.session(sid)["history"][-1]["content"].lower()
 
@@ -99,7 +104,7 @@ def test_model_failure_leaves_the_stream_open_and_fails_on_the_worker(db):
     c = TestClient(create_app(db=db, llm=llm))
     sid = c.post("/api/sessions", json={"user_id": "u-a"}).json()["id"]
     db.update_session(sid, title="Hello", tags=[])
-    resp = c.post(f"/api/sessions/{sid}/message", json={"message": "hello"})
+    resp = c.post(f"/api/sessions/{sid}/message", params={"user_id": "u-a"}, json={"message": "hello"})
     assert resp.status_code == 202
     ev = events(resp)
     run_id = _of(ev, "run")["run_id"]
@@ -131,7 +136,7 @@ def test_a_long_chat_folds_after_the_worker_saves(db, monkeypatch):
     sid = c.post("/api/sessions", json={"partnership_id": "ps-1", "user_id": "u-a"}).json()["id"]
     db.update_session(sid, history=[{"role": "user", "content": "Q" * 8000}], title="already open", tags=["chat"])
 
-    resp = c.post(f"/api/sessions/{sid}/message", json={"message": "and one more"})
+    resp = c.post(f"/api/sessions/{sid}/message", params={"user_id": "u-a"}, json={"message": "and one more"})
     assert resp.status_code == 202
     run_id = _of(events(resp), "run")["run_id"]
     assert work_chat(db, llm, run_id) is True
@@ -143,9 +148,10 @@ def test_a_long_chat_folds_after_the_worker_saves(db, monkeypatch):
 
 
 def test_empty_message_is_rejected(db):
+    db.upsert_user("u-a", "dist-1", "Ada")
     c = TestClient(create_app(db=db, llm=FakeLLM()))
-    sid = c.post("/api/sessions", json={}).json()["id"]
-    assert c.post(f"/api/sessions/{sid}/message", json={"message": "  "}).status_code == 400
+    sid = c.post("/api/sessions", json={"partnership_id": "ps-1", "user_id": "u-a"}).json()["id"]
+    assert c.post(f"/api/sessions/{sid}/message", params={"user_id": "u-a"}, json={"message": "  "}).status_code == 400
 
 
 def _po(id: str, number: str):
@@ -171,9 +177,10 @@ def _file_contract(db, title: str):
 def test_archive_session_drops_the_chat_and_keeps_its_records(db):
     from backend.schemas import Memory, NarrativeReport
 
+    db.upsert_user("u-a", "dist-1", "Ada")
     c = TestClient(create_app(db=db, llm=FakeLLM()))
-    sid = c.post("/api/sessions", json={"partnership_id": "ps-1"}).json()["id"]
-    keep = c.post("/api/sessions", json={"partnership_id": "ps-1"}).json()["id"]
+    sid = c.post("/api/sessions", json={"partnership_id": "ps-1", "user_id": "u-a"}).json()["id"]
+    keep = c.post("/api/sessions", json={"partnership_id": "ps-1", "user_id": "u-a"}).json()["id"]
     db.insert_po(_po("po-arch", "PO-ARCH"), [], [])
     filed = _file_contract(db, "From this chat")
     db.update_session(sid, po_id="po-arch", history=[{"role": "assistant", "contract_id": filed.contract.id}])
@@ -184,23 +191,24 @@ def test_archive_session_drops_the_chat_and_keeps_its_records(db):
         partnership_id="ps-1", kind="fact", content="They ship on Tuesdays", source="chat", session_id=sid,
     ))
 
-    assert c.post(f"/api/sessions/{sid}/archive").status_code == 204
-    assert c.get(f"/api/sessions/{sid}").status_code == 404
-    assert [row["id"] for row in c.get("/api/sessions?partnership_id=ps-1").json()] == [keep]
+    assert c.post(f"/api/sessions/{sid}/archive", params={"user_id": "u-a"}).status_code == 204
+    assert c.get(f"/api/sessions/{sid}", params={"user_id": "u-a"}).status_code == 404
+    assert [row["id"] for row in c.get("/api/sessions", params={"partnership_id": "ps-1", "user_id": "u-a"}).json()] == [keep]
     assert db.po("po-arch") is not None
     assert db.contract(filed.contract.id) is not None
     assert db.narrative_report("nr-arch") is not None
     left = db.memories("ps-1")
     assert [(m.content, m.session_id) for m in left] == [("They ship on Tuesdays", None)]
-    assert c.post(f"/api/sessions/{sid}/archive").status_code == 404
+    assert c.post(f"/api/sessions/{sid}/archive", params={"user_id": "u-a"}).status_code == 404
 
 
 def test_delete_session_drops_the_chat_and_the_records_it_filed(db):
     from backend.schemas import Memory, NarrativeReport
 
+    db.upsert_user("u-a", "dist-1", "Ada")
     c = TestClient(create_app(db=db, llm=FakeLLM()))
-    sid = c.post("/api/sessions", json={"partnership_id": "ps-1"}).json()["id"]
-    keep = c.post("/api/sessions", json={"partnership_id": "ps-1"}).json()["id"]
+    sid = c.post("/api/sessions", json={"partnership_id": "ps-1", "user_id": "u-a"}).json()["id"]
+    keep = c.post("/api/sessions", json={"partnership_id": "ps-1", "user_id": "u-a"}).json()["id"]
     db.insert_po(_po("po-gone", "PO-GONE"), [{
         "product_id": "p-fo", "sku": "FO-100", "product_name": "Fish Oil",
         "quantity": 10, "case_price": 100, "line_total": 1000, "case_pack": 12,
@@ -221,9 +229,9 @@ def test_delete_session_drops_the_chat_and_the_records_it_filed(db):
         partnership_id="ps-1", kind="fact", content="They ship on Tuesdays", source="chat", session_id=sid,
     ))
 
-    assert c.delete(f"/api/sessions/{sid}").status_code == 204
-    assert c.get(f"/api/sessions/{sid}").status_code == 404
-    assert [row["id"] for row in c.get("/api/sessions?partnership_id=ps-1").json()] == [keep]
+    assert c.delete(f"/api/sessions/{sid}", params={"user_id": "u-a"}).status_code == 204
+    assert c.get(f"/api/sessions/{sid}", params={"user_id": "u-a"}).status_code == 404
+    assert [row["id"] for row in c.get("/api/sessions", params={"partnership_id": "ps-1", "user_id": "u-a"}).json()] == [keep]
     assert db.po("po-gone") is None and db.po_items("po-gone") == []
     assert db.po("po-keep") is not None
     assert db.contract(filed.contract.id) is None
@@ -235,4 +243,4 @@ def test_delete_session_drops_the_chat_and_the_records_it_filed(db):
     assert db.narrative_report("nr-keep") is not None and db.narrative_report("nr-keep").session_id == keep
     left = db.memories("ps-1")
     assert [(m.content, m.session_id) for m in left] == [("They ship on Tuesdays", None)]
-    assert c.delete(f"/api/sessions/{sid}").status_code == 404
+    assert c.delete(f"/api/sessions/{sid}", params={"user_id": "u-a"}).status_code == 404

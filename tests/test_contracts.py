@@ -127,14 +127,14 @@ def test_no_contract_or_no_sequence_schedule_means_nothing_is_prefilled(db):
 
 
 EXTRACT_NO_DISCOUNT_MENTIONED = {
-    "line_items": [{"reference": "fish oil", "cases": 20, "sku": None}], "discount_kind": None, "user_confirmed": False, "reply_language": "English",
+    "line_items": [{"reference": "fish oil", "cases": 20, "sku": None}], "discount_kind": None, "reply_language": "English",
 }
 
 
 def test_contract_rate_is_known_on_the_first_order_turn_before_any_product(db):
     ingest_extraction(db, EXTRACTION, brand_id="brand-1", partnership_id="ps-1")
     llm = FakeLLM(json_replies=[{
-        "line_items": [], "discount_kind": None, "user_confirmed": False, "reply_language": "English",
+        "line_items": [], "discount_kind": None, "reply_language": "English",
     }], text_reply="ok")
     s = db.create_session("s1", "ps-1")
     done = list(run_po_turn(db, llm, load_bundle(db, "ps-1"), s, "I want to place an order"))[-1]

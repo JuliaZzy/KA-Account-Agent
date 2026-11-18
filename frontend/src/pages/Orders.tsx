@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { api } from "../api";
+import { api, withUser } from "../api";
 import { NeedPartnership, useDesk } from "../desk";
 import { money, shortDate } from "../format";
 import { Badge, DataTable, Metrics, PageHead } from "../ui";
@@ -42,20 +42,22 @@ export function Orders() {
 }
 
 function OrdersDesk() {
-  const { partnership } = useDesk();
+  const { partnership, user } = useDesk();
+  const userId = user?.id ?? "";
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [pick, setPick] = useState("");
   const [error, setError] = useState<string | null>(null);
   const p = partnership!;
 
   useEffect(() => {
-    api<Order[]>(`/api/orders?partnership_id=${encodeURIComponent(p.id)}`)
+    if (!userId) return;
+    api<Order[]>(withUser(`/api/orders?partnership_id=${encodeURIComponent(p.id)}`, userId))
       .then((rows) => {
         setOrders(rows);
         setPick(rows[0]?.po_number ?? "");
       })
       .catch((err: Error) => setError(err.message));
-  }, [p.id]);
+  }, [p.id, userId]);
 
   const chosen = orders?.find((order) => order.po_number === pick) ?? orders?.[0];
   const cur = orders?.[0]?.currency ?? p.currency;

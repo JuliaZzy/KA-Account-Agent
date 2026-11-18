@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 
-import { api, postJson } from "../api";
+import { api, postJson, withUser } from "../api";
 import { NeedPartnership, useDesk } from "../desk";
 import { shortDate } from "../format";
 import { PageHead } from "../ui";
@@ -32,8 +32,8 @@ function MemoryDesk() {
   const kinds = meta?.memory_kinds ?? { preference: "Preference", fact: "Fact", instruction: "Instruction", event: "Event" };
 
   function load() {
-    const params = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
-    return api<Bundle>(`/api/partnerships/${p.id}/memories${params}`).then(setBundle);
+    if (!userId) return Promise.resolve();
+    return api<Bundle>(withUser(`/api/partnerships/${p.id}/memories`, userId)).then(setBundle);
   }
 
   useEffect(() => {
@@ -46,7 +46,8 @@ function MemoryDesk() {
     if (!content.trim()) { setError("Write what to remember first."); return; }
     setError(null);
     try {
-      await postJson(`/api/partnerships/${p.id}/memories`, { kind, content, ...(userId ? { user_id: userId } : {}) });
+      if (!userId) { setError("先在左侧选一个用户。"); return; }
+      await postJson(`/api/partnerships/${p.id}/memories`, { kind, content, user_id: userId });
       setContent("");
       await load();
     } catch (err) {
@@ -82,8 +83,8 @@ function MemoryDesk() {
           <span className="badge tag">{kinds[item.kind] || item.kind}</span> {item.content}
           <p className="muted">from {item.source} · added {shortDate(item.created_at)} · last used {item.last_recalled_at ? shortDate(item.last_recalled_at) : "never"}</p>
           <div className="actions">
-            <button className="btn" type="button" onClick={() => void api(`/api/memories/${item.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active: false }) }).then(load)}>Forget</button>
-            <button className="btn" type="button" onClick={() => void api(`/api/memories/${item.id}`, { method: "DELETE" }).then(load)}>Delete</button>
+            <button className="btn" type="button" onClick={() => void api(withUser(`/api/memories/${item.id}`, userId), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active: false }) }).then(load)}>Forget</button>
+            <button className="btn" type="button" onClick={() => void api(withUser(`/api/memories/${item.id}`, userId), { method: "DELETE" }).then(load)}>Delete</button>
           </div>
         </article>
       ))}
@@ -94,8 +95,8 @@ function MemoryDesk() {
             <div className="row" key={item.id} style={{ justifyContent: "space-between" }}>
               <span><span className="badge mute">{kinds[item.kind] || item.kind}</span> {item.content}</span>
               <span className="actions">
-                <button className="btn" type="button" onClick={() => void api(`/api/memories/${item.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active: true }) }).then(load)}>Restore</button>
-                <button className="btn" type="button" onClick={() => void api(`/api/memories/${item.id}`, { method: "DELETE" }).then(load)}>Delete</button>
+                <button className="btn" type="button" onClick={() => void api(withUser(`/api/memories/${item.id}`, userId), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active: true }) }).then(load)}>Restore</button>
+                <button className="btn" type="button" onClick={() => void api(withUser(`/api/memories/${item.id}`, userId), { method: "DELETE" }).then(load)}>Delete</button>
               </span>
             </div>
           ))}

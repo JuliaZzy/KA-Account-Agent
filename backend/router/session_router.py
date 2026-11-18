@@ -13,7 +13,7 @@ from ..deps import get_db
 from ..schemas import Confirm, ConfirmContract, ConfirmReport, DataFeedback, Inbound, InboundFile, NewSession
 from ..services.chat_run import enqueue_chat_run
 from ..turn_lock import hold_session
-from ._common import partnership_or_404, user_on_partnership
+from ._common import partnership_for_user, session_for_user
 
 router = APIRouter()
 
@@ -33,10 +33,9 @@ def _decode_file(f: InboundFile) -> tuple[str, bytes]:
 
 @router.get("/api/sessions")
 def list_sessions(
-    partnership_id: str, user_id: str | None = None, db: Database = Depends(get_db),
+    partnership_id: str, user_id: str, db: Database = Depends(get_db),
 ) -> list[dict[str, Any]]:
-    partnership = partnership_or_404(db, partnership_id)
-    user_on_partnership(db, partnership, user_id)
+    partnership_for_user(db, partnership_id, user_id)
     rows = db.list_sessions(partnership_id, user_id=user_id)
     keep = ("id", "partnership_id", "user_id", "title", "tags", "stage", "updated_at", "created_at")
     return [{k: row.get(k) for k in keep} for row in rows]
@@ -44,6 +43,10 @@ def list_sessions(
 
 @router.post("/api/sessions")
 def new_session(body: NewSession, db: Database = Depends(get_db)) -> dict[str, Any]:
+    if not (body.user_id or "").strip():
+        raise HTTPException(400, "user_id is required")
+    if body.partnership_id:
+        partnership_for_user(db, body.partnership_id, body.user_id)
     try:
         return service.new_session(db, body.partnership_id, body.user_id)
     except KeyError as err:
@@ -53,8 +56,9 @@ def new_session(body: NewSession, db: Database = Depends(get_db)) -> dict[str, A
 
 
 @router.post("/api/sessions/{sid}/archive", status_code=204)
-def archive_session(sid: str, db: Database = Depends(get_db)) -> Response:
+def archive_session(sid: str, user_id: str, db: Database = Depends(get_db)) -> Response:
     """Drop the chat. Reports, contracts, and orders it filed stay on their pages."""
+    session_for_user(db, sid, user_id)
     try:
         service.archive_session(db, sid)
     except KeyError as err:
@@ -63,8 +67,9 @@ def archive_session(sid: str, db: Database = Depends(get_db)) -> Response:
 
 
 @router.delete("/api/sessions/{sid}", status_code=204)
-def delete_session(sid: str, db: Database = Depends(get_db)) -> Response:
+def delete_session(sid: str, user_id: str, db: Database = Depends(get_db)) -> Response:
     """Drop the chat and the records it filed. An in-flight reply may still finish and find the row gone."""
+    session_for_user(db, sid, user_id)
     try:
         service.delete_session(db, sid)
     except KeyError as err:
@@ -73,10 +78,8 @@ def delete_session(sid: str, db: Database = Depends(get_db)) -> Response:
 
 
 @router.get("/api/sessions/{sid}")
-def get_session(sid: str, db: Database = Depends(get_db)) -> dict[str, Any]:
-    s = db.session(sid)
-    if not s:
-        raise HTTPException(404, "session not found")
+def get_session(sid: str, user_id: str, db: Database = Depends(get_db)) -> dict[str, Any]:
+    s = session_for_user(db, sid, user_id)
     # The heading tree and raw extraction are for confirm, not the desk.
     history = []
     for message in s.get("history") or []:
@@ -89,12 +92,10 @@ def get_session(sid: str, db: Database = Depends(get_db)) -> dict[str, Any]:
 
 @router.post("/api/sessions/{sid}/message", status_code=202)
 def message(
-    sid: str, body: Inbound, db: Database = Depends(get_db),
+    sid: str, body: Inbound, user_id: str, db: Database = Depends(get_db),
 ) -> dict[str, str]:
     """Create a queued Run; the separate Run SSE endpoint streams its progress."""
-    session = db.session(sid)
-    if not session:
-        raise HTTPException(404, "session not found")
+    session = session_for_user(db, sid, user_id)
     if len(body.images) > service.MAX_IMAGES:
         raise HTTPException(400, f"at most {service.MAX_IMAGES} images")
     documents = [_decode_file(f) for f in body.files]
@@ -109,7 +110,8 @@ def message(
 
 
 @router.post("/api/sessions/{sid}/confirm")
-def confirm(sid: str, body: Confirm, db: Database = Depends(get_db)) -> dict[str, Any]:
+def confirm(sid: str, body: Confirm, user_id: str, db: Database = Depends(get_db)) -> dict[str, Any]:
+    session_for_user(db, sid, user_id)
     try:
         return service.confirm(db, sid, body.token)
     except KeyError as err:
@@ -117,7 +119,8 @@ def confirm(sid: str, body: Confirm, db: Database = Depends(get_db)) -> dict[str
 
 
 @router.post("/api/sessions/{sid}/confirm-contract")
-def confirm_contract(sid: str, body: ConfirmContract, db: Database = Depends(get_db)) -> dict[str, Any]:
+def confirm_contract(sid: str, body: ConfirmContract, user_id: str, db: Database = Depends(get_db)) -> dict[str, Any]:
+    session_for_user(db, sid, user_id)
     try:
         return service.confirm_contract(db, sid, body.pending_id, body.filing)
     except KeyError as err:
@@ -127,7 +130,8 @@ def confirm_contract(sid: str, body: ConfirmContract, db: Database = Depends(get
 
 
 @router.post("/api/sessions/{sid}/confirm-report")
-def confirm_report(sid: str, body: ConfirmReport, db: Database = Depends(get_db)) -> dict[str, Any]:
+def confirm_report(sid: str, body: ConfirmReport, user_id: str, db: Database = Depends(get_db)) -> dict[str, Any]:
+    session_for_user(db, sid, user_id)
     try:
         return service.confirm_report(db, sid, body.pending_id, title=body.title, text=body.text, charts=body.charts)
     except KeyError as err:
@@ -137,14 +141,11 @@ def confirm_report(sid: str, body: ConfirmReport, db: Database = Depends(get_db)
 
 
 @router.post("/api/sessions/{sid}/data-feedback")
-def data_feedback(sid: str, body: DataFeedback, db: Database = Depends(get_db)) -> dict[str, Any]:
+def data_feedback(sid: str, body: DataFeedback, user_id: str, db: Database = Depends(get_db)) -> dict[str, Any]:
     """Rate the query behind one assistant turn. The log must belong to this chat."""
-    if not db.session(sid):
-        raise HTTPException(404, "session not found")
+    session_for_user(db, sid, user_id)
     with hold_session(sid):
-        session = db.session(sid)
-        if not session:
-            raise HTTPException(404, "session not found")
+        session = session_for_user(db, sid, user_id)
         try:
             db.set_text2sql_feedback(
                 body.log_id, body.feedback, reason=body.reason, corrected_sql=body.corrected_sql,

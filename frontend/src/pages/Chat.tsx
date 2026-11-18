@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 
-import { api, cancelRun, createChatRun, followRun, getRunEvents, postJson, resumeRun, type RunEvent } from "../api";
+import { api, cancelRun, createChatRun, followRun, getRunEvents, postJson, resumeRun, withUser, type RunEvent } from "../api";
 import { CHAT_DOC_EXTS, CHAT_IMAGE_EXTS, clipAttachedFiles, fileExt } from "../chat-files";
 import {
   flightOf, isChatBusy, isForgotten, liveFromEvents, liveFromRun, onForgetChat,
@@ -317,7 +317,7 @@ function ChatDesk() {
       if (seq === openSeq.current) focus(id, cached);
       return;
     }
-    const session = await api<SessionRow>(`/api/sessions/${id}`);
+    const session = await api<SessionRow>(withUser(`/api/sessions/${id}`, userId));
     if (seq !== openSeq.current) return;
     if (snaps.has(id)) {
       focus(id, snaps.get(id)!);
@@ -330,9 +330,10 @@ function ChatDesk() {
   }
 
   async function startNew(seq: number) {
+    if (!userId) throw new Error("先在左侧选一个用户。");
     const session = await postJson<SessionRow>("/api/sessions", {
       partnership_id: partnership.id,
-      ...(userId ? { user_id: userId } : {}),
+      user_id: userId,
     });
     if (seq !== openSeq.current) return;
     const fresh: Snap = {
@@ -375,8 +376,8 @@ function ChatDesk() {
         await openExisting(jump.sid, seq);
         return;
       }
-      const params = new URLSearchParams({ partnership_id: partnership.id });
-      if (userId) params.set("user_id", userId);
+      if (!userId) throw new Error("先在左侧选一个用户。");
+      const params = new URLSearchParams({ partnership_id: partnership.id, user_id: userId });
       const rows = await api<{ id: string }[]>(`/api/sessions?${params}`);
       if (seq !== openSeq.current) return;
       if (rows[0]) await openExisting(rows[0].id, seq);
@@ -455,7 +456,8 @@ function ChatDesk() {
     let committed = false;
     let parkedTool: string | null = null;
     try {
-      const created = await createChatRun(chatId, {
+      if (!userId) throw new Error("先在左侧选一个用户。");
+      const created = await createChatRun(chatId, userId, {
         message: trimmed,
         images,
         attachments: documents.map((d) => d.name),
@@ -485,7 +487,7 @@ function ChatDesk() {
         patchFlight(chatId, { approvalTool: parkedTool ?? "这个工具" });
         return;
       }
-      const session = await api<SessionRow>(`/api/sessions/${chatId}`);
+      const session = await api<SessionRow>(withUser(`/api/sessions/${chatId}`, userId));
       const next = fromSession(session, greeting(partnership));
       const last = next.turns[next.turns.length - 1];
       if (last?.role === "assistant" && steps.length) last.activity = steps;
@@ -542,7 +544,7 @@ function ChatDesk() {
         patchFlight(chatId, { approvalTool: parkedTool ?? "这个工具" });
         return;
       }
-      const session = await api<SessionRow>(`/api/sessions/${chatId}`);
+      const session = await api<SessionRow>(withUser(`/api/sessions/${chatId}`, userId));
       const next = fromSession(session, greeting(partnership));
       const last = next.turns[next.turns.length - 1];
       if (last?.role === "assistant" && steps.length) last.activity = steps;
@@ -586,7 +588,7 @@ function ChatDesk() {
     patchFlight(chatId, { busy: true, error: null });
     try {
       const result = await postJson<{ state: string; message?: string; draft?: Draft | null }>(
-        `/api/sessions/${chatId}/confirm`,
+        withUser(`/api/sessions/${chatId}/confirm`, userId),
         { token: current.confirmToken },
       );
       const textOut = result.state === "submitted" || result.state === "changed"
@@ -626,7 +628,7 @@ function ChatDesk() {
     patchFlight(chatId, { busy: true, error: null });
     try {
       const result = await postJson<{ contract_id: string; contract: ContractFiling; message: string }>(
-        `/api/sessions/${chatId}/confirm-contract`,
+        withUser(`/api/sessions/${chatId}/confirm-contract`, userId),
         { pending_id: filing.pending_id, filing },
       );
       const saved = contractFiling(result.contract) ?? filing;
@@ -660,7 +662,7 @@ function ChatDesk() {
     patchFlight(chatId, { busy: true, error: null });
     try {
       const result = await postJson<{ id: string; title: string; message: string }>(
-        `/api/sessions/${chatId}/confirm-report`,
+        withUser(`/api/sessions/${chatId}/confirm-report`, userId),
         { pending_id: turn.reportPendingId, title, text, charts },
       );
       const latest = snaps.get(chatId) ?? current;
@@ -807,6 +809,7 @@ function ChatDesk() {
                 {turn.role === "assistant" && turn.dataQuery && sid && (
                   <DataRating
                     sid={sid}
+                    userId={userId}
                     query={turn.dataQuery}
                     onSaved={(feedback) => markFeedback(turn.dataQuery!.logId, feedback)}
                   />
@@ -1048,9 +1051,10 @@ function ActivityList({ steps }: { steps: Activity[] }) {
 }
 
 function DataRating({
-  sid, query, onSaved,
+  sid, userId, query, onSaved,
 }: {
   sid: string;
+  userId: string;
   query: DataQueryMark;
   onSaved: (feedback: "good" | "bad") => void;
 }) {
@@ -1067,7 +1071,7 @@ function DataRating({
     setBusy(true);
     setError(null);
     try {
-      await postJson(`/api/sessions/${sid}/data-feedback`, {
+      await postJson(withUser(`/api/sessions/${sid}/data-feedback`, userId), {
         log_id: query.logId,
         feedback,
         reason: feedback === "bad" ? reason : null,

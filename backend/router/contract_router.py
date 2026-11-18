@@ -13,22 +13,23 @@ from ..db import Database
 from ..deps import get_db
 from ..llm import deepseek_client
 from ..schemas import Partnership
-from ._common import dump, partnership_or_404, read_upload, user_on_partnership
+from ._common import dump, partnership_for_user, read_upload
 
 router = APIRouter()
 
 
 @router.get("/api/partnerships/{pid}/contracts")
-def contracts(pid: str, db: Database = Depends(get_db)) -> list[dict[str, Any]]:
-    partnership_or_404(db, pid)
+def contracts(pid: str, user_id: str, db: Database = Depends(get_db)) -> list[dict[str, Any]]:
+    partnership_for_user(db, pid, user_id)
     return [dump(c) for c in db.contracts(pid)]
 
 
 @router.get("/api/contracts/{cid}")
-def contract_detail(cid: str, db: Database = Depends(get_db)) -> dict[str, Any]:
+def contract_detail(cid: str, user_id: str, db: Database = Depends(get_db)) -> dict[str, Any]:
     found = db.contract(cid)
     if not found:
         raise HTTPException(404, "contract not found")
+    partnership_for_user(db, found.partnership_id, user_id)
     discount = None
     if found.status == "active":
         nxt = contract_discount_for_next_order(db, found.partnership_id)
@@ -56,8 +57,7 @@ async def import_contract(
     user_id: str = Form(""),
     db: Database = Depends(get_db),
 ) -> dict[str, Any]:
-    p: Partnership = partnership_or_404(db, pid)
-    user_on_partnership(db, p, user_id or None)
+    p: Partnership = partnership_for_user(db, pid, user_id or None)
     name, data = await read_upload(file)
     label = title.strip() or name
     try:

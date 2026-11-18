@@ -1,0 +1,207 @@
+<mxfile host="app.diagrams.net" modified="2026-11-16T00:00:00.000Z" agent="Cursor" version="24.7.17" type="device">
+  <diagram id="runtime-overview" name="00 运行时总览（推荐先看）">
+    <mxGraphModel dx="2000" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="3200" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="rt-0"/>
+        <mxCell id="rt-1" parent="rt-0"/>
+        <mxCell id="rt-title" value="KA Account Agent｜一次聊天 run 的完整运行时路径" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=22;fontStyle=1;fontColor=#1f2937;" vertex="1" parent="rt-1"><mxGeometry x="40" y="20" width="900" height="36" as="geometry"/></mxCell>
+        <mxCell id="rt-subtitle" value="沿 ①→⑩ 阅读；⑦⑧⑨ 可能多波重复。细节与事务边界见 docs/chat-flow.md。每个 execute_run 只推进一个 run 的一次 claim。" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=12;fontColor=#6b7280;" vertex="1" parent="rt-1"><mxGeometry x="40" y="52" width="1200" height="28" as="geometry"/></mxCell>
+
+        <mxCell id="rt-l-ui" value="用户 / 前端" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#eff6ff;strokeColor=#60a5fa;fontStyle=1;fontSize=13;" vertex="1" parent="rt-1"><mxGeometry x="40" y="90" width="3100" height="100" as="geometry"/></mxCell>
+        <mxCell id="rt-l-main" value="API · Outbox · Worker · 编排" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#f9fafb;strokeColor=#9ca3af;fontStyle=1;fontSize=13;" vertex="1" parent="rt-1"><mxGeometry x="40" y="190" width="3100" height="200" as="geometry"/></mxCell>
+        <mxCell id="rt-l-notes" value="账本与回路" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#fff7ed;strokeColor=#fb923c;fontStyle=1;fontSize=13;" vertex="1" parent="rt-1"><mxGeometry x="40" y="390" width="3100" height="200" as="geometry"/></mxCell>
+
+        <mxCell id="rt-u1" value="① 发消息&lt;br&gt;&lt;font style='font-size:10px'&gt;POST …/message&lt;br&gt;Chat.tsx · streamMessage()&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;fontSize=12;" vertex="1" parent="rt-l-ui"><mxGeometry x="60" y="42" width="200" height="48" as="geometry"/></mxCell>
+        <mxCell id="rt-u11" value="⑪ 展示&lt;br&gt;&lt;font style='font-size:10px'&gt;SSE /events/stream（父 run）&lt;br&gt;run.reply_updated · 终态读 history&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;fontSize=12;" vertex="1" parent="rt-l-ui"><mxGeometry x="2860" y="42" width="220" height="48" as="geometry"/></mxCell>
+
+        <mxCell id="rt-s2" value="② API&lt;br&gt;&lt;font style='font-size:10px'&gt;session_router.message()&lt;br&gt;enqueue_chat_run()&lt;/font&gt;&lt;br&gt;可选：chat_sessions.title + Redis 临时标题" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;fontSize=11;" vertex="1" parent="rt-l-main"><mxGeometry x="280" y="50" width="220" height="72" as="geometry"/></mxCell>
+        <mxCell id="rt-s3" value="③ 建 run&lt;br&gt;&lt;font style='font-size:10px'&gt;create_agent_run()&lt;/font&gt;&lt;br&gt;&lt;b&gt;PG 同事务：&lt;/b&gt;agent_runs queued&lt;br&gt;run.created · outbox pending" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3f4f6;strokeColor=#4b5563;fontSize=11;" vertex="1" parent="rt-l-main"><mxGeometry x="520" y="50" width="220" height="88" as="geometry"/></mxCell>
+        <mxCell id="rt-s4" value="④ 投递&lt;br&gt;&lt;font style='font-size:10px'&gt;dispatch_pending()&lt;/font&gt;&lt;br&gt;① broker 发 execute_run（Redis DB1）&lt;br&gt;② PG：锁 run、outbox dispatched&lt;br&gt;run.enqueued（内部）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;fontSize=11;" vertex="1" parent="rt-l-main"><mxGeometry x="760" y="45" width="240" height="98" as="geometry"/></mxCell>
+        <mxCell id="rt-s5" value="⑤ 领租约&lt;br&gt;&lt;font style='font-size:10px'&gt;work_once() · claim_chat_turn()&lt;/font&gt;&lt;br&gt;PG：queued→running&lt;br&gt;run.started · audit_logs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e8ff;strokeColor=#9333ea;fontSize=11;" vertex="1" parent="rt-l-main"><mxGeometry x="1020" y="50" width="220" height="88" as="geometry"/></mxCell>
+        <mxCell id="rt-s6" value="⑥ PLAN&lt;br&gt;&lt;font style='font-size:10px'&gt;execute_parent() · make_plan()&lt;/font&gt;&lt;br&gt;同一条父 run；多笔 PG&lt;br&gt;steps · model · checkpoint planned" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e8ff;strokeColor=#9333ea;fontSize=11;" vertex="1" parent="rt-l-main"><mxGeometry x="1260" y="50" width="220" height="88" as="geometry"/></mxCell>
+        <mxCell id="rt-s7" value="⑦ 派波&lt;br&gt;&lt;font style='font-size:10px'&gt;commit_task_wave()&lt;/font&gt;&lt;br&gt;PG：子 run×N + 父 tool.started&lt;br&gt;父 checkpoint · waiting_for_tasks&lt;br&gt;后：Redis begin_turn · dispatch 子" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#db2777;fontSize=11;" vertex="1" parent="rt-l-main"><mxGeometry x="1500" y="42" width="240" height="104" as="geometry"/></mxCell>
+        <mxCell id="rt-s8" value="⑧ 子 run&lt;br&gt;&lt;font style='font-size:10px'&gt;execute_task() · tool.fn()&lt;/font&gt;&lt;br&gt;多 worker 并行；不写 history&lt;br&gt;step/model 可投影到父 SSE" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#db2777;fontSize=11;" vertex="1" parent="rt-l-main"><mxGeometry x="1760" y="50" width="220" height="88" as="geometry"/></mxCell>
+        <mxCell id="rt-s9" value="⑨ 波次齐&lt;br&gt;&lt;font style='font-size:10px'&gt;finish_child() · store_result()&lt;/font&gt;&lt;br&gt;最后子 worker：left=0&lt;br&gt;PG 父 queued + 新 outbox&lt;br&gt;dispatch 父 → 回 ⑤" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;fontSize=11;" vertex="1" parent="rt-l-main"><mxGeometry x="2000" y="42" width="240" height="104" as="geometry"/></mxCell>
+        <mxCell id="rt-s10" value="⑩ ANSWER&lt;br&gt;&lt;font style='font-size:10px'&gt;compose_answer() · save_reply()&lt;/font&gt;&lt;br&gt;chat_sessions.history&lt;br&gt;complete_run → succeeded" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;fontSize=11;" vertex="1" parent="rt-l-main"><mxGeometry x="2400" y="50" width="220" height="88" as="geometry"/></mxCell>
+        <mxCell id="rt-empty" value="tasks=[]&lt;br&gt;⑥ 直连 ⑩" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#d97706;fontSize=11;dashed=1;" vertex="1" parent="rt-l-main"><mxGeometry x="1260" y="150" width="120" height="40" as="geometry"/></mxCell>
+
+        <mxCell id="rt-tables" value="PostgreSQL 轨迹&lt;br&gt;agent_runs（状态）· run_events（时间线）· agent_steps（一步账本）&lt;br&gt;checkpoints · model_calls · tool_calls · usage_records · outbox_jobs · audit_logs&lt;br&gt;对话：chat_sessions.history（非独立表）· parent_run_id=重跑 · owner_run_id=调度父子" style="shape=note;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9ca3af;fontSize=11;align=left;" vertex="1" parent="rt-l-notes"><mxGeometry x="60" y="45" width="720" height="90" as="geometry"/></mxCell>
+        <mxCell id="rt-redis" value="Redis&lt;br&gt;DB0：会话锁、波次计数 begin_turn/store_result、临时标题&lt;br&gt;DB1：Celery broker · DB2：Celery 任务结果（非波次信箱）&lt;br&gt;计数归零不推 broker；最后子 run 里调 requeue + dispatch" style="shape=note;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9ca3af;fontSize=11;align=left;" vertex="1" parent="rt-l-notes"><mxGeometry x="800" y="45" width="520" height="90" as="geometry"/></mxCell>
+        <mxCell id="rt-loop" value="波次回路：⑦→⑧→⑨→⑤→⑥…→⑩。父 waiting_for_tasks 时释放租约。终态后可建 OPEN run（title 队列），不进聊天 SSE。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#d97706;fontSize=11;align=left;" vertex="1" parent="rt-l-notes"><mxGeometry x="1340" y="45" width="600" height="55" as="geometry"/></mxCell>
+        <mxCell id="rt-open" value="首条消息只写临时 title；OPEN 精修在父 chat 终态之后（ka_account.title）。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#d97706;fontSize=11;align=left;" vertex="1" parent="rt-l-notes"><mxGeometry x="1340" y="110" width="600" height="40" as="geometry"/></mxCell>
+
+        <mxCell id="rt-e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=1.5;" edge="1" parent="rt-1" source="rt-u1" target="rt-s2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="rt-e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=1.5;" edge="1" parent="rt-1" source="rt-s2" target="rt-s3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="rt-e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=1.5;" edge="1" parent="rt-1" source="rt-s3" target="rt-s4"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="rt-e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=1.5;" edge="1" parent="rt-1" source="rt-s4" target="rt-s5"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="rt-e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=1.5;" edge="1" parent="rt-1" source="rt-s5" target="rt-s6"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="rt-e6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=1.5;" edge="1" parent="rt-1" source="rt-s6" target="rt-s7"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="rt-e7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=1.5;" edge="1" parent="rt-1" source="rt-s7" target="rt-s8"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="rt-e8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=1.5;" edge="1" parent="rt-1" source="rt-s8" target="rt-s9"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="rt-e9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=1.5;" edge="1" parent="rt-1" source="rt-s9" target="rt-s10"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2340" y="250"/><mxPoint x="2340" y="290"/><mxPoint x="2510" y="290"/><mxPoint x="2510" y="94"/></Array></mxGeometry></mxCell>
+        <mxCell id="rt-e10" value="再 claim" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;dashed=1;strokeColor=#c2410c;" edge="1" parent="rt-1" source="rt-s9" target="rt-s5"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2120" y="320"/><mxPoint x="1130" y="320"/></Array></mxGeometry></mxCell>
+        <mxCell id="rt-e11" value="空计划" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;dashed=1;strokeColor=#d97706;" edge="1" parent="rt-1" source="rt-empty" target="rt-s10"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="rt-e12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=1.2;" edge="1" parent="rt-1" source="rt-s10" target="rt-u11"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="text-flow" name="01 文字流程（鉴权、重试、恢复）">
+    <mxGraphModel dx="1800" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="3200" pageHeight="1400" math="0" shadow="0">
+      <root>
+        <mxCell id="txt-0"/>
+        <mxCell id="txt-1" parent="txt-0"/>
+        <mxCell id="txt-title" value="KA Account Agent｜文字流程：鉴权、幂等、重试、确认与清扫" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=22;fontStyle=1;fontColor=#1f2937;" vertex="1" parent="txt-1"><mxGeometry x="40" y="20" width="1100" height="36" as="geometry"/></mxCell>
+        <mxCell id="txt-subtitle" value="补充「00 运行时总览」未展开的控制流。与 docs/chat-flow.md、run.md 一致。" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=12;fontColor=#6b7280;" vertex="1" parent="txt-1"><mxGeometry x="40" y="52" width="900" height="24" as="geometry"/></mxCell>
+
+        <mxCell id="txt-l-main" value="入口与正常执行路径" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#eff6ff;strokeColor=#60a5fa;fontStyle=1;fontSize=13;" vertex="1" parent="txt-1"><mxGeometry x="40" y="90" width="3100" height="280" as="geometry"/></mxCell>
+        <mxCell id="txt-l-retry" value="重试、幂等和人工控制" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#fff7ed;strokeColor=#fb923c;fontStyle=1;fontSize=13;" vertex="1" parent="txt-1"><mxGeometry x="40" y="380" width="3100" height="280" as="geometry"/></mxCell>
+        <mxCell id="txt-l-sweep" value="sweeper 与可观测性" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#faf5ff;strokeColor=#c084fc;fontStyle=1;fontSize=13;" vertex="1" parent="txt-1"><mxGeometry x="40" y="670" width="3100" height="260" as="geometry"/></mxCell>
+        <mxCell id="txt-l-state" value="状态与读模型" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#f3f4f6;strokeColor=#4b5563;fontStyle=1;fontSize=13;" vertex="1" parent="txt-1"><mxGeometry x="40" y="940" width="3100" height="160" as="geometry"/></mxCell>
+
+        <mxCell id="txt-1a" value="① 鉴权 + 闸门&lt;br&gt;&lt;font style='font-size:10px'&gt;get_current_user() · entry_guard&lt;/font&gt;&lt;br&gt;Redis 限流 / 并发闸门" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;fontSize=11;" vertex="1" parent="txt-l-main"><mxGeometry x="50" y="48" width="280" height="80" as="geometry"/></mxCell>
+        <mxCell id="txt-2a" value="② 幂等建 run&lt;br&gt;&lt;font style='font-size:10px'&gt;enqueue_chat_run() · create_agent_run()&lt;/font&gt;&lt;br&gt;PG：agent_runs + run.created + outbox" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;fontSize=11;" vertex="1" parent="txt-l-main"><mxGeometry x="360" y="48" width="280" height="80" as="geometry"/></mxCell>
+        <mxCell id="txt-3a" value="③ outbox → broker&lt;br&gt;&lt;font style='font-size:10px'&gt;dispatch_pending()&lt;/font&gt;&lt;br&gt;发消息与 mark dispatched 分两事务" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;fontSize=11;" vertex="1" parent="txt-l-main"><mxGeometry x="670" y="48" width="280" height="80" as="geometry"/></mxCell>
+        <mxCell id="txt-4a" value="④ claim + lease&lt;br&gt;&lt;font style='font-size:10px'&gt;execute_run() · work_once()&lt;/font&gt;&lt;br&gt;run.started · SessionBusy 重试" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;fontSize=11;" vertex="1" parent="txt-l-main"><mxGeometry x="980" y="48" width="280" height="80" as="geometry"/></mxCell>
+        <mxCell id="txt-5a" value="⑤ PLAN / 派波&lt;br&gt;&lt;font style='font-size:10px'&gt;make_plan() · commit_task_wave()&lt;/font&gt;&lt;br&gt;父 waiting_for_tasks；owner_run_id" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;fontSize=11;" vertex="1" parent="txt-l-main"><mxGeometry x="1290" y="48" width="280" height="80" as="geometry"/></mxCell>
+        <mxCell id="txt-6a" value="⑥ 子 run 工具&lt;br&gt;&lt;font style='font-size:10px'&gt;task_run.execute_task()&lt;br&gt;session_tools · 计划侧效应幂等&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;fontSize=11;" vertex="1" parent="txt-l-main"><mxGeometry x="1600" y="48" width="280" height="80" as="geometry"/></mxCell>
+        <mxCell id="txt-6c" value="⑦ ANSWER&lt;br&gt;&lt;font style='font-size:10px'&gt;compose_answer() · save_reply()&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;fontSize=11;" vertex="1" parent="txt-l-main"><mxGeometry x="1910" y="48" width="280" height="80" as="geometry"/></mxCell>
+
+        <mxCell id="txt-1b" value="模型 / 基础设施重试&lt;br&gt;&lt;font style='font-size:10px'&gt;schedule_retry(spend_attempt=False)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;fontSize=11;" vertex="1" parent="txt-l-retry"><mxGeometry x="50" y="48" width="300" height="72" as="geometry"/></mxCell>
+        <mxCell id="txt-2b" value="工具失败与占座&lt;br&gt;&lt;font style='font-size:10px'&gt;claim_tool_call · tool_calls&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;fontSize=11;" vertex="1" parent="txt-l-retry"><mxGeometry x="380" y="48" width="300" height="72" as="geometry"/></mxCell>
+        <mxCell id="txt-3b" value="业务重试 / 死信&lt;br&gt;&lt;font style='font-size:10px'&gt;schedule_retry · dead_letter_jobs&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;fontSize=11;" vertex="1" parent="txt-l-retry"><mxGeometry x="710" y="48" width="300" height="72" as="geometry"/></mxCell>
+        <mxCell id="txt-4b" value="确认 / 取消&lt;br&gt;&lt;font style='font-size:10px'&gt;waiting_for_user · resume / cancel&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;fontSize=11;" vertex="1" parent="txt-l-retry"><mxGeometry x="1040" y="48" width="300" height="72" as="geometry"/></mxCell>
+        <mxCell id="txt-5b" value="波次唤醒&lt;br&gt;&lt;font style='font-size:10px'&gt;record_child_wave_result()&lt;br&gt;requeue_waiting_tasks()&lt;/font&gt;&lt;br&gt;Redis DB0 计数；子 worker 触发" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;fontSize=11;" vertex="1" parent="txt-l-retry"><mxGeometry x="1370" y="40" width="300" height="88" as="geometry"/></mxCell>
+        <mxCell id="txt-6b" value="状态机&lt;br&gt;&lt;font style='font-size:10px'&gt;_transition()&lt;/font&gt;&lt;br&gt;状态 + 事件 + audit 同事务" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;fontSize=11;" vertex="1" parent="txt-l-retry"><mxGeometry x="1700" y="48" width="300" height="72" as="geometry"/></mxCell>
+
+        <mxCell id="txt-s1" value="sweeper 周期任务&lt;br&gt;&lt;font style='font-size:10px'&gt;sweep · republish · dispatch_pending&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e8ff;strokeColor=#9333ea;fontSize=11;" vertex="1" parent="txt-l-sweep"><mxGeometry x="50" y="48" width="360" height="72" as="geometry"/></mxCell>
+        <mxCell id="txt-s2" value="租约 / waiting_for_tasks 清扫" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e8ff;strokeColor=#9333ea;fontSize=11;" vertex="1" parent="txt-l-sweep"><mxGeometry x="440" y="48" width="360" height="72" as="geometry"/></mxCell>
+        <mxCell id="txt-s3" value="SSE · run.reply_updated&lt;br&gt;&lt;font style='font-size:10px'&gt;NOTIFY 唤醒 · 公开事件过滤&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e8ff;strokeColor=#9333ea;fontSize=11;" vertex="1" parent="txt-l-sweep"><mxGeometry x="830" y="48" width="360" height="72" as="geometry"/></mxCell>
+        <mxCell id="txt-s4" value="trace / metrics&lt;br&gt;history 是对话 · run trace 是执行事实" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e8ff;strokeColor=#9333ea;fontSize=11;" vertex="1" parent="txt-l-sweep"><mxGeometry x="1220" y="48" width="360" height="72" as="geometry"/></mxCell>
+
+        <mxCell id="txt-state" value="状态：queued → running → waiting_for_tasks → queued → succeeded；waiting_for_user；failed / cancelled。重跑新建 run（parent_run_id）。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#fb923c;fontSize=11;align=left;" vertex="1" parent="txt-l-state"><mxGeometry x="50" y="48" width="900" height="50" as="geometry"/></mxCell>
+        <mxCell id="txt-rules" value="Postgres = 账本；Redis DB0 = 锁与波次；Redis DB1 = broker。编排子任务走 task_run，不是 ReAct 循环。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#d97706;fontSize=11;align=left;" vertex="1" parent="txt-l-state"><mxGeometry x="980" y="48" width="900" height="50" as="geometry"/></mxCell>
+
+        <mxCell id="txt-e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=1.3;" edge="1" parent="txt-1" source="txt-1a" target="txt-2a"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="txt-e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=1.3;" edge="1" parent="txt-1" source="txt-2a" target="txt-3a"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="txt-e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=1.3;" edge="1" parent="txt-1" source="txt-3a" target="txt-4a"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="txt-e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=1.3;" edge="1" parent="txt-1" source="txt-4a" target="txt-5a"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="txt-e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=1.3;" edge="1" parent="txt-1" source="txt-5a" target="txt-6a"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="txt-e5b" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=1.3;" edge="1" parent="txt-1" source="txt-6a" target="txt-6c"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="main-flow" name="02 主流程（泳道）">
+    <mxGraphModel dx="1800" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="3000" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="KA Account Agent｜聊天请求（泳道简图）" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=22;fontStyle=1;fontColor=#1f2937;" vertex="1" parent="1"><mxGeometry x="40" y="20" width="600" height="36" as="geometry"/></mxCell>
+        <mxCell id="subtitle" value="函数与事务细节见「00 运行时总览」与 docs/chat-flow.md。" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=12;fontColor=#6b7280;" vertex="1" parent="1"><mxGeometry x="40" y="52" width="800" height="24" as="geometry"/></mxCell>
+
+        <mxCell id="lane-user" value="用户 / 前端" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#eff6ff;strokeColor=#60a5fa;fontStyle=1;fontSize=13;" vertex="1" parent="1"><mxGeometry x="40" y="90" width="2900" height="110" as="geometry"/></mxCell>
+        <mxCell id="lane-api" value="FastAPI" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#f0fdf4;strokeColor=#4ade80;fontStyle=1;fontSize=13;" vertex="1" parent="1"><mxGeometry x="40" y="200" width="2900" height="110" as="geometry"/></mxCell>
+        <mxCell id="lane-queue" value="Outbox · Redis" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#fff7ed;strokeColor=#fb923c;fontStyle=1;fontSize=13;" vertex="1" parent="1"><mxGeometry x="40" y="310" width="2900" height="100" as="geometry"/></mxCell>
+        <mxCell id="lane-worker" value="Celery worker" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#faf5ff;strokeColor=#c084fc;fontStyle=1;fontSize=13;" vertex="1" parent="1"><mxGeometry x="40" y="410" width="2900" height="130" as="geometry"/></mxCell>
+        <mxCell id="lane-orch" value="编排" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#fdf2f8;strokeColor=#f472b6;fontStyle=1;fontSize=13;" vertex="1" parent="1"><mxGeometry x="40" y="540" width="2900" height="130" as="geometry"/></mxCell>
+        <mxCell id="lane-db" value="PostgreSQL" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#f9fafb;strokeColor=#9ca3af;fontStyle=1;fontSize=13;" vertex="1" parent="1"><mxGeometry x="40" y="670" width="2900" height="120" as="geometry"/></mxCell>
+
+        <mxCell id="u-send" value="① POST …/message" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;fontSize=12;" vertex="1" parent="lane-user"><mxGeometry x="60" y="45" width="160" height="50" as="geometry"/></mxCell>
+        <mxCell id="u-poll" value="SSE 父 run + history" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;fontSize=12;" vertex="1" parent="lane-user"><mxGeometry x="2620" y="45" width="180" height="50" as="geometry"/></mxCell>
+        <mxCell id="u-confirm" value="确认 / 停止（分支）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;fontSize=11;dashed=1;" vertex="1" parent="lane-user"><mxGeometry x="1800" y="45" width="160" height="50" as="geometry"/></mxCell>
+
+        <mxCell id="a-enqueue" value="② enqueue_chat_run" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;fontSize=12;" vertex="1" parent="lane-api"><mxGeometry x="280" y="42" width="200" height="52" as="geometry"/></mxCell>
+        <mxCell id="a-resume" value="resume / cancel" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;fontSize=11;dashed=1;" vertex="1" parent="lane-api"><mxGeometry x="1800" y="42" width="160" height="52" as="geometry"/></mxCell>
+
+        <mxCell id="q-dispatch" value="③ dispatch · DB1 broker · DB0 波次" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;fontSize=11;" vertex="1" parent="lane-queue"><mxGeometry x="520" y="38" width="220" height="50" as="geometry"/></mxCell>
+
+        <mxCell id="w-claim" value="④ claim → running" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e8ff;strokeColor=#9333ea;fontSize=12;" vertex="1" parent="lane-worker"><mxGeometry x="780" y="42" width="180" height="52" as="geometry"/></mxCell>
+        <mxCell id="w-wait" value="waiting_for_user?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#d97706;fontSize=11;dashed=1;" vertex="1" parent="lane-worker"><mxGeometry x="1800" y="35" width="120" height="66" as="geometry"/></mxCell>
+        <mxCell id="w-done" value="complete_run" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e8ff;strokeColor=#9333ea;fontSize=12;" vertex="1" parent="lane-worker"><mxGeometry x="2380" y="42" width="160" height="52" as="geometry"/></mxCell>
+
+        <mxCell id="t-plan" value="⑤ PLAN" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#db2777;fontSize=12;" vertex="1" parent="lane-orch"><mxGeometry x="1000" y="42" width="140" height="52" as="geometry"/></mxCell>
+        <mxCell id="t-wave" value="⑥ dispatch_wave" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#db2777;fontSize=12;" vertex="1" parent="lane-orch"><mxGeometry x="1180" y="42" width="160" height="52" as="geometry"/></mxCell>
+        <mxCell id="t-child" value="⑦ execute_task" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#db2777;fontSize=12;" vertex="1" parent="lane-orch"><mxGeometry x="1380" y="42" width="160" height="52" as="geometry"/></mxCell>
+        <mxCell id="t-ans" value="⑧ ANSWER · save_reply" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#db2777;fontSize=12;" vertex="1" parent="lane-orch"><mxGeometry x="2180" y="42" width="180" height="52" as="geometry"/></mxCell>
+
+        <mxCell id="d-trace" value="run 轨迹 + chat_sessions.history（编排路径 ANSWER 后写 history）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3f4f6;strokeColor=#4b5563;fontSize=11;" vertex="1" parent="lane-db"><mxGeometry x="2180" y="40" width="360" height="55" as="geometry"/></mxCell>
+
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="u-send" target="a-enqueue"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="a-enqueue" target="q-dispatch"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="q-dispatch" target="w-claim"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="w-claim" target="t-plan"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="t-plan" target="t-wave"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="t-wave" target="t-child"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e7" value="波次齐" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;dashed=1;" edge="1" parent="1" source="t-child" target="w-claim"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1460" y="720"/><mxPoint x="870" y="720"/></Array></mxGeometry></mxCell>
+        <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="t-child" target="t-ans"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2100" y="600"/></Array></mxGeometry></mxCell>
+        <mxCell id="e9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="t-ans" target="w-done"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="w-done" target="d-trace"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="d-trace" target="u-poll"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="note" value="实线 = 主路径；虚线 = 多波回 claim 或 waiting_for_user 分支。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#fb923c;fontSize=11;" vertex="1" parent="1"><mxGeometry x="60" y="820" width="480" height="40" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="domain-tools" name="03 领域工具路由">
+    <mxGraphModel dx="1500" dy="950" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale=1" pageWidth="2400" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/><mxCell id="1" parent="0"/>
+        <mxCell id="dt-title" value="领域工具：PLAN 选任务，task_run 执行" style="text;html=1;strokeColor=none;fillColor=none;fontSize=22;fontStyle=1;fontColor=#1f2937;" vertex="1" parent="1"><mxGeometry x="40" y="25" width="700" height="36" as="geometry"/></mxCell>
+        <mxCell id="dt-note" value="父 chat run 不走 ReAct 点工具；子 run 按计划 name 映射到下列模块。" style="text;html=1;strokeColor=none;fillColor=none;fontSize=12;fontColor=#6b7280;" vertex="1" parent="1"><mxGeometry x="40" y="58" width="700" height="24" as="geometry"/></mxCell>
+        <mxCell id="dt-l1" value="task_run / session_tools" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#faf5ff;strokeColor=#c084fc;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="40" y="100" width="2300" height="120" as="geometry"/></mxCell>
+        <mxCell id="dt-l2" value="领域模块" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#fdf2f8;strokeColor=#f472b6;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="40" y="220" width="2300" height="200" as="geometry"/></mxCell>
+        <mxCell id="dt-l4" value="持久化" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#f9fafb;strokeColor=#9ca3af;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="40" y="420" width="2300" height="140" as="geometry"/></mxCell>
+
+        <mxCell id="dt-session" value="tool.fn()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e8ff;strokeColor=#9333ea;fontSize=13;" vertex="1" parent="dt-l1"><mxGeometry x="80" y="50" width="160" height="50" as="geometry"/></mxCell>
+        <mxCell id="dt-po" value="po.draft" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#db2777;fontSize=12;" vertex="1" parent="dt-l2"><mxGeometry x="320" y="55" width="140" height="50" as="geometry"/></mxCell>
+        <mxCell id="dt-contract" value="contract.read" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#db2777;fontSize=12;" vertex="1" parent="dt-l2"><mxGeometry x="500" y="55" width="140" height="50" as="geometry"/></mxCell>
+        <mxCell id="dt-report" value="report.draft" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#db2777;fontSize=12;" vertex="1" parent="dt-l2"><mxGeometry x="680" y="55" width="140" height="50" as="geometry"/></mxCell>
+        <mxCell id="dt-query" value="data.query" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#db2777;fontSize=12;" vertex="1" parent="dt-l2"><mxGeometry x="860" y="55" width="140" height="50" as="geometry"/></mxCell>
+        <mxCell id="dt-brand" value="brand.search" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#db2777;fontSize=12;" vertex="1" parent="dt-l2"><mxGeometry x="1040" y="55" width="140" height="50" as="geometry"/></mxCell>
+        <mxCell id="dt-tools" value="web_search · translate · MCP …" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#db2777;fontSize=12;" vertex="1" parent="dt-l2"><mxGeometry x="1220" y="55" width="200" height="50" as="geometry"/></mxCell>
+        <mxCell id="dt-po-db" value="purchase_orders …" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3f4f6;strokeColor=#4b5563;fontSize=11;" vertex="1" parent="dt-l4"><mxGeometry x="320" y="50" width="200" height="45" as="geometry"/></mxCell>
+        <mxCell id="dt-contract-db" value="contracts …" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3f4f6;strokeColor=#4b5563;fontSize=11;" vertex="1" parent="dt-l4"><mxGeometry x="540" y="50" width="200" height="45" as="geometry"/></mxCell>
+        <mxCell id="dt-report-db" value="sales_reports …" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3f4f6;strokeColor=#4b5563;fontSize=11;" vertex="1" parent="dt-l4"><mxGeometry x="760" y="50" width="200" height="45" as="geometry"/></mxCell>
+        <mxCell id="dt-rag-db" value="Milvus + brand pages" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3f4f6;strokeColor=#4b5563;fontSize=11;" vertex="1" parent="dt-l4"><mxGeometry x="1000" y="50" width="200" height="45" as="geometry"/></mxCell>
+
+        <mxCell id="dt-e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="dt-session" target="dt-po"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="dt-e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="dt-session" target="dt-contract"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="dt-e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="dt-session" target="dt-report"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="dt-e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="dt-session" target="dt-query"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="dt-e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="dt-session" target="dt-brand"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="dt-e6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="dt-session" target="dt-tools"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="po-flow" name="04 采购单确认与幂等">
+    <mxGraphModel dx="1500" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/><mxCell id="1" parent="0"/>
+        <mxCell id="po-title" value="采购单：模型填槽位，代码定价，用户确认后提交" style="text;html=1;strokeColor=none;fillColor=none;fontSize=22;fontStyle=1;fontColor=#1f2937;" vertex="1" parent="1"><mxGeometry x="40" y="25" width="800" height="36" as="geometry"/></mxCell>
+        <mxCell id="po-user" value="用户 / 聊天" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#eff6ff;strokeColor=#60a5fa;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="40" y="80" width="2100" height="110" as="geometry"/></mxCell>
+        <mxCell id="po-llm" value="LLM 抽取" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#fdf2f8;strokeColor=#f472b6;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="40" y="190" width="2100" height="110" as="geometry"/></mxCell>
+        <mxCell id="po-code" value="po/ 确定性代码" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#fff7ed;strokeColor=#fb923c;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="40" y="300" width="2100" height="180" as="geometry"/></mxCell>
+        <mxCell id="po-confirm" value="确认门" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#f0fdf4;strokeColor=#4ade80;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="40" y="480" width="2100" height="120" as="geometry"/></mxCell>
+        <mxCell id="po-db" value="PostgreSQL" style="swimlane;html=1;horizontal=0;startSize=28;fillColor=#f9fafb;strokeColor=#9ca3af;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="40" y="600" width="2100" height="110" as="geometry"/></mxCell>
+
+        <mxCell id="po-u1" value="下单意图" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;fontSize=13;" vertex="1" parent="po-user"><mxGeometry x="80" y="48" width="140" height="48" as="geometry"/></mxCell>
+        <mxCell id="po-l1" value="merge 到 slot" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#db2777;fontSize=12;" vertex="1" parent="po-llm"><mxGeometry x="280" y="45" width="160" height="48" as="geometry"/></mxCell>
+        <mxCell id="po-c1" value="SKU / 价格 / MOQ / 规则" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;fontSize=12;" vertex="1" parent="po-code"><mxGeometry x="480" y="55" width="200" height="55" as="geometry"/></mxCell>
+        <mxCell id="po-d1" value="通过？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#d97706;fontSize=12;" vertex="1" parent="po-code"><mxGeometry x="720" y="50" width="100" height="65" as="geometry"/></mxCell>
+        <mxCell id="po-missing" value="补 slot" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#dc2626;fontSize=12;" vertex="1" parent="po-code"><mxGeometry x="880" y="55" width="120" height="55" as="geometry"/></mxCell>
+        <mxCell id="po-draft" value="草稿 + confirm token" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;fontSize=12;" vertex="1" parent="po-code"><mxGeometry x="1040" y="55" width="180" height="55" as="geometry"/></mxCell>
+        <mxCell id="po-u2" value="用户点确认" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;fontSize=12;" vertex="1" parent="po-confirm"><mxGeometry x="1040" y="45" width="160" height="55" as="geometry"/></mxCell>
+        <mxCell id="po-submit" value="烧 token · 建单" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;fontSize=12;" vertex="1" parent="po-confirm"><mxGeometry x="1240" y="45" width="140" height="55" as="geometry"/></mxCell>
+        <mxCell id="po-db1" value="orders …" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3f4f6;strokeColor=#4b5563;fontSize=12;" vertex="1" parent="po-db"><mxGeometry x="1240" y="42" width="200" height="48" as="geometry"/></mxCell>
+        <mxCell id="po-note" value="模型不算价、不判规则、不提交订单。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#fb923c;fontSize=11;" vertex="1" parent="1"><mxGeometry x="60" y="740" width="400" height="40" as="geometry"/></mxCell>
+
+        <mxCell id="po-e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="po-u1" target="po-l1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="po-e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="po-l1" target="po-c1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="po-e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="po-c1" target="po-d1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="po-e4" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;dashed=1;strokeColor=#dc2626;html=1;endArrow=block;" edge="1" parent="1" source="po-d1" target="po-missing"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="po-e5" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="po-d1" target="po-draft"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="po-e6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="po-draft" target="po-u2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="po-e7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="po-u2" target="po-submit"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="po-e8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="po-submit" target="po-db1"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

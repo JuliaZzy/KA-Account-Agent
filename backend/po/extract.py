@@ -1,8 +1,7 @@
 """一轮里的第一次调用：结构化抽取（不流式，温度 0）。
 
 阅读消息和历史，合并进固定的槽位模板。模型绝不决定采购单需要哪些字段（slots.py），
-也不做任何校验（check.py）。它抽出的 `user_confirmed` 只留档，故意不据此行动——
-在 llama3.2:3b 上测过，「谢谢」「好的」「可以」「听起来不错」都会返回 true。
+也不做任何校验（check.py）。提交只走 UI 确认按钮，不由抽取字段触发。
 """
 
 from __future__ import annotations
@@ -62,10 +61,9 @@ EXTRACT_SCHEMA: dict[str, Any] = {
             "discount_kind": {"type": ["string", "null"]},
             "discount_value": {"type": ["number", "null"]},
             "notes": {"type": ["string", "null"]},
-            "user_confirmed": {"type": "boolean"},
             "reply_language": {"type": "string"},
         },
-        "required": ["line_items", "user_confirmed", "reply_language"],
+        "required": ["line_items", "reply_language"],
     },
 }
 
@@ -137,7 +135,6 @@ def normalize_slots(raw: dict[str, Any]) -> PoSlots:
 @dataclass
 class Extraction:
     slots: PoSlots
-    user_confirmed: bool
     reply_language: str
 
 def extract_turn(
@@ -176,6 +173,5 @@ def extract_turn(
     lang = raw.get("reply_language")
     return Extraction(
         slots=normalize_slots(raw),
-        user_confirmed=raw.get("user_confirmed") is True,
         reply_language=lang.strip() if isinstance(lang, str) and lang.strip() else "English",
     )

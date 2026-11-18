@@ -244,7 +244,7 @@ def ledger(db, run_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
 
 async def wait_for_reply(client, base, sid, uid, t0, timeout) -> list | None:
     while time.monotonic() - t0 < timeout:
-        h = await client.get(f"{base}/api/sessions/{sid}")
+        h = await client.get(f"{base}/api/sessions/{sid}", params={"user_id": uid})
         h.raise_for_status()
         history = h.json().get("history") or []
         if any(isinstance(x, dict) and x.get("role") == "assistant" for x in history):
@@ -265,7 +265,9 @@ async def run_one(client, base, case, repeat, args, db, *, slot: int = 0) -> dic
         r = await client.post(f"{base}/api/sessions", json={"partnership_id": ps, "user_id": uid})
         r.raise_for_status()
         sid = r.json()["id"]
-        r = await client.post(f"{base}/api/sessions/{sid}/message", json={"message": case["input"]})
+        r = await client.post(
+            f"{base}/api/sessions/{sid}/message", params={"user_id": uid}, json={"message": case["input"]},
+        )
         r.raise_for_status()
         run_id = r.json().get("run_id")
         res.update(session_id=sid, run_id=run_id)

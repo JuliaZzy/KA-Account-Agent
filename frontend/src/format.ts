@@ -34,7 +34,7 @@ export function activitiesFromEvents(raw: unknown, status?: string): Activity[] 
     }];
   });
   rows.sort((a, b) => a.sequence - b.sequence);
-  const moving = status === "queued" || status === "running";
+  const moving = status === "running";
   return rows.map((row, index) => ({
     id: row.id,
     title: row.title,

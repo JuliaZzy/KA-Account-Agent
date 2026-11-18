@@ -1,22 +1,29 @@
 # Run 运行时
 
-一次用户动作对应一条 run。HTTP 只负责把这条 run 写进数据库并交给队列，模型和工具在 worker 里跑。页面看到的进度来自已经提交的事件。关掉页面只停本地的事件流，worker 继续跑。
+#### 目标：可监控、可重试、中断之后能接着做，副作用不丢、也不发第二次。
 
-聊天回合如何拆成 PLAN、子 run、按波入队、再交给 ANSWER，见 [orchestrator.md](orchestrator.md)。`parent_run_id` 只表示重跑，不是调度边。
-
-目标是：可监控、可重试、中断之后能接着做，副作用不丢、也不发第二次。
-
-采购单的价格、SKU、MOQ 和商业规则由 `backend/po/` 计算。模型只把对话填进固定槽位。建单前先烧掉 confirm token。业务数据按表、列和外键存放。
+1. 一次用户动作对应一条 run。
+2. HTTP 只负责把这条 run 写进数据库并交给队列，模型和工具的执行在 worker 里跑。
+3. 页面进度来自 PG 库已经提交的事件，通过 SSE 推送给前端，关掉页面只停本地的事件流，后端 worker 会继续工作。
+4. 聊天回合的拆分和回复详情，见 [orchestrator.md](orchestrator.md)。
+5. 叙述版时间线见 [chat-flow.md](chat-flow.md)。`parent_run_id` 只表示重跑，不是调度边。
+6. **模型与确定性代码分层**（编排理解，执行与裁决由代码或人工完成）：模型负责理解、抽取和叙述；价格、规则、SQL、副作用入库和可复算数字不由模型拍板。业务数据按表、列和外键存放。
+   - **采购（`backend/po/`）**：模型填写的槽位固定（产品说法、箱数、折扣意图等）。目录解析、行价、MOQ、订单总额、`rules.py` 商业规则评估、以及 `check.py` 的 `ready` 闸门，全部由确定性代码完成；语义 SKU 回退（`resolver.py`）只能从目录里选真实 SKU。聊天里的 `po.draft` 只改会话草稿；**页面 `confirm_order` + `burn_confirm_token` 之后**的 `submit.py` 建单路径不再调模型，并把规则快照写入提交记录。
+   - **业务查询 Text2SQL（`backend/text2sql/`）**：模型产 SQL；`sql_validator.py` 解析后只放行单条只读 `SELECT`/`UNION`，拒绝写操作与越权构造，并封顶 `LIMIT`/`OFFSET`。语句只在已滤到当前合作关系的视图/表元数据上执行，且在**总是回滚**的事务里跑，结果不上墙。模型负责自然语言答案，不充当执行引擎。
+   - **报表（`backend/report/`）**：整洁销售表导入（`spreadsheet.py`）靠列名词汇与 `coerce_numeric` 映射，**不经模型落数**；事实进 draft，人在报表页确认后才入 live。叙述草稿走 `report.draft`，确认前不写库。指标 SQL（`metrics.py`/`charts.py`）、正文数字证据（`analyze.py` 发现项与风险标记）、起草前确定性检查（`check.py`），以及模型生成的短分析片段（`wizard.py`：AST 禁导入、受限 builtins、`python -I` 子进程、超时），把可引用数字锁在代码侧。保存叙述报告走用户编辑后的 `confirm_report`。
+   - **合同（`backend/contract/`）**：`contract.read` 只做阅读与抽取，**浮窗确认前不入库**；`confirm.py` 合并用户在面板改过的条款后写入，供采购定价与折扣规则引用。
+   - **聊天侧效应与权限**：`send_email` 与 MCP 工具标为副作用，执行前 `waiting_for_user`；参数还过 JSON schema 校验，发信前核对用户属于本条 run 的经销商。工具幂等键与 confirm token 避免重试双发。`memory.fold`、`document.ocr` 由代码按预算/流程触发，不是模型点选的工具。
 
 ## 一次消息
 
 ```
 POST /message
   → create_agent_run          同一事务：agent_runs + run.created + outbox execute_run
-  → dispatch_pending          把到期的 outbox 交给 Celery
+  → dispatch_pending          `_publish`把`execute_run`推进 Redis 队列，
+  → mark_outbox_dispatched    把 outbox 标记为 `dispatched`
   → 返回 run_id                到这里结束
 
-Celery execute_run（测试里直接调 work_chat）
+Celery execute_run
   → 领 agent_runs 的租约，状态改为 running
   → 父 chat run：PLAN → 按波入队子 run → waiting_for_tasks
        一波到齐后重新 queued，再领一次做下一波或 ANSWER
@@ -34,9 +41,13 @@ Celery execute_run（测试里直接调 work_chat）
   → 点停止走取消接口
 ```
 
-建 run 在 `backend/services/chat_run.py` 的 `enqueue_chat_run`，事务在 `create_agent_run`。worker 入口是 `backend/celery/worker.py`，任务是 `execute_run`，循环是 `backend/services/run_loop.py`。
+建 run 在 `backend/services/chat_run.py` 的 `enqueue_chat_run`，事务在 `create_agent_run`。worker 入口是 `backend/celery/tasks.py` 的 `execute_run`，聊天执行是 `execute_chat`（编排 + `task_run`）。
 
-发出 Celery 消息和把 outbox 标成 `dispatched` 是两个事务。中间崩溃时，清扫会再投一次。挡住重复执行的是后面的租约、checkpoint 和幂等键。
+**投递重复**（outbox 已进 Celery 但 `dispatched` 没写上、sweeper 重投等）：队列里可能有两条相同 `run_id`。`claim_chat_turn` 只认 `queued` + 行锁，先抢到者改 `running` 并写租约（默认 10 分钟），再跑 `execute_chat`；后者 `claim` 失败则 **不执行、直接 ack**（终态 run 在 `claim` 前就会跳过）。同一 `run_id` 一般只有一个人在跑。
+
+**排队但暂时领不到**（`GateFull` / 同会话 `SessionBusy` / 队列关等 `SoftBusy`）：run 仍是 `queued`，Celery **`retry` 且不 ack**，任务暂存在 worker 内存里，Redis 队列可能为空。sweeper 会误以为消息丢了或排队过久，所以在每次 `retry` 前写 **`queue_heartbeat_at`**；清扫用 `max(queued_at, queue_heartbeat_at)` 判断「还活着」，合法等待不补投、不判 `STUCK_QUEUE_EXPIRED`。详见 [retry.md](retry.md)。
+
+**已经跑过一半再进来**（worker 丢、租约过期后重领、checkpoint 续跑）：循环读 checkpoint；工具步按幂等键查 `tool_calls`，已有成功结果则复用、副作用不再发第二次。发信和 MCP 靠业务键防撞。worker 挂在 `running` 且租约过期时，sweeper 打回 `queued` 并再写 outbox；`reject_on_worker_lost` 可让 broker 再投一条，与上面 claim / checkpoint 叠在一起。
 
 ## 状态
 
@@ -56,7 +67,7 @@ queued → running → waiting_for_tasks → queued（一波子 run 到齐）
 
 工具函数不写 `run.status`。循环只在需要确认时调用 `mark_waiting_for_user`。领跑、成功、失败、取消、重试和死信由 `backend/services/run_worker.py` 经 `_transition` 完成。
 
-同一次提交里写状态、公开事件和需要的 `audit_logs`。`_append_event` 先 `SELECT … FOR UPDATE` 锁住这条 run，再取 `max(sequence)`。同一事务 `NOTIFY run_events`，载荷只有 `run_id`。通知失败不回滚事件。
+同一次提交里写状态、公开事件和需要的 `audit_logs`。`_append_event` 先 `SELECT … FOR UPDATE` 锁住这条 run，再取 `max(sequence)`。同一事务 `NOTIFY run_events`，载荷只有 `run_id`。若执行 pg_notify 出错，子事务回滚，外面的事务仍然正常提交，状态变更和 run_events 正常修改成功。15s 后还会去表里拉一次，按照 sequence 继续推送未推送的事件流。
 
 ## 记在哪
 
@@ -97,6 +108,20 @@ Run 接口只认 `X-User-Id`。用它查出 `users` 行，`org_id` 取 `distribu
 `GET /runs/{id}/events/stream` 先把已落库的行推完，再 `LISTEN run_events`。通知到达，或 15 秒心跳到达，就按当前 `sequence` 再查一次。没有新行就发 `: heartbeat`，不占序号。一条 SSE 是 `id`（sequence）、`event`（event_type）、`data`（公开 payload）。`run.completed`、`run.failed`、`run.cancelled` 推出后关闭。`run.waiting_for_user` 不关闭。这条流不调模型、不调工具、不改状态。
 
 正在生成的正文在 `output_json.text`，每次更新同时写一条 `run.reply_updated`，payload 带 `text` 和 `generation_id`。模型返回的 `reasoning_content` 写在对应 `model_calls.response_json.reasoning`，公开事件会隐藏它。
+
+### 页面语义：`run.created` 不保证一定会执行
+
+`run.created` 和 `agent_runs` 行在同一事务里提交。只要 `POST /message` 成功，事件流就能订到这一条；此时状态是 `queued`，且**没有**面向用户的 `display`（聊天步骤条不展示入队）。这不代表 Celery 已经收到任务，更不代表 worker 已经跑 PLAN 或模型。
+
+真正执行要经过：outbox `dispatch_pending` 把消息投到 broker → worker `execute_run` 领到租约 → 状态 `running` 时写入公开事件 `run.started`（「正在运行」）。发布消息和把 outbox 标成 `dispatched` 是两个事务，中间崩溃时 sweeper 会再扫 pending outbox。
+
+若 **dispatcher 一直发不出去**（broker 挂了、队列关着等），`mark_outbox_retry` 会按指数退避重试；超过 outbox 的 `max_attempts`（默认 10）时，同一事务里 outbox 进 `failed`、写入 `dead_letter_jobs`，仍停在 `queued` 的 run 会先过 `running` 再 `failed`，公开 `run.failed`（「这次没有完成」）。监控页和 `/trace` 里的 `dead_letter_jobs` 是运维兜底，不能指望用户自己翻 trace。
+
+若 **消息丢了或 worker 一直不来**，run 可以长时间只有 `run.created`、步骤条仍为空。sweeper 每 15 秒扫：pending outbox 再投；已 `dispatched` 且 broker 队列空闲时补投（有次数上限）；超过默认 2 小时或补投耗尽则 `failed` 并进死信，错误码 `STUCK_QUEUE_EXPIRED` / `STUCK_REDISPATCH_EXHAUSTED`。outbox 已送出且 run 仍 `queued` 超过 10 分钟时，库内记**内部**事件 `run.queue_stale`（不进聊天时间线）。
+
+注意：失败清扫为了不改状态机边，有时会把 `queued` 先切到 `running` 再 `failed`，因此可能出现公开 `run.started` 紧挨 `run.failed`，但 worker 从未执行过业务代码。UI 上「正在运行」表示状态机过了一个关口，不等于模型已调用。
+
+聊天页 `followRun` 每约 800ms 轮询 `GET /runs/{id}`，`failed` / `cancelled` / `succeeded` 会结束等待；终态仍以公开 `run.failed` / `run.cancelled` 为准。用户界面不暴露 Celery 排队语义。
 
 | | 取消 | 断连 |
 |---|---|---|

@@ -27,6 +27,12 @@ export function postJson<T>(path: string, body: unknown): Promise<T> {
   });
 }
 
+/** Append the desk user. Permission checks reject a request that omits it. */
+export function withUser(path: string, userId: string): string {
+  const join = path.includes("?") ? "&" : "?";
+  return `${path}${join}user_id=${encodeURIComponent(userId)}`;
+}
+
 export function postForm<T>(path: string, file: File, fields: Record<string, string>): Promise<T> {
   const body = new FormData();
   body.append("file", file);
@@ -232,10 +238,11 @@ export async function followRun(
 
 export function createChatRun(
   sid: string,
+  userId: string,
   body: unknown,
   signal?: AbortSignal,
 ): Promise<{ run_id: string }> {
-  return api<{ run_id: string }>(`/api/sessions/${sid}/message`, {
+  return api<{ run_id: string }>(withUser(`/api/sessions/${sid}/message`, userId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

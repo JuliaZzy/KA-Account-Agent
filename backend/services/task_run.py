@@ -64,7 +64,7 @@ def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
             db.finish_step(step_id, StepStatus.FAILED, None, {"message": result["error"]})
         return _settle(db, run, result)
 
-    # Planned side effects run outside run_loop.execute_tool. Reserve their
+    # Planned side effects reserve their idempotency seat here, not in the test harness.
     # idempotency seat before entering the handler, so a lease retry can tell
     # "the call may have escaped" from "the process died before the call".
     claimed_id: str | None = None

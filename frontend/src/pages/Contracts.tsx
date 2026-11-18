@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { api, postForm } from "../api";
+import { api, postForm, withUser } from "../api";
 import { NeedPartnership, useDesk } from "../desk";
 import { shortDate, trimNum } from "../format";
 import { Badge, DataTable, Metrics, PageHead, Tabs } from "../ui";
@@ -43,6 +43,7 @@ export function Contracts() {
 function ContractsDesk() {
   const { partnership, user } = useDesk();
   const p = partnership!;
+  const userId = user?.id ?? "";
   const [rows, setRows] = useState<Contract[]>([]);
   const [pick, setPick] = useState("");
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -54,7 +55,8 @@ function ContractsDesk() {
   const [busy, setBusy] = useState(false);
 
   async function loadList(selectId?: string) {
-    const list = await api<Contract[]>(`/api/partnerships/${p.id}/contracts`);
+    if (!userId) return;
+    const list = await api<Contract[]>(withUser(`/api/partnerships/${p.id}/contracts`, userId));
     setRows(list);
     const id = selectId && list.some((row) => row.id === selectId) ? selectId : list[0]?.id ?? "";
     setPick(id);
@@ -63,12 +65,13 @@ function ContractsDesk() {
   useEffect(() => {
     loadList().catch((err: Error) => setError(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p.id]);
+  }, [p.id, userId]);
 
   useEffect(() => {
     if (!pick) { setDetail(null); return; }
-    api<Detail>(`/api/contracts/${pick}`).then(setDetail).catch((err: Error) => setError(err.message));
-  }, [pick]);
+    if (!userId) return;
+    api<Detail>(withUser(`/api/contracts/${pick}`, userId)).then(setDetail).catch((err: Error) => setError(err.message));
+  }, [pick, userId]);
 
   async function importFile() {
     if (!file) return;
@@ -79,7 +82,7 @@ function ContractsDesk() {
       const saved = await postForm<{ id: string; title: string; discount_rules: number; po_rules: number; skipped: string[] }>(
         `/api/partnerships/${p.id}/contracts`,
         file,
-        { title, user_id: user?.id ?? "" },
+        { title, user_id: userId },
       );
       setNotice(`Imported ${saved.title}: ${saved.discount_rules} discount rule(s), ${saved.po_rules} PO rule(s).${saved.skipped.length ? ` Skipped: ${saved.skipped.join("; ")}` : ""}`);
       setFile(null);

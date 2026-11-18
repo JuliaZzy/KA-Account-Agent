@@ -101,7 +101,7 @@ def test_po_extract_is_recorded_on_the_chat_run(db):
             {"tasks": [{"id": "p", "kind": "agent", "name": "po", "input": {}, "depends_on": []}]},
             {
                 "line_items": [{"reference": "fish oil", "cases": 10, "sku": "FO-100"}],
-                "discount_kind": "none", "user_confirmed": False, "reply_language": "English",
+                "discount_kind": "none", "reply_language": "English",
             },
         ],
         text_reply="All set — press Confirm.",

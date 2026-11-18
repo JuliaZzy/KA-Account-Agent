@@ -12,7 +12,7 @@ from backend.schemas import CommercialRule
 
 EXTRACT_OK = {
     "line_items": [{"reference": "fish oil", "cases": 10, "sku": None}],
-    "discount_kind": "none", "user_confirmed": False, "reply_language": "English",
+    "discount_kind": "none", "reply_language": "English",
 }
 
 
@@ -103,9 +103,3 @@ def test_extraction_failure_keeps_previous_slots(db):
     assert events[-1]["slots"]["line_items"][0]["sku"] == "FO-100"
 
 
-def test_model_user_confirmed_is_never_acted_on(db):
-    # "thanks" → user_confirmed=true on small models. Nothing is placed without the button.
-    llm = FakeLLM(json_replies=[{**EXTRACT_OK, "user_confirmed": True}], text_reply="ok")
-    s = db.create_session("s1", "ps-1")
-    list(run_po_turn(db, llm, load_bundle(db, "ps-1"), s, "10 cases of fish oil, no discount, thanks!"))
-    assert db.list_pos() == [] and db.session("s1")["stage"] == "confirm"

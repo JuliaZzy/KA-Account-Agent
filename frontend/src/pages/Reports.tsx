@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { api, postForm } from "../api";
+import { api, postForm, withUser } from "../api";
 import { NeedPartnership, useDesk } from "../desk";
 import {
   lastMonth,
@@ -61,8 +61,9 @@ export function Reports() {
 }
 
 function ReportsDesk() {
-  const { partnership } = useDesk();
+  const { partnership, user } = useDesk();
   const p = partnership!;
+  const userId = user?.id ?? "";
   const [rows, setRows] = useState<Report[]>([]);
   const [narratives, setNarratives] = useState<Narrative[]>([]);
   const [narrativeId, setNarrativeId] = useState("");
@@ -81,11 +82,12 @@ function ReportsDesk() {
   const [busy, setBusy] = useState(false);
 
   async function refresh(selectId?: string) {
+    if (!userId) return;
     const [list, confirmed, placed, writes] = await Promise.all([
-      api<Report[]>(`/api/partnerships/${p.id}/reports`),
-      api<FactRow[]>(`/api/partnerships/${p.id}/facts`),
-      api<Order[]>(`/api/orders?partnership_id=${encodeURIComponent(p.id)}`),
-      api<Narrative[]>(`/api/partnerships/${p.id}/narratives`),
+      api<Report[]>(withUser(`/api/partnerships/${p.id}/reports`, userId)),
+      api<FactRow[]>(withUser(`/api/partnerships/${p.id}/facts`, userId)),
+      api<Order[]>(withUser(`/api/orders?partnership_id=${encodeURIComponent(p.id)}`, userId)),
+      api<Narrative[]>(withUser(`/api/partnerships/${p.id}/narratives`, userId)),
     ]);
     setRows(list);
     setNarratives(writes);
@@ -99,14 +101,15 @@ function ReportsDesk() {
   useEffect(() => {
     refresh().catch((err: Error) => setError(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p.id]);
+  }, [p.id, userId]);
 
   useEffect(() => {
     if (!pick) { setFacts([]); setRuns([]); return; }
-    api<{ facts: FactRow[]; extractions: Extraction[] }>(`/api/reports/${pick}`)
+    if (!userId) return;
+    api<{ facts: FactRow[]; extractions: Extraction[] }>(withUser(`/api/reports/${pick}`, userId))
       .then((body) => { setFacts(body.facts); setRuns(body.extractions); })
       .catch((err: Error) => setError(err.message));
-  }, [pick]);
+  }, [pick, userId]);
 
   async function analyze(save: boolean) {
     if (!file) return;
@@ -114,9 +117,9 @@ function ReportsDesk() {
     setError(null);
     try {
       if (!save) {
-        setPreview(await postForm<Preview>(`/api/partnerships/${p.id}/reports/preview`, file, { period, matrix }));
+        setPreview(await postForm<Preview>(`/api/partnerships/${p.id}/reports/preview`, file, { period, matrix, user_id: userId }));
       } else {
-        const saved = await postForm<Report>(`/api/partnerships/${p.id}/reports`, file, { period, matrix, title });
+        const saved = await postForm<Report>(`/api/partnerships/${p.id}/reports`, file, { period, matrix, title, user_id: userId });
         setPreview(null);
         setFile(null);
         await refresh(saved.id);
@@ -130,7 +133,7 @@ function ReportsDesk() {
 
   async function confirm() {
     if (!pick) return;
-    const out = await postFormSafe(() => api<{ confirmed: number; superseded: number }>(`/api/reports/${pick}/confirm`, { method: "POST" }));
+    const out = await postFormSafe(() => api<{ confirmed: number; superseded: number }>(withUser(`/api/reports/${pick}/confirm`, userId), { method: "POST" }));
     if (!out) return;
     setToast(`Confirmed ${out.confirmed} facts${out.superseded ? `, superseded ${out.superseded}` : ""}`);
     await refresh(pick);
@@ -138,7 +141,7 @@ function ReportsDesk() {
 
   async function remove() {
     if (!pick) return;
-    await api(`/api/reports/${pick}`, { method: "DELETE" });
+    await api(withUser(`/api/reports/${pick}`, userId), { method: "DELETE" });
     setPick("");
     await refresh();
   }

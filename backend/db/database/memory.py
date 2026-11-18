@@ -37,6 +37,11 @@ class MemoryMixin:
                 q = q.where(orm.Memory.is_active.is_(True))
             return [Memory(**_row_dict(r)) for r in s.scalars(q.order_by(orm.Memory.id.desc())).all()]
 
+    def memory(self, id: int) -> Memory | None:
+        with self.tx() as s:
+            row = s.get(orm.Memory, id)
+            return Memory(**_row_dict(row)) if row else None
+
     def set_memory_active(self, id: int, active: bool) -> None:
         with self.tx() as s:
             row = s.get(orm.Memory, id)

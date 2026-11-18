@@ -666,7 +666,8 @@ def test_reflection_keeps_the_best_of_three_scores(db, monkeypatch):
 
 def test_data_feedback_endpoint_stamps_the_session_and_rejects_another(db, monkeypatch):
     db.insert_po(_po(), [], [])
-    db.create_session("sess-rate", "ps-1")
+    db.upsert_user("u-a", "dist-1", "Ada")
+    db.create_session("sess-rate", "ps-1", "u-a")
     _models(monkeypatch, [
         {"tables": ["purchase_orders"]},
         {"sql": "SELECT total_amount FROM purchase_orders"},
@@ -683,13 +684,13 @@ def test_data_feedback_endpoint_stamps_the_session_and_rejects_another(db, monke
         {"role": "user", "content": "order total"},
         {"role": "assistant", "content": "1000", "data_query": {"log_id": result.log_id, "ok": True}},
     ])
-    other = db.create_session("sess-other", "ps-1")["id"]
+    other = db.create_session("sess-other", "ps-1", "u-a")["id"]
     client = TestClient(create_app(db, FakeLLM()))
-    denied = client.post(f"/api/sessions/{other}/data-feedback", json={
+    denied = client.post(f"/api/sessions/{other}/data-feedback", params={"user_id": "u-a"}, json={
         "log_id": result.log_id, "feedback": "bad",
     })
     assert denied.status_code == 404
-    saved = client.post("/api/sessions/sess-rate/data-feedback", json={
+    saved = client.post("/api/sessions/sess-rate/data-feedback", params={"user_id": "u-a"}, json={
         "log_id": result.log_id,
         "feedback": "bad",
         "reason": "used the wrong column",

@@ -59,7 +59,7 @@ def test_bundle_carries_memories_in_the_operating_context(db):
 def test_po_turn_prompts_see_the_memory(db):
     remember(db, "ps-1", "They order in full layers only", kind="preference")
     llm = FakeLLM(json_replies=[
-        {"line_items": [{"reference": "fish oil", "cases": 10, "sku": None}], "discount_kind": "none", "user_confirmed": False, "reply_language": "English"},
+        {"line_items": [{"reference": "fish oil", "cases": 10, "sku": None}], "discount_kind": "none", "reply_language": "English"},
     ])
     sid = service.new_session(db, "ps-1")["id"]
     events = list(run_po_turn(

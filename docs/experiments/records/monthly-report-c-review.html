@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>月报：这条对话里改了什么</title>
+<style>
+  :root {
+    --text: #141414;
+    --text-2: rgba(20, 20, 20, 0.74);
+    --text-3: rgba(20, 20, 20, 0.60);
+    --surface: #f7f7f5;
+    --elevated: #ffffff;
+    --fill: rgba(20, 20, 20, 0.06);
+    --fill-2: rgba(20, 20, 20, 0.08);
+    --stroke: rgba(20, 20, 20, 0.12);
+    --stroke-2: rgba(20, 20, 20, 0.08);
+    --info: #2e79b5;
+    --info-bg: rgba(46, 121, 181, 0.10);
+    --success: #1f8a65;
+    --success-bg: rgba(31, 138, 101, 0.10);
+    --warning: #c06028;
+    --warning-bg: rgba(192, 96, 40, 0.10);
+    --neutral-bg: rgba(20, 20, 20, 0.05);
+    --bar-info: #2e79b5;
+    --bar-success: #1f8a65;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --text: #f0f0f0;
+      --text-2: rgba(240, 240, 240, 0.74);
+      --text-3: rgba(240, 240, 240, 0.60);
+      --surface: #181818;
+      --elevated: #1e1e1e;
+      --fill: rgba(240, 240, 240, 0.08);
+      --fill-2: rgba(240, 240, 240, 0.10);
+      --stroke: rgba(240, 240, 240, 0.16);
+      --stroke-2: rgba(240, 240, 240, 0.10);
+      --info-bg: rgba(46, 121, 181, 0.18);
+      --success-bg: rgba(31, 138, 101, 0.18);
+      --warning-bg: rgba(192, 96, 40, 0.18);
+      --neutral-bg: rgba(240, 240, 240, 0.06);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Segoe UI", sans-serif;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .page {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 32px 28px 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+  h1 { font-size: 24px; font-weight: 650; letter-spacing: -0.02em; margin: 0; line-height: 1.3; }
+  h2 { font-size: 18px; font-weight: 650; margin: 0; }
+  h3 { font-size: 14px; font-weight: 650; margin: 0; }
+  p { margin: 0; }
+  .muted { color: var(--text-2); }
+  .small { font-size: 12px; color: var(--text-3); margin-top: 6px; }
+  .stack { display: flex; flex-direction: column; }
+  .gap-6 { gap: 6px; }
+  .gap-8 { gap: 8px; }
+  .gap-10 { gap: 10px; }
+  .grid { display: grid; gap: 16px; }
+  .cols-2 { grid-template-columns: 1fr 1fr; }
+  .cols-4 { grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .stat {
+    background: var(--fill);
+    border: 1px solid var(--stroke-2);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .stat .value { font-size: 20px; font-weight: 650; letter-spacing: -0.03em; line-height: 1.2; }
+  .stat .label { font-size: 12px; color: var(--text-2); margin-top: 4px; }
+  .tone-success { color: var(--success); }
+  .tone-warning { color: var(--warning); }
+  .tone-info { color: var(--info); }
+  .callout {
+    border: 1px solid var(--stroke);
+    border-radius: 8px;
+    padding: 12px 14px 14px;
+    background: var(--info-bg);
+  }
+  .callout.neutral { background: var(--neutral-bg); }
+  .callout.success { background: var(--success-bg); }
+  .callout .title { font-weight: 650; margin-bottom: 4px; }
+  hr {
+    border: 0;
+    border-top: 1px solid var(--stroke);
+    margin: 0;
+  }
+  .card {
+    background: var(--elevated);
+    border: 1px solid var(--stroke);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .card-h {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    font-weight: 650;
+    border-bottom: 1px solid var(--stroke-2);
+  }
+  .card-b { padding: 12px 14px 14px; }
+  .pill {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--fill-2);
+    color: var(--text-2);
+    white-space: nowrap;
+  }
+  details.section {
+    border: 1px solid var(--stroke);
+    border-radius: 8px;
+    background: var(--elevated);
+    padding: 0 0 4px;
+  }
+  details.section > summary {
+    cursor: pointer;
+    list-style: none;
+    font-weight: 650;
+    padding: 12px 14px;
+  }
+  details.section > summary::-webkit-details-marker { display: none; }
+  details.section > summary::before {
+    content: "";
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-right: 1.5px solid var(--text-2);
+    border-bottom: 1.5px solid var(--text-2);
+    transform: rotate(-45deg);
+    margin-right: 8px;
+    margin-bottom: 2px;
+  }
+  details.section[open] > summary::before { transform: rotate(45deg); margin-bottom: 4px; }
+  .table-wrap { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--stroke-2);
+    vertical-align: top;
+  }
+  th { color: var(--text-2); font-weight: 600; font-size: 12px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.row-warning { background: var(--warning-bg); }
+  tr.row-info { background: var(--info-bg); }
+  tr.row-success { background: var(--success-bg); }
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .chart { display: flex; flex-direction: column; gap: 6px; }
+  .bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    height: 220px;
+    padding: 8px 4px 0;
+    border-bottom: 1px solid var(--stroke);
+  }
+  .col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    height: 100%;
+    min-width: 0;
+  }
+  .col .n {
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+  .col .bar {
+    width: 100%;
+    max-width: 48px;
+    border-radius: 3px 3px 0 0;
+  }
+  .col .cat {
+    font-size: 11px;
+    color: var(--text-3);
+    margin-top: 8px;
+    text-align: center;
+    line-height: 1.3;
+  }
+  .bar.info { background: var(--bar-info); }
+  .bar.ok { background: var(--bar-success); }
+  @media (max-width: 800px) {
+    .stats, .cols-2, .cols-4, .charts { grid-template-columns: 1fr; }
+    .page { padding: 20px 16px 36px; }
+  }
+  @media print {
+    body { background: #fff; }
+    .page { max-width: none; padding: 12mm; }
+    details.section { break-inside: avoid; }
+    .card, .callout, .stat { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="stack gap-8">
+    <h1>月报：这条对话里改了什么</h1>
+    <p class="muted">实验室 seed_v2，金标硬检查，没有 LLM-as-a-Judge。C 的墙钟/费用和空月诚实闸分开记账；默认 聊天 worker 仍是 5。数字来自记录 25–35。</p>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="value tone-success">225→202 s</div><div class="label">改前→当前 月报中位</div></div>
+    <div class="stat"><div class="value tone-success">¥1.67→0.64</div><div class="label">改前→当前 50 次成本</div></div>
+    <div class="stat"><div class="value tone-warning">35/37</div><div class="label">当前全量金标（C8 为 37/37）</div></div>
+    <div class="stat"><div class="value tone-info">152 s</div><div class="label">C 刀刚收完的月报中位（DeepSeek 审阅）</div></div>
+  </div>
+
+  <div class="callout">
+    <div class="title">先分清两件事</div>
+    完整月报原来根本没生成完（每 Run 只许 2 次调用），所以早期「报表 15–60 秒、¥0.02」不是月报。 后面 C 刀是在「真的写完六节 + 审阅」上砍墙钟；空月饼图和聊天第一句是质量，不并进 C 对比。
+  </div>
+
+  <div class="stack gap-10">
+    <h2>怎么评估、怎么选</h2>
+    <div class="grid cols-2">
+      <div class="stack gap-8">
+        <h3>硬约束</h3>
+        <p>价格、SKU、MOQ 仍由代码算。月报这条线上，模型只负责规划问题、写正文和审阅；绑哪张图、空结果画不画、点名月份有没有数，都改成代码判定。</p>
+        <p>先量再改。C 之前补记漏掉的四节正文（约 ¥0.016–0.021），否则「合并调用」会看起来像假降。一次一两刀，单测 → 冒烟 → 再混跑。</p>
+      </div>
+      <div class="stack gap-8">
+        <h3>平衡口径</h3>
+        <p>墙钟看混跑中位和轻任务排队，不拿单次失败重试当刀无效。质量题（假饼、开口）单独冒烟，不写进 C 的秒数差。</p>
+        <p>生产默认不抬：Worker=5、GATE_USER=5、GATE_ORG=10。要打满组织闸门就改提供负载，不把上限改成 30/50。月报本身就长，审阅可以更慢换更便宜。</p>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <div class="stack gap-8">
+    <h2>混跑效果（C 归因，不含诚实闸 / Qwen）</h2>
+    <p class="muted">同一套 50 次：32 pre + 18 post，客户端并发 10，超时 300 s。完整月报 = rpt-01 / rpt-07 / plan-02 各 2 次。</p>
+    <div class="charts">
+      <div class="chart">
+        <h3>完整月报中位墙钟（秒）</h3>
+        <div class="bars" aria-label="月报 P50（秒）">
+          <div class="col"><span class="n">225 s</span><div class="bar info" style="height:100%"></div><span class="cat">D W=5</span></div>
+          <div class="col"><span class="n">174 s</span><div class="bar info" style="height:77.3%"></div><span class="cat">C 刀 0–4</span></div>
+          <div class="col"><span class="n">152 s</span><div class="bar info" style="height:67.6%"></div><span class="cat">C 刀 5–8</span></div>
+          <div class="col"><span class="n">128 s</span><div class="bar info" style="height:56.9%"></div><span class="cat">W=12 三用户</span></div>
+          <div class="col"><span class="n">202 s</span><div class="bar info" style="height:89.8%"></div><span class="cat">当前</span></div>
+        </div>
+        <p class="small">纵轴：端到端中位秒。横轴：实验阶段。来源：记录 26 / 29 / 30 / 31 / 35。W=12 只为打满 GATE_ORG，跑完已收回 Worker=5。当前含 Qwen 审阅，月报 P50 的 n=5（一次超时未计入）。</p>
+      </div>
+      <div class="chart">
+        <h3>混跑吞吐（次/分）</h3>
+        <div class="bars" aria-label="吞吐（次/分）">
+          <div class="col"><span class="n">8.06</span><div class="bar ok" style="height:52.9%"></div><span class="cat">D W=5</span></div>
+          <div class="col"><span class="n">8.57</span><div class="bar ok" style="height:56.3%"></div><span class="cat">C 刀 0–4</span></div>
+          <div class="col"><span class="n">10.42</span><div class="bar ok" style="height:68.4%"></div><span class="cat">C 刀 5–8</span></div>
+          <div class="col"><span class="n">15.23</span><div class="bar ok" style="height:100%"></div><span class="cat">W=12 三用户</span></div>
+          <div class="col"><span class="n">7.56</span><div class="bar ok" style="height:49.6%"></div><span class="cat">当前</span></div>
+        </div>
+        <p class="small">纵轴：完成次数/分。横轴：同上。Worker=5 上的收益来自月报少占座位；W=12 的收益来自组织闸门真的到 10。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>阶段</th>
+          <th class="num">吞吐</th>
+          <th class="num">月报 P50</th>
+          <th class="num">轻任务 P50</th>
+          <th class="num">50 次成本</th>
+          <th>读法</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="row-warning">
+          <td>残缺月报（记录 24）</td>
+          <td class="num">22–24 快路径</td>
+          <td class="num">15–60 s</td>
+          <td class="num">—</td>
+          <td class="num">约 ¥0.02/份</td>
+          <td>洞察/审阅被拒，不能当月报</td>
+        </tr>
+        <tr>
+          <td>预算放宽后 D W=5</td>
+          <td class="num">8.06</td>
+          <td class="num">225 s</td>
+          <td class="num">22.1 s</td>
+          <td class="num">¥1.67</td>
+          <td>完整月报基线</td>
+        </tr>
+        <tr class="row-info">
+          <td>C 刀 0–4</td>
+          <td class="num">8.57</td>
+          <td class="num">174 s</td>
+          <td class="num">18.6 s</td>
+          <td class="num">¥1.33</td>
+          <td>少调用、审阅收口</td>
+        </tr>
+        <tr class="row-success">
+          <td>C 刀 5–8</td>
+          <td class="num">10.42</td>
+          <td class="num">152 s</td>
+          <td class="num">16.0 s</td>
+          <td class="num">¥1.24</td>
+          <td>并行写 + 指标不再占座位</td>
+        </tr>
+        <tr>
+          <td>W=12 三用户（非默认）</td>
+          <td class="num">15.23</td>
+          <td class="num">128 s</td>
+          <td class="num">17.5 s</td>
+          <td class="num">¥1.15</td>
+          <td>GATE_ORG=10 打满；排队变长是预期</td>
+        </tr>
+        <tr>
+          <td>当前（Qwen 审阅）</td>
+          <td class="num">7.56</td>
+          <td class="num">202 s</td>
+          <td class="num">21.7 s</td>
+          <td class="num">¥0.64</td>
+          <td>更便宜；1 次 plan-02 超时</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <hr>
+
+  <div class="stack gap-8">
+    <h2>C 各刀：选项、取舍、怎么判</h2>
+    <p class="muted">用户原方案是 0–8 顺序落地。每刀的判据是：并发 1 能否看见重叠或少调用，混跑里轻任务是否少排，账本 purpose 是否对得上。</p>
+
+    <div class="card">
+      <div class="card-h">先能测完整月报 <span class="pill">前提，不是优化</span></div>
+      <div class="card-b stack gap-8">
+        <p>选项 A：继续用残缺月报数字做 C。选项 B：把 report 路由从 2 次 / 4000 token 放到 24 次 / 24000，并补记漏掉的四节正文。</p>
+        <p>选 B。不放宽就没有洞察和审阅；不补账，后面「合并四节洞察」会把本来没入账的钱算成省下来的。代价立刻可见：单份约 ¥0.21、127–180 秒，客户端超时要从 180 提到 300。</p>
+      </div>
+    </div>
+
+    <details class="section" open>
+      <summary>刀 0–4  少调用、减排队</summary>
+      <div class="table-wrap" style="padding: 0 8px 8px;">
+        <table>
+          <thead>
+            <tr><th>刀</th><th>选了什么</th><th>没选什么</th><th>怎么判</th><th>效果</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>审阅 2 轮 + 一次改完点名的章</td>
+              <td>默认两轮；低于 85 分只重写扣分章</td>
+              <td>整份重写、或审阅轮数跟模型走</td>
+              <td>和洞察/检索一起看混跑，不拆单刀贡献</td>
+              <td>月报中位 225→174 s，成本 ¥1.67→1.33</td>
+            </tr>
+            <tr>
+              <td>风险标记</td>
+              <td>Python 确定性 risk_flags，没标记整节不写</td>
+              <td>再打一次模型决定有没有风险</td>
+              <td>冒烟里问题与风险有则写、无则跳</td>
+              <td>少一次可选模型调用</td>
+            </tr>
+            <tr>
+              <td>四节洞察合成 1 次</td>
+              <td>一次 code_wizards；失败整批重试</td>
+              <td>四章各写一次，或失败拆回单章</td>
+              <td>账本里每份月报 1 次合成（失败则 +1 重试）</td>
+              <td>调用少了；单跑仍 129–161 s，审阅还在</td>
+            </tr>
+            <tr>
+              <td>检索进第一波</td>
+              <td>计划和 data 同一波；后来改成交错 q1,s1,q2,s2</td>
+              <td>等全部 SQL 结束再搜；或拆两个组织</td>
+              <td>看 s* 相对 q1 的开工滞后和重叠秒数</td>
+              <td>计划同波，但 W=5 时座位先被 q* 占满，重叠不到 1 s</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+
+    <details class="section" open>
+      <summary>刀 5–8  叠墙钟、减第一波</summary>
+      <div class="table-wrap" style="padding: 0 8px 8px;">
+        <table>
+          <thead>
+            <tr><th>刀</th><th>选了什么</th><th>没选什么</th><th>怎么判</th><th>效果</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>图 ∥ 洞察</td>
+              <td>同一 worker 座位里两路 LLM，占 GATE_MODEL</td>
+              <td>再开子 Run / 加进程内线程抢组织座位</td>
+              <td>账本 created_at 是否同一时刻；DeepSeek 闸门峰值</td>
+              <td>rpt-01 并发 1：128.7→88.5 s；混跑模型峰值 5→10</td>
+            </tr>
+            <tr>
+              <td>四节正文并行写</td>
+              <td>关键指标/业绩/库存/计划同时写；摘要和风险仍串行</td>
+              <td>六节全并行（摘要没有前文）</td>
+              <td>四次 report.write 落在约 2 s 窗口</td>
+              <td>和上刀一起构成 88.5 s；plan-02 一次洞察重试 18 s 把收益吃回去，不当无效</td>
+            </tr>
+            <tr>
+              <td>指标改模板 SQL</td>
+              <td>合同目标 + 期间合计走固定 SELECT，不占第一波 q*</td>
+              <td>继续让规划写这两问</td>
+              <td>第一波 data 8–9→5–6；metrics_named_q=0</td>
+              <td>检索中位滞后 5.5→2.4 s；混跑月报 174→152 s</td>
+            </tr>
+            <tr>
+              <td>purpose 分级</td>
+              <td>write / review / optional 分路由</td>
+              <td>继续全部打在 report 一个桶</td>
+              <td>账本能否摊开，不看墙钟</td>
+              <td>只改记账；给后面换 Qwen 审阅留了口子</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+  </div>
+
+  <div class="stack gap-8">
+    <h2>闸门：测到上限，但不改生产默认</h2>
+    <p>Worker=5 且只有一个用户时，父 Run 等待子任务已经放掉座位，同时最多 5 个子 Run。Redis 里组织/用户/全局峰值都是 5，GATE_ORG=10 打不满。有人提议把 GATE_USER/ORG 改成 30/50 再加 worker——否决：那测的不是生产上限。</p>
+    <p>选法：闸门保持 5/10/32；worker 临时 12，客户端 18，联采三个用户轮转。组织峰值到 10，吞吐 10.4→15.2 次/分，月报中位 152→128 s，轻任务最长 130→48 s。短单排队中位 6→16 s，因为客户端 18 大于组织 10，是预期。跑完 worker 收回 5。</p>
+    <div class="callout neutral">
+      <div class="title">进程内并行加的是模型闸门</div>
+      同一 worker 里图表和四节正文同时打模型，GATE_MODEL 从 5 到 10，组织计数不变。不同 worker 领不同 Run 才能抬 GATE_ORG。
+    </div>
+  </div>
+
+  <hr>
+
+  <div class="stack gap-8">
+    <h2>诚实闸：和 C 分开做</h2>
+    <p>产品意图：用户点名 10 月，聊天要说 10 月没数据；右侧月报仍可写近半年趋势。不把整份报告短路成「没有数据，结束」。</p>
+    <div class="grid cols-2">
+      <div class="card">
+        <div class="card-h">出图</div>
+        <div class="card-b stack gap-6">
+          <p>规划只写问题。代码打 pie_category / trend / bar，一组结果最多一张图。</p>
+          <p>空结果或维度对不上：跳过模型，不走 code.fix。画出来对不上绑定行的丢掉。</p>
+          <p>审阅放宽成：有数据才必须引用图。不要让模型回声 source_dataset。</p>
+          <p class="muted">记录 32：rpt-07 不再出现 Cerise 那种带值品类/产品饼；rpt-01 仍有 Chocolate / Biscuits / Grocery。</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-h">聊天开口</div>
+        <div class="card-b stack gap-6">
+          <p>只改提示不够。ANSWER 常先说「月报已生成」，评分器看的是聊天全文是否带「没有数据」。</p>
+          <p>指标合计里没有该 YYYY-MM 就打 named_period_empty；模型没按这句话开口，代码把「{期间}没有数据」接到最前。</p>
+          <p>ROUND(SUM(float8), 2) 在 Postgres 不存在，m2 一失败标记就打不上，顺手改成 CAST AS numeric。</p>
+          <p class="muted">记录 34：rpt-07 第一句「2026年10月没有数据」；rpt-01 有数，仍说月报已生成。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack gap-8">
+    <h2>Qwen 审阅：用时间换费用</h2>
+    <p>选项：审阅继续 DeepSeek；或只把 report.review / revise 换 qwen3.7-flash，正文/出图/规划不动。先冒烟诚实闸，再单独换，避免两刀叠在一次失败上。</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>题</th>
+            <th>诚实闸（DeepSeek 审阅）</th>
+            <th>换 Qwen 后</th>
+            <th>开口钉死后</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>rpt-01 墙钟 / 费用</td>
+            <td>127 s / ¥0.198</td>
+            <td>205 s / ¥0.123</td>
+            <td>230 s / ¥0.110</td>
+          </tr>
+          <tr>
+            <td>rpt-07 墙钟 / 费用</td>
+            <td>118 s / ¥0.196</td>
+            <td>142 s / ¥0.110</td>
+            <td>115 s / ¥0.078</td>
+          </tr>
+          <tr>
+            <td>rpt-07 硬检查</td>
+            <td>pass（开口仍偏「月报已生成」）</td>
+            <td>fail（no_data_stated）</td>
+            <td>pass，第一句就是没有数据</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Qwen 六次审阅都打中，没有回退 DeepSeek。质量没有变好，空月用词一度变差。用户明确：月报本来就长，时间增加、成本减少可以接受。所以不回退，只补开口。这两刀都不进 C 的 0–8 墙钟表。</p>
+  </div>
+
+  <hr>
+
+  <div class="stack gap-8">
+    <h2>最后落在产品上的状态</h2>
+    <div class="grid cols-2">
+      <div class="stack gap-8">
+        <h3>比这条对话开始时好在哪</h3>
+        <p>月报真的写完：六节、洞察、审阅都在，不再把 COST_BUDGET_EXCEEDED 说给用户。</p>
+        <p>Worker=5 混跑：月报中位大约少三分之一（225→152 s），吞吐 8.1→10.4 次/分，同组成本约低 26%。</p>
+        <p>单份并发 1 的 rpt-01 在 C 刀 5–8 后到过 88.5 s（当时还是 DeepSeek 审阅）。</p>
+        <p>空月不再用别的月份或产品饼交差；聊天第一句由代码钉死。</p>
+        <p>审阅更便宜；账本能按 write / review / optional 分开看。</p>
+      </div>
+      <div class="stack gap-8">
+        <h3>故意没动、或还没再量</h3>
+        <p>默认 Worker 仍是 5。W=12 只证明 GATE_ORG=10 打得满，不是新默认。</p>
+        <p>q* / s* 交错改了派发顺序，混跑有没有真的同时开工还没重测。</p>
+        <p>Qwen 审阅把单份墙钟抬回去一截（rpt-01 约 3–4 分钟），这是接受过的交换。</p>
+        <p>全量 golden、混跑 C 对比，没有在开口/Qwen 之后重跑，避免把质量刀写进耗时差。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout success">
+    <div class="title">一句话</div>
+    先让月报完整可测，再用代码能定的事（并行、模板 SQL、空月跳图、开口）换墙钟和诚实；模型只留写作和审阅，审阅还可以更慢更便宜。生产并发默认不变。
+  </div>
+
+</div>
+</body>
+</html>
