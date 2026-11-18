@@ -99,9 +99,7 @@ Vite/React ──HTTP──> FastAPI ──> PostgreSQL
                          └── Milvus ── 品牌资料向量
 ```
 
-聊天请求由 API 创建 queued run 和出站任务，并返回 `run_id`；Celery worker 执行模型和工具，前端轮询轨迹。关闭页面或停止轮询不会取消任务，只有显式点击停止才会取消。需用户确认的工具会暂停在 `waiting_for_user`，确认后继续执行。
-
-补投以 `agent_runs.status='queued'` 为主表，先按 `queued_at`、宽限期和补投次数过滤，再限量并使用 `FOR UPDATE SKIP LOCKED`，避免历史终态 outbox 挤掉真正卡住的 Run。宽限期默认 120 秒；只有当该 Run 所在的 Celery 队列在 Redis 里已经是空的时才补投或判「耗尽」：队列里还有消息，说明 Run 只是在排队，再补一份只会加深积压（A3 r2 里标题队列积压约 4 分钟，旧逻辑补出约 1.5 条重复消息/Run，并误杀了 24 个健康 Run）。Redis 读不到时同样跳过。每条 Run 最多补投 3 次；仍未被领取会以 `STUCK_REDISPATCH_EXHAUSTED` 失败并进入死信；排队超过 2 小时没有动静的 Run 以 `STUCK_QUEUE_EXPIRED` 失败并进入死信，不重放（不依赖 Redis）。worker 对 SoftBusy 重试的 Run 会写 `queue_heartbeat_at`：Celery 把重试任务放在 worker 内存里，Redis 队列此时可以是空的，心跳让 sweeper 不把合法等待当成丢失；`queued_at` 不动，监控里排队时长仍是真实的。已派发且对应 Run 已终态的 outbox 默认保留 7 天后分批删除，仍 queued 的证据不会被清理。
+聊天请求由 API 创建 queued run 和出站任务，并返回 `run_id`；Celery worker 执行模型和工具，前端通过 SSE 或轮询读取轨迹。关闭页面或停止轮询不会取消任务，只有显式点击停止才会取消。需用户确认的工具会暂停在 `waiting_for_user`，确认后继续执行。补投、sweeper、租约与重试的完整行为见 [`docs/performance/run.md`](docs/performance/run.md) 与 [`docs/performance/retry.md`](docs/performance/retry.md)。
 
 主要目录：
 
@@ -118,14 +116,16 @@ backend/                 FastAPI、领域逻辑、任务执行、数据层
 frontend/                React 桌面
 scripts/                 快照下载与目录构建
 tests/                   Python 与前端测试
-docs/                    设计、运行状态和迁移说明（报错重试见 docs/retry.md）
+docs/                    架构、运行时、实验与图示（索引见下文「文档」）
 ```
 
-执行路径：
+更完整的分层与模块说明见 [`docs/architecture/architecture.md`](docs/architecture/architecture.md)；Run 状态机、sweeper 与恢复契约见 [`docs/architecture/runtime.md`](docs/architecture/runtime.md)。
+
+执行路径（Agent / 工具调用）：
 
 ![Agent 调用路径](docs/agent-call-paths.png)
 
-可缩放原图见 [`docs/agent-call-paths.html`](docs/agent-call-paths.html)。
+可缩放原图见 [`docs/agent-call-paths.html`](docs/agent-call-paths.html)；一次聊天的队列与控制流见 [`docs/run-lifecycle.html`](docs/run-lifecycle.html)。
 
 ### HTTP API
 
@@ -169,6 +169,41 @@ PostgreSQL 是唯一数据库引擎，不提供 SQLite 回落。业务数据按�
 ./dev test-web
 ./dev lint
 ```
+
+## 文档
+
+`docs/` 按主题分层。改编排、投递或清扫前先读对应一篇；压测与金标流程见 [`docs/performance/performance-test-plan.md`](docs/performance/performance-test-plan.md)。
+
+### 架构与运行时
+
+| 文档 | 内容 |
+| --- | --- |
+| [`docs/architecture/architecture.md`](docs/architecture/architecture.md) | 分层、数据流、监控与待优化项 |
+| [`docs/architecture/runtime.md`](docs/architecture/runtime.md) | Run 状态机、租约、checkpoint、事件与 sweeper |
+| [`docs/performance/run.md`](docs/performance/run.md) | Run 账本、领域与确定性代码边界、监控字段 |
+| [`docs/performance/orchestrator.md`](docs/performance/orchestrator.md) | PLAN、波次并行、子 run 与 ANSWER |
+| [`docs/performance/chat-flow.md`](docs/performance/chat-flow.md) | 从发消息到回复的叙述版时间线（onboarding） |
+| [`docs/performance/retry.md`](docs/performance/retry.md) | 报错分类、重试预算、熔断与 sweeper 兜底 |
+
+### 质量与评估
+
+| 文档 | 内容 |
+| --- | --- |
+| [`docs/answer-quality.md`](docs/answer-quality.md) | 来源分级、草稿审核与运行时表述要点 |
+| [`docs/resume-evaluation.md`](docs/resume-evaluation.md) | 回归用例、压测与简历数字的归类方式 |
+| [`docs/performance/performance-test-plan.md`](docs/performance/performance-test-plan.md) | 固定测试层次、指标与实验记录约定 |
+
+### 实验记录
+
+实验室压测与金标结果写在 [`docs/experiments/records/`](docs/experiments/records/)：`00-summary.md` 汇总记录 01–38 的问题与修复；单条记录按编号命名。原始 JSON / 日志放在 [`docs/experiments/exports/`](docs/experiments/exports/)（见该目录 README）。金标执行入口：`docs/experiments/golden_set/run_golden.py`。
+
+### 图示与其他
+
+| 资源 | 内容 |
+| --- | --- |
+| [`docs/agent-call-paths.html`](docs/agent-call-paths.html) / [`agent-call-paths.png`](docs/agent-call-paths.png) | 父 run 与子 run 上的模型、工具与 MCP 路径 |
+| [`docs/run-lifecycle.html`](docs/run-lifecycle.html) | 单次聊天的函数、队列与控制流 |
+| [`docs/cv/interview.md`](docs/cv/interview.md) | 面试话术（另有 `interview.html` / `interview.pdf`） |
 
 ## 项目状态
 

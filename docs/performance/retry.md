@@ -78,9 +78,9 @@ flowchart TD
 | ③ 领取前 | 队列开关关闭 `QueueDisabled` / `QUEUE_ENABLED` 关 | Celery retry | 约 30 秒后重试 + 心跳 | 否 | 等到开关打开 |
 | ③ 领取前 | 标题 OPEN 队列高峰 `title_capacity_busy` | Celery retry | 带 jitter 重试 + 心跳；超限则跳过精修标题并 ack | 否 | 侧边栏保留临时标题 |
 | ③ 领取 | 重复投递，另一个已在跑 | worker | claim 失败 → ack，no-op | — | 无 |
-| ④ 执行 | Postgres 拒绝连接 `OperationalError` | `execute_run` | 任务内 jitter 重试 ≤5 次 | 否 | 用完抛出，sweeper 补投 |
-| ④ 执行 | 本地模型槽满 `ModelCapacityExceeded` | worker | `schedule_retry` 回 queued，**当前 Celery ack** | 否 | 超时长则 `COST_BUDGET_EXCEEDED` |
-| ④ 执行 | 厂商 429/5xx/超时/断网 | worker + 熔断器 | 同上，优先 Retry-After | 否 | 超时长则 `COST_BUDGET_EXCEEDED` |
+| ④ 执行 | Postgres 拒绝连接 `OperationalError` | `execute_run` | 同一 Celery 任务内再试：约 2–6s、4–12s… 最多 **5 次** | 否 | 仍失败交给 sweeper |
+| ④ 执行 | 本地模型槽满 `ModelCapacityExceeded` | worker | Run 回队列，随机等 **0–5s** 起，逐次加长，**单次最多等 60s** | 否 | 超 Run 时长则失败 |
+| ④ 执行 | 厂商 429/5xx/超时/断网 | worker + 熔断器 | 有 **Retry-After** 按厂商说的等（最多 5 分钟）；否则 **0–1s** 起逐次加长，单次最多 60s | 否 | 超 Run 时长则失败 |
 | ④ 执行 | Run 级 token/调用顶 `ModelBudgetExceeded` | `call_model` | 本步 `model.failed`，**不**走基础设施排队 | — | 循环继续或 Run 失败（见 `run.md`） |
 | ④ 执行 | Redis 运行座位丢失 `LeaseLost` | worker | ack 结束，Run 仍 `running` 交给租约清扫 | 否 | sweeper 回 `queued` |
 | ④ 执行 | `running` 租约过期（worker 挂/卡住） | sweeper | 回 `queued` + 新 outbox（见 3.6） | 否 | `attempts≥3` 则 `failed` |
@@ -126,7 +126,8 @@ flowchart TD
 
 ### 3.1 入口：HTTP 限流
 
-- 创建或读取 Run 太频繁，直接返回 `AppError(429)`，对外 `RATE_LIMITED`。
+- 出发先流条件：1）本分钟创建 run 的次数，经销商 1000次/分钟，用户 200次/分钟；2）并发作为满，全局并发 100，org 10，user 5。
+- 触发限流，直接返回 `AppError(429)`，对外 `RATE_LIMITED`。
 - 请求到不了 worker，不产生 Run，也没有后续兜底。
 
 ### 3.2 投递：outbox → Celery
@@ -204,10 +205,10 @@ SoftBusy 指 Run 本身没问题，只是“现在不该跑”。处理方式一
 ```mermaid
 flowchart TD
     X["执行中抛出异常"] --> T{"类型？"}
-    T -->|"OperationalError<br/>PG 拒绝连接"| D1["任务内重试：2–6 秒起，线性增长 + jitter<br/>最多 5 次"]
+    T -->|"OperationalError<br/>PG 拒绝连接"| D1["同一 Celery 任务里退避重试<br/>约 2–6s → 4–12s → …，最多 5 次"]
     D1 -->|"用完"| D2["抛出，由 sweeper 补投兜底"]
-    T -->|"ModelCapacityExceeded"| I1["基础设施重试<br/>退避从 5 秒起"]
-    T -->|"ProviderError 可重试"| I2["基础设施重试<br/>优先 Retry-After，否则退避从 1 秒起"]
+    T -->|"ModelCapacityExceeded"| I1["Run 回队列再排期<br/>随机等 0–5s 起，每次等待时间的上限 + 10 秒，封顶 60s"]
+    T -->|"ProviderError 可重试"| I2["Run 回队列再排期<br/>有 Retry-After 按厂商；否则 0–1s 起，每次等待时间的上限 + 2s 封顶 60s"]
     T -->|"ProviderError 不可重试<br/>authentication / bad_request / bad_response"| F["Run failed"]
     T -->|"ValueError / 普通 Exception"| B1["业务重试：扣 attempt，默认 3 次"]
     B1 -->|"超次数"| DL["dead_letter_jobs，Run failed"]
@@ -261,13 +262,13 @@ broker / sweeper 可能让**同一条 `run_id` 再次被领取**，或 worker �
 
 `Retry-After` 是响应头，不是异常类型，值可能是秒数（`Retry-After: 12`），也可能是 HTTP 日期。解析后存为 `ProviderError.retry_after_seconds`。
 
-**worker 决定等待时间：**
+**等多久**（精确公式在 `tasks.db_retry_countdown`、`queue.schedule_retry`）：
 
-| 情况 | 计算方式 | 上限 |
-|---|---|---|
-| 有 `Retry-After` | 取该值 × 0.9–1.1 的扰动 | **300 秒** |
-| 无，厂商错误 | full jitter：在 `[0, backoff]` 随机取，backoff 为 1、2、4、8、16… | 60 秒 |
-| 无，本地槽满 | 同上，backoff 从 **5 秒**起 | — |
+| 情况 | 人话 |
+|---|---|
+| **PG 连不上** | 还在**同一条 Celery 任务**里重试，不进 outbox。第 1 次大约等 **2–6 秒**，第 2 次大约 **4–12 秒**……（每次都是「2–6 秒」× 第几次）。**最多 5 次**，仍连不上就抛错，靠 sweeper 补投。 |
+| **本地模型座满** | Run 先变 `queued`，到期再发新 Celery。在 **0–5 秒**里随机挑一个时刻再跑；若老失败，等待上限逐步涨到 **最多 60 秒**。不扣 3 次业务 attempt。 |
+| **厂商可重试（429/5xx 等）** | 同上，Run 回队列再排期。响应头有 **Retry-After** 就按厂商建议等（略加随机，**最长 5 分钟**）。没有的话从 **0–1 秒**起同样「越等越久」，**单次最多 60 秒**。 |
 
 `schedule_retry(..., spend_attempt=False)` 把等待写在 outbox 的 `next_attempt_at`；传入 `delay` 可覆盖计算出的等待。
 
