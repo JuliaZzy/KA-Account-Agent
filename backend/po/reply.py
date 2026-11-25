@@ -113,7 +113,7 @@ def stream_reply(llm: Any, i: ReplyInput) -> Iterator[str]:
         if turn.get("role") in ("user", "assistant") and str(turn.get("content") or "").strip()
     ]
     prior.append({"role": "user", "content": i.user_message.strip() or "（他们发了一张没有说明的图片）"})
-    yield from model_calls.school_text(
-        model_calls.SCHOOL_CHAT, client=llm, system=build_reply_prompt(i), messages=prior,
+    yield from model_calls.qwen_text(
+        client=llm, system=build_reply_prompt(i), messages=prior,
         purpose="po.reply",
     )

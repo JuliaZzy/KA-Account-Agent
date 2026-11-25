@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from backend.llm import FakeLLM
 from backend.llm.routing import run_budget_for
 from backend.service import handle_message, new_session
@@ -83,6 +85,18 @@ def test_open_refine_runs_after_chat_terminal(db):
     assert opened[0]["max_tokens"] == budget.max_tokens
     assert db.session(session["id"])["title"] == "refined title"
     assert db.session(session["id"])["tags"] == ["po"]
+
+
+def test_enqueue_refuses_when_the_org_day_is_already_over(db, monkeypatch):
+    from backend.services.run_service import AppError
+
+    sid = _chat(db)
+    session = db.session(sid)
+    monkeypatch.setattr("backend.services.chat_run.org_budget", lambda *_args, **_kwargs: "over")
+    with pytest.raises(AppError) as raised:
+        enqueue_chat_run(db, session, "hello")
+    assert raised.value.status_code == 429
+    assert raised.value.code == "QUOTA_EXCEEDED"
 
 
 def test_a_model_error_fails_the_run_on_the_worker(db):

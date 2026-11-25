@@ -8,15 +8,11 @@ from backend.db import utcnow
 from backend.llm.calls import (
     DEEPSEEK_FLASH,
     QWEN_PLAN,
-    SCHOOL_CHAT,
-    SCHOOL_PLAN,
-    SCHOOL_REASONER,
-    SCHOOL_VISION,
     ModelBudgetExceeded,
     ModelCapacityExceeded,
     call_model,
     qwen_json,
-    school_json,
+    qwen_text,
 )
 from backend.llm.client import DeepSeekClient, _remember_usage
 from backend.services.run_names import EntryErrorCode
@@ -85,10 +81,6 @@ def test_vendor_posts_dotted_tool_names_without_dots(monkeypatch):
 
 
 def test_named_models():
-    assert SCHOOL_CHAT == "qwen3.7-flash"
-    assert SCHOOL_REASONER == "deepseek-flash"
-    assert SCHOOL_PLAN == "qwen3.7-flash"
-    assert SCHOOL_VISION == "deepseek-flash"
     assert DEEPSEEK_FLASH == "deepseek-flash"
     assert QWEN_PLAN == "qwen3.7-flash"
 
@@ -135,7 +127,7 @@ def test_qwen_stream_reports_text_while_the_stream_is_still_open():
     """on_text must fire per chunk, not after the whole stream is buffered."""
     from types import SimpleNamespace
 
-    from backend.llm.calls import _call_qwen
+    from backend.llm.calls import _call_qwen, enter
 
     timeline: list[str] = []
 
@@ -160,11 +152,11 @@ def test_qwen_stream_reports_text_while_the_stream_is_still_open():
         del reasoning
         timeline.append(f"on_text {text}")
 
-    called = _call_qwen(
+    called = enter(_call_qwen(
         _Client(), kind="chat_completion", model="qwen3.7-flash", system="s", messages=[],
         stream=True, temperature=None, tools=None, tool_choice=None, reasoning_effort="none",
         on_text=on_text,
-    )
+    ))
 
     assert timeline == [
         "chunk1 yielded", "on_text 你", "chunk2 yielded", "on_text 你好", "stream closed",
@@ -195,13 +187,13 @@ def _slow_qwen_client(first_delay: float, gap: float, chunks: int = 3):
 
 
 def _qwen_call(client):
-    from backend.llm.calls import _call_qwen
+    from backend.llm.calls import _call_qwen, enter
 
-    return _call_qwen(
+    return enter(_call_qwen(
         client, kind="chat_completion", model="qwen3.7-flash", system="s", messages=[],
         stream=True, temperature=None, tools=None, tool_choice=None, reasoning_effort="none",
         on_text=lambda *_a, **_k: None,
-    )
+    ))
 
 
 def test_qwen_stream_that_goes_silent_times_out_as_a_retryable_provider_error(monkeypatch):
@@ -253,14 +245,14 @@ def _slow_deepseek_client(first_delay: float, gap: float, chunks: int = 3):
 
 
 def _deepseek_call(client, *, stream=True):
-    from backend.llm.calls import _call_deepseek
+    from backend.llm.calls import _call_deepseek, enter
 
-    return _call_deepseek(
+    return enter(_call_deepseek(
         client, kind="chat_completion", model="deepseek-flash", system="s", messages=[],
         stream=stream, temperature=None, top_p=None, schema=None, tools=None,
         tool_choice=None, reasoning_effort="none",
         on_text=(lambda *_a, **_k: None) if stream else None,
-    )
+    ))
 
 
 def test_deepseek_stream_that_goes_silent_times_out_as_a_retryable_provider_error(monkeypatch):
@@ -388,13 +380,13 @@ def test_vendor_usage_is_actual_and_a_missing_usage_is_estimated(db):
         "prompt_tokens": 11, "completion_tokens": 7,
         "cache_hit_tokens": 8, "cache_miss_tokens": 3, "cache_creation_tokens": 0,
     })
-    school_json(
-        SCHOOL_CHAT, system="count these", messages=[{"role": "user", "content": "hi"}],
+    qwen_json(
+        system="count these", messages=[{"role": "user", "content": "hi"}],
         client=metered, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
     )
     bare = _VendorStub()
-    school_json(
-        SCHOOL_CHAT, system="汉字汉字汉字汉字", messages=[{"role": "user", "content": "abcd"}],
+    qwen_json(
+        system="汉字汉字汉字汉字", messages=[{"role": "user", "content": "abcd"}],
         client=bare, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
     )
     calls = db.run_trace("dist-1", run["id"])["model_calls"]
@@ -404,7 +396,7 @@ def test_vendor_usage_is_actual_and_a_missing_usage_is_estimated(db):
     usage = db.list_usage_records(run["id"])
     assert {row["usage_source"] for row in usage} == {"actual", "estimated"}
     actual = next(row for row in usage if row["usage_source"] == "actual")
-    assert actual["provider"] == "qwen" and actual["model"] == SCHOOL_CHAT
+    assert actual["provider"] == "qwen" and actual["model"] == QWEN_PLAN
     assert actual["cache_hit_tokens"] == 8
     assert actual["cache_miss_tokens"] == 3
     assert actual["cache_creation_tokens"] == 0
@@ -422,13 +414,13 @@ def test_vendor_usage_is_actual_and_a_missing_usage_is_estimated(db):
 def test_a_run_over_its_model_budget_does_not_call(db):
     run, step = _open(db, "over-calls", max_model_calls=1)
     client = _VendorStub({"prompt_tokens": 4, "completion_tokens": 1})
-    school_json(
-        SCHOOL_CHAT, system="once", messages=[{"role": "user", "content": "hi"}],
+    qwen_json(
+        system="once", messages=[{"role": "user", "content": "hi"}],
         client=client, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
     )
     with pytest.raises(ModelBudgetExceeded) as raised:
-        school_json(
-            SCHOOL_CHAT, system="twice", messages=[{"role": "user", "content": "hi"}],
+        qwen_json(
+            system="twice", messages=[{"role": "user", "content": "hi"}],
             client=client, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
         )
     assert str(raised.value) == EntryErrorCode.COST_BUDGET_EXCEEDED
@@ -439,20 +431,37 @@ def test_a_run_over_its_model_budget_does_not_call(db):
         if event["event_type"] == "model.failed"
     ]
     assert failed[-1]["payload_json"]["error"] == EntryErrorCode.COST_BUDGET_EXCEEDED
+    assert failed[-1]["payload_json"]["budget_scope"] == "run"
+    assert raised.value.scope == "run"
     assert failed[-1]["payload_json"]["trace_id"] == run["trace_id"]
+
+
+def test_the_closing_answer_is_not_stopped_by_the_run_budget(db):
+    run, step = _open(db, "answer-exempt", max_model_calls=1)
+    client = _VendorStub({"prompt_tokens": 4, "completion_tokens": 1})
+    qwen_json(
+        system="once", messages=[{"role": "user", "content": "hi"}],
+        client=client, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
+    )
+    replied = list(qwen_text(
+        system="answer", messages=[{"role": "user", "content": "hi"}],
+        client=client, db=db, run_id=run["id"], step_id=step["id"], purpose="orchestrator.answer",
+    ))
+    assert replied
+    assert client.calls == 2
 
 
 def test_an_org_over_its_daily_tokens_does_not_call(db, monkeypatch):
     run, step = _open(db, "org-daily")
     client = _VendorStub({"prompt_tokens": 4, "completion_tokens": 1})
-    school_json(
-        SCHOOL_CHAT, system="once", messages=[{"role": "user", "content": "hi"}],
+    qwen_json(
+        system="once", messages=[{"role": "user", "content": "hi"}],
         client=client, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
     )
     monkeypatch.setenv("KA_ACCOUNT_ORG_DAILY_TOKENS", "1")
     with pytest.raises(ModelBudgetExceeded):
-        school_json(
-            SCHOOL_CHAT, system="twice", messages=[{"role": "user", "content": "hi"}],
+        qwen_json(
+            system="twice", messages=[{"role": "user", "content": "hi"}],
             client=client, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
         )
     assert client.calls == 1
@@ -462,19 +471,19 @@ def test_an_org_accumulates_cost_cents_and_stops_at_daily_cost_cap(db, monkeypat
     run, step = _open(db, "org-daily-cost")
     # 25,000 uncached prompt tokens on qwen3.7-flash costs 0.5 cents per call; two calls round to 1 cent.
     client = _VendorStub({"prompt_tokens": 25_000, "completion_tokens": 0})
-    school_json(
-        SCHOOL_CHAT, system="first", messages=[{"role": "user", "content": "hi"}],
+    qwen_json(
+        system="first", messages=[{"role": "user", "content": "hi"}],
         client=client, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
     )
-    school_json(
-        SCHOOL_CHAT, system="second", messages=[{"role": "user", "content": "hi"}],
+    qwen_json(
+        system="second", messages=[{"role": "user", "content": "hi"}],
         client=client, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
     )
     assert db.org_daily_usage("dist-1")["estimated_cost_cents"] == 1
     monkeypatch.setenv("KA_ACCOUNT_ORG_DAILY_COST_CENTS", "1")
     with pytest.raises(ModelBudgetExceeded):
-        school_json(
-            SCHOOL_CHAT, system="third", messages=[{"role": "user", "content": "hi"}],
+        qwen_json(
+            system="third", messages=[{"role": "user", "content": "hi"}],
             client=client, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
         )
     assert client.calls == 2
@@ -483,13 +492,13 @@ def test_an_org_accumulates_cost_cents_and_stops_at_daily_cost_cap(db, monkeypat
 def test_a_run_over_its_token_budget_does_not_call(db):
     run, step = _open(db, "over-tokens", max_tokens=5)
     client = _VendorStub({"prompt_tokens": 4, "completion_tokens": 1})
-    school_json(
-        SCHOOL_CHAT, system="once", messages=[{"role": "user", "content": "hi"}],
+    qwen_json(
+        system="once", messages=[{"role": "user", "content": "hi"}],
         client=client, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
     )
     with pytest.raises(ModelBudgetExceeded):
-        school_json(
-            SCHOOL_CHAT, system="twice", messages=[{"role": "user", "content": "hi"}],
+        qwen_json(
+            system="twice", messages=[{"role": "user", "content": "hi"}],
             client=client, db=db, run_id=run["id"], step_id=step["id"], purpose="probe",
         )
     assert client.calls == 1

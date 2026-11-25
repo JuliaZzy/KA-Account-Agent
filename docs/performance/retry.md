@@ -42,13 +42,13 @@ flowchart TD
     SW0R -->|"attempts > 10"| SW0F["outbox failed<br/>Run failed + dead_letter"]
     SW0F --> T
     C -->|"消息已投但没人领"| S{"Sweeper republish_unclaimed"}
-    S -->|"队列空、过宽限、补投 <3"| P
-    S -->|"redispatch_count ≥ 3 仍 queued"| S1["failed<br/>STUCK_REDISPATCH_EXHAUSTED<br/>+ dead_letter_jobs"]
-    S -->|"last_seen 超 2h"| S2["failed<br/>STUCK_QUEUE_EXPIRED<br/>+ dead_letter_jobs"]
-    S1 --> T["终态：不再补投 / 不重放"]
-    S2 --> T
+    S -->|"这条 Run 的投递和心跳都过了 60 秒"| P
+    S -->|"等座位超过预算"| S2["failed<br/>CAPACITY_TIMEOUT<br/>+ dead_letter_jobs"]
+    S2 --> T["终态：不再补投 / 不重放"]
     C --> D["work_once"]
-    D -->|"GateFull / SessionBusy / QueueDisabled<br/>标题高峰 title_busy"| E["SoftBusy：self.retry + 心跳<br/>不 ack、不扣次数"]
+    D -->|"座位满"| E2["放回 Postgres，ack<br/>有座位再投"]
+    E2 --> P
+    D -->|"SessionBusy / QueueDisabled<br/>标题高峰 title_busy"| E["SoftBusy：self.retry + 心跳<br/>不 ack、不扣次数"]
     D --> F["claim_chat_turn：queued → running"]
     F -->|"已被别人领走"| F1["ack，no-op"]
     F --> G["执行循环：模型 + 工具"]
@@ -71,9 +71,9 @@ flowchart TD
 | ① 入口 | 创建/读取 Run 太频繁 | HTTP 入口 | 返回 429 `RATE_LIMITED` | — | 前端提示 |
 | ② 投递 | 推 Celery 失败，outbox 仍 `pending` | `mark_outbox_retry` | 推迟 `next_attempt_at`，同一 pending 行最多 **10 次** | 否 | 超限则 outbox `failed` + 死信 |
 | ② 投递 | `_publish` 成功但 `dispatched` 没写上 | sweeper `dispatch_pending` | 重推 pending | 否 | 可能重复 `run_id`（见 3.7） |
-| ② 投递 | 消息已 dispatched，Run 仍 queued | sweeper | 补投（≤3 次）；`queued_at` 与心跳都须过宽限期 | 否 | `STUCK_REDISPATCH_EXHAUSTED` + 死信 |
-| ② 投递 | 排队超 2 小时无动静 | sweeper | 直接关闭，不补投（第一轮先扫，不依赖 Redis） | 否 | `STUCK_QUEUE_EXPIRED` + 死信 |
-| ③ 领取前 | 并发座位满 `GateFull` | Celery retry | **5–15 秒**随机 jitter + 心跳 | 否 | 等到有位 |
+| ② 投递 | 消息已 dispatched，Run 仍 queued，投递和心跳都过了宽限期 | sweeper | 再投一次。不看队列长度，不因次数失败 | 否 | 重复消息在领取时 ack 丢掉 |
+| ② 投递 | 等座位超过本类预算 | sweeper | 关闭，不再投 | 否 | `CAPACITY_TIMEOUT` + 死信。聊天 120 秒，月报 900 秒 |
+| ③ 领取后 | 并发座位已被占走 | worker | Run 回 `queued`，outbox 回 `pending`，本条消息 ack | 否 | dispatcher 有座位再投 |
 | ③ 领取中 | 同会话有 Run 在跑 `SessionBusy` | Celery retry | 约 10 秒后重试 + 心跳 | 否 | 等到会话空闲 |
 | ③ 领取前 | 队列开关关闭 `QueueDisabled` / `QUEUE_ENABLED` 关 | Celery retry | 约 30 秒后重试 + 心跳 | 否 | 等到开关打开 |
 | ③ 领取前 | 标题 OPEN 队列高峰 `title_capacity_busy` | Celery retry | 带 jitter 重试 + 心跳；超限则跳过精修标题并 ack | 否 | 侧边栏保留临时标题 |
@@ -113,10 +113,11 @@ flowchart TD
 | `server_error` | 500 / 502 / 503 / 504 | ✅ | ✅ |
 | `timeout` | 连接 / 读超时 | ✅ | ✅ |
 | `network` | 断连、DNS | ✅ | ✅ |
-| `circuit_open` | 熔断器打开 | ✅ | ❌（避免自己把自己重新打开） |
+| `circuit_open` | 熔断器打开 | ❌ 立刻降级或 Run 失败 | ❌（避免自己把自己重新打开） |
 | `authentication` | 401 / 403 | ❌ Run 失败 | ❌ |
 | `bad_request` | 400 / 422 | ❌ | ❌ |
 | `bad_response` | 200 但响应不是对象 | ❌ | ❌ |
+| `internal` | 不认识的异常，含本地 bug | ❌ Run 失败，不降级 | ❌ |
 
 `ValueError`（模型输出 JSON 解析失败）不算厂商故障，走业务重试，见 §5。
 
@@ -148,9 +149,9 @@ flowchart LR
 
 | 通道 | Run 状态 | 当前 Celery 消息 | 谁安排下一次 | 典型触发 |
 |---|---|---|---|---|
-| **SoftBusy** | `queued` | **不 ack**，`self.retry`（ETA 在 worker 内存） | 同一条任务稍后自旋 | 闸门满、同会话冲突、队列关、标题高峰 |
+| **SoftBusy** | `queued` | **不 ack**，`self.retry`（先回到 Redis，预取后才在 worker 内存倒计时） | 同一条任务稍后自旋 | 同会话冲突、队列关、标题高峰 |
 | **`schedule_retry`** | 先 `running` 再回 `queued` | **ack 结束** | outbox `pending` + `next_attempt_at` → `dispatch_pending` → 新 `execute_run` | 厂商可重试错误、槽满、业务异常、`OperationalError`（在 worker 内） |
-| **Sweeper 补投** | `queued` | 再 `_publish` 一条 | `republish_unclaimed` | 已 dispatched 长久无人 claim、消息真丢（且队列深度为 0） |
+| **Sweeper 补投** | `queued` | 再 `_publish` 一条 | `republish_unclaimed` | 已 dispatched，这条 Run 的投递和心跳都过了宽限期。不看队列长度 |
 
 基础设施/厂商失败后，用户侧看到的是 Run 回到 `queued`，但 **broker 里那条任务已经 ack**；等待时间写在 outbox 的 `next_attempt_at` 上，到期才再进 Celery。
 
@@ -167,7 +168,7 @@ flowchart LR
 
 | 层 | 负责 | 不负责 |
 |---|---|---|
-| Celery `execute_run`（`max_retries=None`） | 队列关闭和各类 SoftBusy（`SessionBusy`、`GateFull`、`QueueDisabled`，以及 title 高峰软降级）；PG 连接拒绝时任务内重试 ≤5 次 | 厂商错误的长等待（由 outbox 到期再投）；worker 丢失的计数在 PG |
+| Celery `execute_run`（`max_retries=None`） | 队列关闭和 SoftBusy（`SessionBusy`、`QueueDisabled`，以及 title 高峰软降级）；PG 连接拒绝时任务内重试 ≤5 次 | 座位满和模型槽满（放回 Postgres）；厂商错误的长等待（由 outbox 到期再投）；worker 丢失的计数在 PG |
 | outbox（PostgreSQL） | 基础设施/业务 `schedule_retry` 后的再投递；worker 丢失 `record_worker_loss_redelivery` | SoftBusy（Run 一直是 queued，靠同一条 Celery 自旋） |
 
 `acks_late=True` + `reject_on_worker_lost=True`：进程丢时 broker 可再投；与 sweeper 补投、§3.7 claim 叠用。
@@ -178,7 +179,7 @@ SoftBusy 指 Run 本身没问题，只是“现在不该跑”。处理方式一
 
 | 类型 | 触发点 | 触发条件 | 重试间隔 |
 |---|---|---|---|
-| `GateFull` | `work_once` 里，**`claim_chat_turn` 之前** | `acquire_run` 拿不到 Redis 座位（全局 / org / user 并发满） | **5–15 秒**随机 |
+| 座位已满 | `claim_chat_turn` **之后** | `acquire_run` 拿不到全局 / org / user 座位 | 不在 Celery 里重试。放回 Postgres，由 dispatcher 再投 |
 | `SessionBusy` | `claim_chat_turn` **之中** | 同会话已有 chat run 处于 `running` 或 `waiting_for_tasks`；`ChatTurnBusy` 被包装成 `SessionBusy` | 默认 10 秒 |
 | `QueueDisabled` | `execute_run` 领取前 | `QUEUE_ENABLED` 关或队列开关关闭 | 约 30 秒 |
 | 标题高峰 | `execute_run`（OPEN / `ka_account.title`） | `title_capacity_busy` | jitter；超 `TITLE_BUSY_MAX_RETRIES` 则 ack 并保留临时标题 |
@@ -187,13 +188,13 @@ SoftBusy 指 Run 本身没问题，只是“现在不该跑”。处理方式一
 
 | 场景 | Run 状态 | 第二个 worker / 第二次投递怎么办 |
 |---|---|---|
-| 双投递，第一个已在跑 | `running` | claim 失败 → **ack，no-op** |
+| 双投递，第一个已在跑 | `running` | 领取前看到不是 `queued` → **ack，不执行** |
 | 同会话第二条消息在等 | `queued` | `SessionBusy` → **retry + 心跳，不 ack** |
-| 并发闸门满 | `queued` | `GateFull` → **retry + 心跳，不 ack** |
+| 并发座位满 | `queued` | 放回 Postgres，**ack**。不占 worker 倒计时 |
 
 判断标准：Run 已经有人在跑，就 ack 掉重复消息；Run 还在等，就保留消息继续重试。
 
-**为什么要打心跳：** Celery 的 `self.retry` 把任务当作带 ETA 的消息放在 worker 内存里，此时 Redis 队列可以是空的，而 Run 其实在合法等待。不留痕的话，sweeper 会把它当成丢了去补投，等久了还会按超龄关掉。
+**为什么要打心跳：** 同会话忙和队列关闭仍走 Celery `self.retry`。这条消息被预取之后才在 worker 内存里倒计时，还没预取的仍在 Redis 里。不留心跳的话，sweeper 会按这条 Run 自己的投递时间再投一次。心跳新，就不补投。
 
 - 每次重试前，worker 把 `agent_runs.queue_heartbeat_at` 写成当前时间。
 - 补投和超龄都以 **`max(queued_at, queue_heartbeat_at)`** 判断。
@@ -209,7 +210,7 @@ flowchart TD
     D1 -->|"用完"| D2["抛出，由 sweeper 补投兜底"]
     T -->|"ModelCapacityExceeded"| I1["Run 回队列再排期<br/>随机等 0–5s 起，每次等待时间的上限 + 10 秒，封顶 60s"]
     T -->|"ProviderError 可重试"| I2["Run 回队列再排期<br/>有 Retry-After 按厂商；否则 0–1s 起，每次等待时间的上限 + 2s 封顶 60s"]
-    T -->|"ProviderError 不可重试<br/>authentication / bad_request / bad_response"| F["Run failed"]
+    T -->|"ProviderError 不可重试<br/>authentication / bad_request / bad_response / internal / circuit_open"| F["Run failed"]
     T -->|"ValueError / 普通 Exception"| B1["业务重试：扣 attempt，默认 3 次"]
     B1 -->|"超次数"| DL["dead_letter_jobs，Run failed"]
     I1 --> Q["schedule_retry(spend_attempt=False)<br/>Run 回 queued，写 next_attempt_at"]
@@ -238,7 +239,7 @@ flowchart TD
 
 ### 3.6 `running`：租约清扫、Redis 闸门与 `LeaseLost`
 
-**Postgres 行租约**（`lease_owner`、`lease_expires_at`，领取时默认 **+10 分钟**）与 **`queue_heartbeat_at`**（仅 `queued` + SoftBusy）无关；执行中 **不会**续 Postgres 租约。父 run 进 `waiting_for_tasks` 会清掉租约，长活多在子 run 上。
+**Postgres 行租约**（`lease_owner`、`lease_expires_at`，领取时默认 **+5 分钟**）与 **`queue_heartbeat_at`**（仅 `queued` + SoftBusy）无关。执行中 worker 每 **1 分钟**把期限改成 `now + 5 分钟`。更新条件是仍为 `running`、`lease_owner` 还是自己、旧期限还没到；续不上就停手，不再 `complete` / `fail` / `schedule_retry`。父 run 进 `waiting_for_tasks` 会清掉租约，心跳看到状态已经离开 `running` 就停，不当作丢失。长活多在子 run 上。
 
 | 机制 | 何时 | 做什么 |
 |---|---|---|
@@ -308,10 +309,10 @@ broker / sweeper 可能让**同一条 `run_id` 再次被领取**，或 worker �
 |---|---|
 | 粒度 | 按 **brand**（`qwen` / `deepseek` / `glm`）一把 Redis 钥匙，不按模型名 |
 | 计入 | 429、5xx、timeout、network |
-| 不计入 | 本地槽满、401、400、解析失败、`circuit_open` 本身 |
+| 不计入 | 本地槽满、401、400、解析失败、`internal`、`circuit_open` 本身 |
 | 打开条件 | **连续 5 次**上述错误 |
-| 打开后 | 冷却 **30 秒**，`call_model` 不发请求，抛 `ProviderError(kind=circuit_open)`，worker 按基础设施重试 |
-| 冷却结束 | 允许**一次** half-open 探测：成功则关闭，失败再打开 30 秒 |
+| 打开后 | 冷却 **30 秒**内一个请求都不打这家供应商。`call_model` 抛 `ProviderError(kind=circuit_open)`，有备用模型就立刻降级，没有就这次 Run 失败。冷却时间不变成用户等待 |
+| 冷却结束 | 允许**一次** half-open 探测。探测成功则关闭，这次请求用探测拿回的结果。探测失败再打开 30 秒。探测进行中的其他请求仍然立刻降级或失败 |
 | 熔断器自己坏了（Redis 报错） | **放行**，避免闸门把所有模型调用挡住 |
 
 ```mermaid
@@ -338,7 +339,7 @@ KA_ACCOUNT_CIRCUIT_COOLDOWN_SECONDS=30
 | `Retry-After` 经常是 6–12 秒 | 冷却 30 秒偏保守，可改 15 |
 | 连续 502 / 超时 | 阈值低一点，冷却长一点 |
 | 打开后探测仍然 503 | 保持 30 或加到 60 |
-| 阈值过小（如 2） | 一次抖动就全员排队 |
+| 阈值过小（如 2） | 一次抖动就全员离开这家供应商 |
 | 阈值过大（如 50） | 厂商明确挂了还在继续打 |
 
 判断依据：`model_calls.error_json` 的 `kind` 和 `retry_after_seconds`，以及 outbox 的 `infrastructure_attempts`。先看监控里 `PROVIDER_RATE_LIMITED` 是否成片出现、有没有伴随 5xx。
@@ -351,30 +352,29 @@ KA_ACCOUNT_CIRCUIT_COOLDOWN_SECONDS=30
 
 ### 7.1 判断流程
 
-每轮 `sweep` 大致顺序：`sweep_expired_leases` → `sweep_waiting_for_tasks` → `sweep_attention` → **`republish_unclaimed`**（超龄 + 补投）→ `dispatch_pending` → 清理旧 dispatched outbox。
+每轮 `sweep` 大致顺序：`sweep_expired_leases` → `sweep_waiting_for_tasks` → `sweep_attention` → **`fail_capacity_waits`** → **`republish_unclaimed`** → `dispatch_pending`（没座位的留在 Postgres）→ 清理旧 dispatched outbox。
 
 ```mermaid
 flowchart TD
-    S["republish_unclaimed 每 15 秒"] --> F0["fail_unclaimed_exhausted<br/>max_redispatches=None<br/>只关 STUCK_QUEUE_EXPIRED"]
-    F0 --> A{"last_seen = max(queued_at, 心跳)"}
-    A -->|"> 2 小时"| X["STUCK_QUEUE_EXPIRED + 死信<br/>不依赖 Redis"]
-    A -->|"每队列：深度=0 且过宽限期"| B{"redispatch_count ≥ 3？"}
-    B -->|"是"| Y["STUCK_REDISPATCH_EXHAUSTED + 死信"]
-    B -->|"否，且 queued_at 与 last_seen 都过 cutoff"| R["补投 +1，刷新 queued_at"]
-    B -->|"心跳仍新"| N["不补投（SoftBusy 合法等）"]
-    B -->|"Redis 仍有消息"| N2["只是在排队，不补投"]
+    S["sweeper 每 15 秒"] --> C{"capacity_wait_since 超过预算？"}
+    C -->|聊天 120 秒 / 月报 900 秒| X["CAPACITY_TIMEOUT + 死信"]
+    C -->|未超过| A{"dispatch_at 与心跳都早于 60 秒？"}
+    A -->|是| R["再投一次。重复消息在领取时丢掉"]
+    A -->|心跳仍新| N["有人持有这条消息，不补投"]
+    R --> D{"全局 / org / user 还有座位？"}
+    N --> D
+    D -->|有| P["dispatch_pending"]
+    D -->|没有| W["继续 queued，时钟不重置"]
 ```
 
 ### 7.2 关键规则
 
 | 规则 | 内容 |
 |---|---|
-| 补投前先看队列深度 | 聊天 Run 看 `ka_account`，标题（OPEN）Run 看 `ka_account.title`，各队列分别判断。Redis 里还有消息就是在排队，不补投也不判耗尽；读不到 Redis 也跳过 |
-| 为什么先看深度 | 积压的队列被补投会出更多重复消息，积压更深。A3 r2：标题队列积压 p50 244 秒，补投事件 3083 次，24 个健康 Run 被误判 `STUCK_REDISPATCH_EXHAUSTED` |
-| 真丢消息怎么办 | 由“超龄关闭”兜底 |
-| 为什么超龄不重放 | 发消息的人早已不在等，重跑只会为没人读的回复付模型费 |
-| 宽限期 | 默认 120 秒（`KA_ACCOUNT_REDISPATCH_AFTER_SECONDS`）。取长是因为排队很深时 Run 只是在等，每补投一次就少一次机会 |
-| 补投上限 | 每条 Run 最多 3 次 |
+| 不看队列长度 | 高峰期队列不空，丢了的消息也要补。重复投递靠领取时的 `queued` → `running` 丢掉 |
+| 宽限期 | 默认 60 秒（`KA_ACCOUNT_REDISPATCH_AFTER_SECONDS`），看这条 Run 自己的 `dispatch_at` 和心跳 |
+| 补投次数 | 不设上限，也不再因此进死信 |
+| 等座位 | 时钟是 `capacity_wait_since`，从第一次等开始，不随重试清零。聊天 120 秒，月报、复核、改稿 900 秒 |
 
 ### 7.3 补投的并发与一致性
 
@@ -436,8 +436,7 @@ flowchart TD
 | `MODEL_CAPACITY_EXCEEDED` | 本地模型槽满（内部，会重试） | ❌ |
 | `PROVIDER_RATE_LIMITED` 等 | 厂商错误（内部，会重试） | ❌ |
 | `COST_BUDGET_EXCEEDED` | Run 超过 `max_duration_seconds` | — |
-| `STUCK_REDISPATCH_EXHAUSTED` | 补投 3 次仍没人领 | ✅ |
-| `STUCK_QUEUE_EXPIRED` | 排队超 2 小时无动静 | ✅ |
+| `CAPACITY_TIMEOUT` | 等座位超过聊天 120 秒或月报 900 秒 | ✅ |
 | `WORKER_LOST_REDELIVERY` | broker 因 worker 丢失反复重投同一任务 | ✅（Run 已 `waiting_for_user` 时直接 ack，不进此计数） |
 
 ### 9.3 代码位置
@@ -445,7 +444,7 @@ flowchart TD
 | 文件 | 职责 |
 |---|---|
 | `backend/celery/tasks.py` | `execute_run`：SoftBusy / 心跳、`OperationalError` 任务内重试、worker 丢失计数 |
-| `backend/services/dispatcher.py` | `_publish` / `mark_outbox_dispatched`、`republish_unclaimed`、队列深度 |
+| `backend/services/dispatcher.py` | `_publish` / `mark_outbox_dispatched`、`republish_unclaimed`、有座位才投 |
 | `backend/services/sweeper.py` | 清扫编排：租约、补投、`dispatch_pending` |
 | `backend/services/run_worker.py` | `work_once`、`schedule_retry` 分流、`LeaseLost` |
 | `backend/services/entry_guard.py` | Redis 运行闸门 `acquire_run`、座位 renew |

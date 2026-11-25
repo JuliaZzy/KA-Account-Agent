@@ -234,6 +234,11 @@ def recovered_plan(
             ))
     finished: list[str] = []
     results: dict[str, dict[str, Any]] = {}
+    for item in _rejected_from_plan_step(db, run):
+        task_id = str(item.get("id") or "")
+        if task_id:
+            results[task_id] = item
+            finished.append(task_id)
     for child in children:
         payload = child.get("input_json") if isinstance(child.get("input_json"), dict) else {}
         task_id = _task_id(child)
@@ -243,6 +248,22 @@ def recovered_plan(
             if task_id not in finished:
                 finished.append(task_id)
     return tasks, finished, results
+
+
+def _rejected_from_plan_step(db: Database, run: dict[str, Any]) -> list[dict[str, Any]]:
+    org_id = str(run.get("org_id") or "")
+    if not org_id:
+        return []
+    trace = db.run_trace(org_id, str(run.get("id") or "")) or {}
+    for step in trace.get("steps") or []:
+        step_input = step.get("input_json") if isinstance(step.get("input_json"), dict) else {}
+        if step_input.get("purpose") != "orchestrator.plan" or step.get("status") != "succeeded":
+            continue
+        output = step.get("output_json") if isinstance(step.get("output_json"), dict) else {}
+        rejected = output.get("rejected")
+        if isinstance(rejected, list):
+            return [item for item in rejected if isinstance(item, dict)]
+    return []
 
 
 def _task_id(child: dict[str, Any]) -> str:
@@ -281,17 +302,21 @@ def finish_child(
         result["status"] = "succeeded" if result.get("ok") is True else "failed"
     if owner_id:
         event_type = StepEvent.TOOL_COMPLETED if result.get("ok") else StepEvent.TOOL_FAILED
+        event_payload = {
+            "tool_name": result.get("name"),
+            "task_id": task_id,
+            "ok": bool(result.get("ok")),
+        }
+        if result.get("ok") is not True and result.get("error"):
+            event_payload["error"] = str(result["error"])
+            event_payload["display"] = str(result["error"])
         db.record_child_wave_result(
             str(run.get("org_id") or ""),
             owner_id,
             task_id,
             result,
             event_type=event_type,
-            event_payload={
-                "tool_name": result.get("name"),
-                "task_id": task_id,
-                "ok": bool(result.get("ok")),
-            },
+            event_payload=event_payload,
         )
     try:
         left = store_result(session_id, wave_id, task_id, result)

@@ -41,16 +41,27 @@ def build_resolver_prompt(references: list[str], products: list[dict[str, str]])
 {{ {shape} }}"""
 
 
-def resolve_references(llm: Any, references: list[str], products: list[dict[str, str]]) -> dict[str, list[str]]:
+def _resolve_schema(references: list[str]) -> dict[str, Any]:
+    return {
+        "name": "po_resolve",
+        "schema": {
+            "type": "object",
+            "properties": {ref: {"type": "array", "items": {"type": "string"}} for ref in references},
+            "required": list(references),
+        },
+    }
+
+
+async def resolve_references(llm: Any, references: list[str], products: list[dict[str, str]]) -> dict[str, list[str]]:
     """reference (verbatim) → ordered candidate SKUs (may be empty). Raises on model
     failure — the caller leaves the reference unresolved."""
     if not references or not products:
         return {}
-    raw = model_calls.school_json(
-        model_calls.SCHOOL_CHAT,
+    raw = await model_calls.qwen_json_async(
         client=llm,
         system=build_resolver_prompt(references, products),
         messages=[{"role": "user", "content": "请解析上面的说法。"}],
+        schema=_resolve_schema(references),
         temperature=0,
         purpose="po.resolve",
     )

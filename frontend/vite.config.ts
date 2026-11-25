@@ -9,6 +9,10 @@ export default defineConfig({
     watch: { usePolling: process.env.CHOKIDAR_USEPOLLING === "true" },
     proxy: {
       "/api": { target: process.env.API_PROXY_TARGET || "http://api:8000", changeOrigin: true },
+      "/grafana": {
+        target: process.env.GRAFANA_PROXY_TARGET || "http://grafana:3000",
+        ws: true,
+      },
     },
   },
   test: {

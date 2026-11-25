@@ -13,6 +13,13 @@ function textField(raw: unknown, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
+/** The line shown while this run is still queued. `ahead` is how many were accepted first. */
+export function queueLine(status: string | undefined, ahead: number | null | undefined): Activity | null {
+  if (status !== "queued" || ahead == null || ahead < 0) return null;
+  const title = ahead === 0 ? "排队中" : `排队中，前面还有 ${ahead} 个`;
+  return { id: "queue", title, detail: "", state: "running" };
+}
+
 /** One line per public run event that carries `display`. The page does not rename tools. */
 export function activitiesFromEvents(raw: unknown, status?: string): Activity[] {
   if (!Array.isArray(raw)) return [];

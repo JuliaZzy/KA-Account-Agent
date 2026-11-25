@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from backend.report.analyze import column_kinds, cover_days, findings, risk_flags
 from backend.report.prompt import (
     CHART_GENERATION_PROMPT,
@@ -27,6 +29,26 @@ from backend.report.turn import (
     shape_prose,
 )
 from backend.report.wizard import execute
+
+_CHAPTERS = ("关键指标", "摘要", "业绩表现", "库存情况", "下一周期计划")
+
+
+def _fixed(code: str) -> dict:
+    return {"error_analysis": "failed", "fix_description": "retry", "fixed_code": code}
+
+
+def _scored(score: int, *, ok: bool, issues: list) -> dict:
+    """Five chapter marks that add up to `score`. A bare score is sent back for repair."""
+    base, extra = divmod(score, len(_CHAPTERS))
+    return {
+        "chapters": [
+            {"section": name, "score": base + (1 if index < extra else 0)}
+            for index, name in enumerate(_CHAPTERS)
+        ],
+        "risks_penalty": 0,
+        "ok": ok,
+        "issues": issues,
+    }
 
 
 def test_cover_days_divides_stock_by_period_units():
@@ -271,7 +293,7 @@ def test_prompts_use_the_sectioned_shape_and_format_cleanly():
 
 def test_code_wizard_retries_against_the_query_that_has_the_column():
     from backend.llm import FakeLLM
-    from backend.report.turn import SectionPlan, _code_wizard
+    from backend.report.turn import SectionPlan, _code_wizard_async
 
     section = SectionPlan(
         id="performance", title="业绩表现", brief="畅销产品",
@@ -301,8 +323,8 @@ def test_code_wizard_retries_against_the_query_that_has_the_column():
         "    return [{'title': '畅销', 'detail': row['product_name'] + '（' + row['sku'] + '）',"
         " 'evidence': {'revenue': row['total_revenue']}}]"
     )
-    llm = FakeLLM(json_replies=[{"code": bad}, {"fixed_code": good}])
-    insights, err, fails = _code_wizard(llm, section, datasets)
+    llm = FakeLLM(json_replies=[{"code": bad}, _fixed(good)])
+    insights, err, fails = asyncio.run(_code_wizard_async(llm, section, datasets))
     assert err is None and fails == []
     assert insights[0]["detail"] == "Activia（DAI-1）"
     assert insights[0]["evidence"] == {"revenue": 1696.46}
@@ -315,7 +337,7 @@ def test_code_wizard_retries_against_the_query_that_has_the_column():
 
 def test_four_insight_functions_are_generated_once_and_repaired_alone():
     from backend.llm import FakeLLM
-    from backend.report.turn import SectionPlan, _code_wizards
+    from backend.report.turn import SectionPlan, _code_wizards_async
 
     sections = [
         SectionPlan("metrics", "关键指标", "目标", True, False, False, False, ["目标"], []),
@@ -345,9 +367,9 @@ def test_four_insight_functions_are_generated_once_and_repaired_alone():
     )
     llm = FakeLLM(json_replies=[
         {"metrics": ok, "performance": bad, "inventory": ok, "next": ok},
-        {"fixed_code": ok},
+        _fixed(ok),
     ])
-    by_section, errors, fails = _code_wizards(llm, sections, datasets)
+    by_section, errors, fails = asyncio.run(_code_wizards_async(llm, sections, datasets))
     assert errors == [] and fails == []
     assert [item["title"] for item in by_section["metrics"]] == ["ok"]
     assert [item["title"] for item in by_section["performance"]] == ["ok"]
@@ -359,23 +381,33 @@ def test_four_insight_functions_are_generated_once_and_repaired_alone():
     assert "KeyError" in llm.calls[1]["system"]
 
 
-def test_overlap_runs_both_callables_before_either_returns():
-    import threading
+def test_charts_and_insights_async_wait_together_on_one_loop(monkeypatch):
+    """画图和洞察要在同一次事件循环里交错执行，不能再各开一个线程。"""
+    import asyncio
 
-    from backend.report.turn import _overlap
+    from backend.report import turn
 
-    barrier = threading.Barrier(2, timeout=2)
+    order: list[str] = []
 
-    def one():
-        barrier.wait()
-        return "a"
+    async def draw(*_args, **_kwargs):
+        order.append("draw-start")
+        await asyncio.sleep(0)
+        order.append("draw-end")
+        return [], {}, [], []
 
-    def two():
-        barrier.wait()
-        return "b"
+    async def wizards(*_args, **_kwargs):
+        order.append("wizards-start")
+        await asyncio.sleep(0)
+        order.append("wizards-end")
+        return {}, [], []
 
-    assert _overlap(one, two) == ["a", "b"]
-    assert _overlap(lambda: 1) == [1]
+    monkeypatch.setattr(turn, "_draw_charts_async", draw)
+    monkeypatch.setattr(turn, "_code_wizards_async", wizards)
+
+    asyncio.run(turn._charts_and_insights_async(None, "", [], {}, []))
+
+    assert order.index("wizards-start") < order.index("draw-end")
+    assert order.index("draw-start") < order.index("wizards-end")
 
 
 def _query_result(rows, columns=None, *, ok=True):
@@ -444,9 +476,9 @@ def test_ensure_chart_questions_injects_a_named_month_category_query():
     assert again.questions == performance.questions
 
 
-def test_charts_and_insights_are_produced_together():
+def test_charts_and_insights_async_are_produced_together():
     from backend.llm import FakeLLM
-    from backend.report.turn import _Ask, _charts_and_insights
+    from backend.report.turn import _Ask, _charts_and_insights_async
 
     sections = _chart_sections()
     rows = [{"category": "Chocolate", "line_total": 10.0}]
@@ -465,9 +497,9 @@ def test_charts_and_insights_are_produced_together():
         }]},
         _wizard_ok(),
     ])
-    charts, charts_for, failures, insights, errors, insight_fails, decisions = _charts_and_insights(
+    charts, charts_for, failures, insights, errors, insight_fails, decisions = asyncio.run(_charts_and_insights_async(
         llm, "出一份月报，要品类饼图", sections, by_section, datasets,
-    )
+    ))
     assert failures == [] and errors == [] and insight_fails == []
     assert charts and charts_for["performance"]
     assert [item["title"] for item in insights["metrics"]] == ["ok"]
@@ -478,7 +510,7 @@ def test_charts_and_insights_are_produced_together():
 
 def test_empty_category_query_skips_the_chart_model():
     from backend.llm import FakeLLM
-    from backend.report.turn import _Ask, _charts_and_insights
+    from backend.report.turn import _Ask, _charts_and_insights_async
 
     sections = _chart_sections()
     asked = [_Ask("q1", "2026年10月各品类的采购金额是多少？", _query_result([], ["category", "line_total"]))]
@@ -488,9 +520,9 @@ def test_empty_category_query_skips_the_chart_model():
         "columns": ["title"], "rows": [{"title": "协议"}],
     }]
     llm = FakeLLM(json_replies=[_wizard_ok()])
-    charts, charts_for, failures, _insights, errors, insight_fails, decisions = _charts_and_insights(
+    charts, charts_for, failures, _insights, errors, insight_fails, decisions = asyncio.run(_charts_and_insights_async(
         llm, "出一份2026年10月采购月报，要品类饼图", sections, by_section, datasets,
-    )
+    ))
     assert charts == [] and charts_for["performance"] == []
     assert failures == [] and errors == [] and insight_fails == []
     assert decisions[0].status == "skipped" and decisions[0].reason == "no_data"
@@ -501,7 +533,7 @@ def test_empty_category_query_skips_the_chart_model():
 
 def test_category_pie_of_product_names_is_dropped():
     from backend.llm import FakeLLM
-    from backend.report.turn import _Ask, _charts_and_insights
+    from backend.report.turn import _Ask, _charts_and_insights_async
 
     sections = _chart_sections()
     rows = [{"category": "Chocolate", "line_total": 10.0}]
@@ -514,16 +546,16 @@ def test_category_pie_of_product_names_is_dropped():
         }]},
         _wizard_ok(),
     ])
-    charts, _charts_for, failures, _insights, _errors, _insight_fails, decisions = _charts_and_insights(
+    charts, _charts_for, failures, _insights, _errors, _insight_fails, decisions = asyncio.run(_charts_and_insights_async(
         llm, "出一份月报，要品类饼图", sections, by_section, [],
-    )
+    ))
     assert charts == [] and failures == []
     assert decisions[0].status == "skipped" and decisions[0].reason == "bad_dimension"
 
 
 def test_inventory_product_pie_is_dropped_when_the_user_asked_for_a_category_pie():
     from backend.llm import FakeLLM
-    from backend.report.turn import _Ask, _charts_and_insights
+    from backend.report.turn import _Ask, _charts_and_insights_async
 
     sections = _chart_sections()
     rows = [{"product_name": "Cerise", "stock_on_hand": 12}]
@@ -536,16 +568,16 @@ def test_inventory_product_pie_is_dropped_when_the_user_asked_for_a_category_pie
         }]},
         _wizard_ok(),
     ])
-    charts, charts_for, failures, _insights, _errors, _insight_fails, decisions = _charts_and_insights(
+    charts, charts_for, failures, _insights, _errors, _insight_fails, decisions = asyncio.run(_charts_and_insights_async(
         llm, "出一份2026年10月采购月报，要品类饼图", sections, by_section, [],
-    )
+    ))
     assert charts == [] and charts_for["inventory"] == [] and failures == []
     assert decisions[0].role == "bar" and decisions[0].status == "skipped"
 
 
 def test_trend_chart_is_kept_when_the_axis_is_periods():
     from backend.llm import FakeLLM
-    from backend.report.turn import _Ask, _charts_and_insights
+    from backend.report.turn import _Ask, _charts_and_insights_async
 
     sections = _chart_sections()
     rows = [
@@ -564,16 +596,16 @@ def test_trend_chart_is_kept_when_the_axis_is_periods():
         }]},
         _wizard_ok(),
     ])
-    charts, charts_for, failures, _insights, _errors, _insight_fails, decisions = _charts_and_insights(
+    charts, charts_for, failures, _insights, _errors, _insight_fails, decisions = asyncio.run(_charts_and_insights_async(
         llm, "出一份2026年10月采购月报，要品类饼图", sections, by_section, [],
-    )
+    ))
     assert failures == [] and charts and charts_for["performance"]
     assert decisions[0].status == "drawn" and decisions[0].role == "trend"
 
 
 def test_four_body_sections_are_written_together():
     from backend.llm import FakeLLM
-    from backend.report.turn import SectionPlan, _write_body_sections
+    from backend.report.turn import SectionPlan, _write_body_sections_async
 
     sections = [
         SectionPlan("metrics", "关键指标", "目标", True, False, False, False, ["目标"], []),
@@ -589,10 +621,10 @@ def test_four_body_sections_are_written_together():
         {"_match": "当前章节：库存情况", "content": "库存正文", "key_points": []},
         {"_match": "当前章节：下一周期计划", "content": "计划正文", "key_points": []},
     ])
-    texts = _write_body_sections(
+    texts = asyncio.run(_write_body_sections_async(
         llm, "出一份月报", [], sections, {section.id: [] for section in sections},
         [], {}, {},
-    )
+    ))
     assert texts == {
         "metrics": "指标正文",
         "performance": "业绩正文",
@@ -677,7 +709,7 @@ def test_five_chapters_add_up_and_a_missing_one_scores_zero():
 
 def test_review_passes_at_85_and_revises_named_sections_together():
     from backend.llm import FakeLLM
-    from backend.report.turn import _review_rounds
+    from backend.report.turn import _review_rounds_async
 
     draft = (
         "## 1. 关键指标\n\n目标缺失。\n\n"
@@ -689,7 +721,7 @@ def test_review_passes_at_85_and_revises_named_sections_together():
 
     def run(replies: list[dict], report: str = draft):
         llm = FakeLLM(json_replies=replies)
-        text, score, error = _review_rounds(llm, message="月报", report=report, evidence="{}", remembered="")
+        text, score, error = asyncio.run(_review_rounds_async(llm, message="月报", report=report, evidence="{}", remembered=""))
         return llm, text, score, error
 
     _, text, score, error = run([{"chapters": [
@@ -712,12 +744,12 @@ def test_review_passes_at_85_and_revises_named_sections_together():
         },
     ]
     llm, text, score, error = run([
-        {"score": 84, "ok": False, "issues": issues},
+        _scored(84, ok=False, issues=issues),
         {"sections": [
             {"section": "业绩表现", "content": "补上了图。"},
             {"section": "库存情况", "content": "还能卖 12 天。"},
         ]},
-        {"score": 90, "ok": True, "issues": []},
+        _scored(90, ok=True, issues=[]),
     ])
     assert "补上了图。" in text and "还能卖 12 天。" in text
     assert "目标缺失。" in text and "库存薄。" not in text
@@ -727,17 +759,17 @@ def test_review_passes_at_85_and_revises_named_sections_together():
     assert "没有提到图表" in llm.calls[2]["system"]
 
     llm, text, score, error = run([
-        {"score": 60, "ok": False, "issues": issues},
+        _scored(60, ok=False, issues=issues),
         {"sections": [
             {"section": "业绩表现", "content": "第1稿"},
             {"section": "库存情况", "content": "库存第1稿"},
         ]},
-        {"score": 70, "ok": False, "issues": issues},
+        _scored(70, ok=False, issues=issues),
         {"sections": [
             {"section": "业绩表现", "content": "第2稿"},
             {"section": "库存情况", "content": "库存第2稿"},
         ]},
-        {"score": 75, "ok": False, "issues": issues},
+        _scored(75, ok=False, issues=issues),
     ], report=draft)
     assert "第2稿" in text and "库存第2稿" in text and "目标缺失。" in text
     assert score == 75 and error is None
@@ -753,7 +785,7 @@ def test_reflection_retries_a_failure_and_keeps_three_tries():
             return True, "done", None, ""
         return False, None, f"bad {artifact}", "stdout"
 
-    fixed = FakeLLM(json_replies=[{"fixed_code": "ok"}])
+    fixed = FakeLLM(json_replies=[_fixed("ok")])
     value, failures = with_reflection(fixed, kind="code", first="bad", run=fail_then_ok)
     assert value == "done" and failures == []
     assert "bad bad" in fixed.calls[0]["system"]
@@ -761,7 +793,7 @@ def test_reflection_retries_a_failure_and_keeps_three_tries():
     def always_fail(_artifact: str):
         return False, None, "boom", "out"
 
-    stuck = FakeLLM(json_replies=[{"fixed_code": "still"}, {"fixed_code": "nope"}])
+    stuck = FakeLLM(json_replies=[_fixed("still"), _fixed("nope")])
     value, failures = with_reflection(stuck, kind="sql", first="a", run=always_fail)
     assert value is None and len(failures) == 3
     assert [item["artifact"] for item in failures] == ["a", "still", "nope"]
@@ -789,7 +821,7 @@ def test_code_fix_is_recorded_on_the_tool_step(db):
     def always_fail(_artifact: str):
         return False, None, "boom", "out"
 
-    llm = FakeLLM(json_replies=[{"fixed_code": "still"}, {"fixed_code": "nope"}])
+    llm = FakeLLM(json_replies=[_fixed("still"), _fixed("nope")])
     value, failures = with_reflection(llm, kind="code", first="a", run=always_fail, trace=trace)
     assert value is None and len(failures) == 3
 
@@ -898,7 +930,7 @@ def test_bound_context_records_a_model_call_without_explicit_ledger(db):
 
     from backend.db import utcnow
     from backend.llm import FakeLLM
-    from backend.llm.calls import flash_json
+    from backend.llm.calls import deepseek_json
     from backend.llm.context import bind_call_context
 
     run, _created = db.create_agent_run("dist-1", "u-a", "report", "ctx-trace", {"message": "月报"})
@@ -908,7 +940,7 @@ def test_bound_context_records_a_model_call_without_explicit_ledger(db):
     assert step is not None
     llm = FakeLLM(json_replies=[{"content": "指标", "key_points": []}])
     with bind_call_context(db=db, run_id=run["id"], step_id=step["id"], purpose="report"):
-        body = flash_json(
+        body = deepseek_json(
             system="写", messages=[{"role": "user", "content": "关键指标"}],
             schema={"name": "report_section", "schema": {"type": "object"}},
             client=llm,

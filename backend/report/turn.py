@@ -1,12 +1,13 @@
 """对话里的销售报告，一次写成草稿。
 
-规划给关键指标、业绩、库存和下一周期计划安排问题和检索。问题与风险先留空。
-text2sql 执行取数，并对返回的行打分。80 分及以上就用这些行；低于 80 分换问题再查，最多 3 次。
-业绩和库存两节画图。下一周期计划检索公开网页。
+Planner：参照已有目录，针对每一个 section 规划问题和检索，摘要和风险因为需要依据已有数据，第一轮先留空。
+关键指标用固定 SQL 取合同目标和期间合计，其余取数问题走 text2sql
+规划只给业绩和库存写数据库问题，给下一周期计划写网页检索。关键指标、摘要、问题与风险的问题和检索都留空。
+关键指标用固定 SQL 取合同目标和期间合计。其余问题走 text2sql 的 ReAct：同一个问题里看表、跑 SQL、给上一次成功查询打分，SQL 最多 3 次。80 分只用来留下已经满意的旧结果，不换问题重查。
+业绩和库存两节画图。下一周期计划的网页检索和取数同一波派发。
 查回的行交给一次模型调用写出四个独立的 analyze 函数，失败只修那一个，再交给撰写。四节正文在报表 worker 里同时写，摘要和问题与风险仍等正文。
-出图按查询绑定：规划之后由代码给问题打 pie_category / trend / bar，一组结果最多一张图。空结果跳过模型；画出来对不上绑定行的丢掉，不走 code.fix。
+出图按查询绑定：规划之后由代码给问题打 pie_category / trend / bar，一组结果最多一张图。模型直接写 ECharts option，不经 code agent。空结果跳过模型；画出来对不上绑定行的丢掉，不走 code.fix。
 出图和洞察在报表 worker 里同时打模型，不另开子 Run。
-下一周期计划的网页检索和取数同一波派发。
 代码根据已经查出的行标风险；有标记才写问题与风险，没有就整节不写，不再补查。
 这一节写完再写摘要。
 整份写完后先跑代码硬检查，再打分。85 分及以上过关。低于 85 分只重写扣分的那几节，默认两轮。
@@ -15,21 +16,22 @@ text2sql 执行取数，并对返回的行打分。80 分及以上就用这些�
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
-import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from datetime import date
-from typing import Any, TypeVar
+from typing import Any
 
-from ..codefix import format_failures, with_reflection
+from ..codefix import format_failures
+from ..codefix.fix import with_reflection_async
 from ..db import Database, utcnow
 from ..llm import calls as model_calls
+from ..llm.calls import JsonRepairExhausted, tool_limit
 from ..llm.errors import ModelCapacityExceeded, ProviderError
-from ..memory import actor_id, attach, prompt_context, prompt_turns, standing_block, summary_block
+from ..memory import actor_id, attach, prompt_turns
 from ..text2sql import QueryResult
-from ..text2sql.impl import answer_question_impl
 from ..text2sql.table_metadata import catalog_text, scope_views
 from ..text2sql.text2sql import _json_rows, llm_result_view, prompt_view
 from ..tools.web_search import search
@@ -70,7 +72,6 @@ _QUESTION = 2_000
 _SEARCH = 200
 _SNIPPET = 300
 _FALLBACK = "这个合作关系最近的订单和动销"
-_T = TypeVar("_T")
 _SCHEMA_PURPOSE = {
     "report_plan": "report.optional",
     "report_charts": "report.optional",
@@ -88,76 +89,35 @@ def purpose_for_schema(schema: dict[str, Any] | None) -> str:
     return _SCHEMA_PURPOSE.get(str(name or ""), "report")
 
 
-def _overlap(*fns: Callable[[], _T]) -> list[_T]:
-    """Run independent callables that only wait on model HTTP.
-
-    Each thread rebinds the ledger ContextVar. One worker seat, extra GATE_MODEL
-    seats. Not a second outbox task — both callables belong to this report step.
-    """
-    if len(fns) <= 1:
-        return [fn() for fn in fns]
-    from ..llm.context import current_call_context, reset_call_context, set_call_context
-
-    ledger = current_call_context()
-    boxed: list[list[_T]] = [[] for _ in fns]
-    errors: list[BaseException | None] = [None] * len(fns)
-
-    def run(index: int, fn: Callable[[], _T]) -> None:
-        token = set_call_context(
-            db=ledger.db, run_id=ledger.run_id, step_id=ledger.step_id, purpose=ledger.purpose,
-        )
-        try:
-            boxed[index].append(fn())
-        except BaseException as exc:
-            errors[index] = exc
-        finally:
-            reset_call_context(token)
-
-    threads = [threading.Thread(target=run, args=(index, fn)) for index, fn in enumerate(fns)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-    for exc in errors:
-        if exc is not None:
-            raise exc
-    return [items[0] for items in boxed]
-
-
 @dataclass(frozen=True)
 class _RunTrace:
     db: Database | None = None
     run_id: str | None = None
     step_id: str | None = None
 
-def _call_json(
+async def _call_json_async(
     llm: Any,
-    *, 
+    *,
     model: str,
     system: str,
     messages: list[dict[str, Any]],
     schema: dict[str, Any] | None = None,
     temperature: float = 0.0,
-    flash: bool = False,
     trace: _RunTrace | None = None,
     purpose: str | None = None,
 ) -> dict[str, Any]:
+    """和 _call_json 选同一家模型。必须在已经跑着的事件循环里调用。"""
     purpose = purpose or purpose_for_schema(schema)
     ledger: dict[str, Any] = {"purpose": purpose}
     if trace is not None and trace.db is not None and trace.run_id and trace.step_id:
         ledger.update(db=trace.db, run_id=trace.run_id, step_id=trace.step_id)
-    # Review/revise take cheap Qwen JSON. The rest of the report still uses official flash.
+    del model
     if purpose == "report.review":
-        return model_calls.qwen_json(
+        return await model_calls.qwen_json_async(
             system=system, messages=messages, schema=schema, temperature=temperature,
             client=llm, **ledger,
         )
-    if flash or model in {model_calls.DEEPSEEK_FLASH, model_calls.SCHOOL_REASONER}:
-        return model_calls.flash_json(
-            system=system, messages=messages, schema=schema, temperature=temperature,
-            client=llm, **ledger,
-        )
-    return model_calls.school_json(
+    return await model_calls.deepseek_json_async(
         system=system, messages=messages, schema=schema, temperature=temperature,
         client=llm, **ledger,
     )
@@ -524,98 +484,52 @@ def ensure_chart_questions(planned: list[SectionPlan], message: str) -> list[Sec
     return filled
 
 
-def iter_draft(
-    db: Database, llm: Any, *, message: str, history: list[dict[str, Any]],
-    partnership_id: str, brand_id: str, distributor_id: str, session_id: str,
-    hint: str | None = None, search_fn: Any = None, folded_through: int = 0, 
-    summary: str = "", run_id: str | None = None, step_id: str | None = None,
-) -> Iterator[dict[str, Any] | ReportDraft]:
-    """Yield a status around each slow step, then the draft."""
-    # Importing orchestrator.status at module level loads orchestrator.turn, which imports this module.
-    from ..llm.context import bind_call_context
-    from ..orchestrator.status import status
-
-    with bind_call_context(db=db, run_id=run_id, step_id=step_id, purpose="report"):
-        yield from _iter_draft(
-            db, llm, message=message, history=history, partnership_id=partnership_id,
-            brand_id=brand_id, distributor_id=distributor_id, session_id=session_id,
-            hint=hint, search_fn=search_fn, folded_through=folded_through, summary=summary,
-            run_id=run_id, step_id=step_id, status=status,
-        )
-
-
-def _iter_draft(
-    db: Database, llm: Any, *, message: str, history: list[dict[str, Any]],
-    partnership_id: str, brand_id: str, distributor_id: str, session_id: str,
-    hint: str | None, search_fn: Any, folded_through: int, summary: str,
-    run_id: str | None, step_id: str | None, status: Any,
-) -> Iterator[dict[str, Any] | ReportDraft]:
-    trace = _RunTrace(db=db, run_id=run_id, step_id=step_id)
-    remembered = prompt_context(standing_block(db, partnership_id, actor_id(db, session_id)), summary_block(summary))
-    yield status("report-plan", "规划", "正在按大纲安排每一节要查什么", state="running")
-    planned, report_title = _plan(
-        llm, message=message, history=history, hint=hint, remembered=remembered, folded_through=folded_through, trace=trace
-    )
-    question_count = len({question.casefold() for section in planned for question in section.questions})
-    search_count = len({query.casefold() for section in planned for query in section.searches})
-    yield status("report-plan", "规划", f"{question_count} 个问题，{search_count} 次检索", state="done")
-
-    yield status("report-query", "查数", "正在查询目标、业绩和库存", state="running")
-    asked, by_section, failures = _query(
-        db, llm, planned, partnership_id=partnership_id, brand_id=brand_id, distributor_id=distributor_id,
-        session_id=session_id, history=history, folded_through=folded_through, summary=summary,
-        trace=trace,
-    )
-    yield status("report-query", "查数", f"查完 {len(asked)} 个问题", state="done")
-    yield from iter_after_queries(
-        db, llm, planned=planned, report_title=report_title, asked=asked, by_section=by_section,
-        failures=failures, message=message, history=history, remembered=remembered,
-        folded_through=folded_through, partnership_id=partnership_id, brand_id=brand_id,
-        distributor_id=distributor_id, session_id=session_id,
-        search_fn=search_fn, trace=trace,
-    )
-
-
-def iter_after_queries(
+async def _iter_after_queries(
     db: Database, llm: Any, *, planned: list[SectionPlan], report_title: str,
     asked: list[_Ask], by_section: dict[str, list[_Ask]], failures: list[str],
     message: str, history: list[dict[str, Any]], remembered: str, folded_through: int,
     partnership_id: str, brand_id: str, distributor_id: str, session_id: str,
     search_fn: Any = None, trace: _RunTrace | None = None,
     found: list[_Search] | None = None,
-) -> Iterator[dict[str, Any] | ReportDraft]:
-    """Charts through review. Risks are flags on the already-fetched rows, not a second query wave.
+) -> Any:
+    """查数之后的正文。风险用已经查回的行来标，不再开第二轮查询。
 
-    `found` from the first wave skips the in-process search. None means look them up here.
+    调用方已经带着检索结果时用 `found`。没有就在这里查。
     """
     from ..orchestrator.status import status
 
-    asked, by_section = _attach_metrics(
-        db, message, planned, asked, by_section,
-        partnership_id=partnership_id, brand_id=brand_id, distributor_id=distributor_id,
-        session_id=session_id, trace=trace,
-    )
-    _hydrate_full_rows(
-        db, asked, partnership_id=partnership_id, distributor_id=distributor_id,
-        brand_id=brand_id, session_id=session_id,
-    )
+    async with tool_limit():
+        asked, by_section = await asyncio.to_thread(
+            _attach_metrics, db, message, planned, asked, by_section,
+            partnership_id=partnership_id, brand_id=brand_id, distributor_id=distributor_id,
+            session_id=session_id, trace=trace,
+        )
+        await asyncio.to_thread(
+            _hydrate_full_rows, db, asked, partnership_id=partnership_id,
+            distributor_id=distributor_id, brand_id=brand_id, session_id=session_id,
+        )
     if found is None:
         yield status("report-news", "新闻", "正在看热点和节假日", state="running")
-        found = [_lookup(query, search_fn or search) for query in _search_queries(planned)]
+
+        async def lookup_one(query: str) -> _Search:
+            async with tool_limit():
+                return await asyncio.to_thread(_lookup, query, search_fn or search)
+
+        found = list(await asyncio.gather(*[lookup_one(query) for query in _search_queries(planned)]))
     yield status("report-news", "新闻", f"看了 {len(found)} 条检索", state="done")
 
     yield status("report-chart", "图表", "正在给业绩和库存配图", state="running")
     yield status("report-insight", "洞察", "正在按章节计算", state="running")
     query_results = _query_results(asked, include_full=True)
     charts, charts_for, chart_failures, insights_by_section, insight_errors, insight_failures, chart_decisions = (
-        _charts_and_insights(llm, message, planned, by_section, query_results, trace)
+        await _charts_and_insights_async(llm, message, planned, by_section, query_results, trace)
     )
     yield status("report-chart", "图表", f"{len(charts)} 张图" if charts else "这组数不画图", state="done")
     insight_count = sum(len(items) for items in insights_by_section.values())
     yield status("report-insight", "洞察", f"{insight_count} 条" if insight_count else "没有算出洞察", state="done")
 
     yield status("report-write", "正文", "正在写关键指标、业绩、库存和下一周期计划", state="running")
-    texts = _write_body_sections(
+    texts = await _write_body_sections_async(
         llm, message, history, planned, by_section, found, charts_for, insights_by_section,
         remembered=remembered, folded_through=folded_through, trace=trace,
         chart_decisions=chart_decisions,
@@ -630,17 +544,18 @@ def iter_after_queries(
     flags = risk_flags(query_results, today=utcnow().date())
     if flags:
         insights_by_section["risks"] = flags
-    yield from iter_from_risks(
+    async for item in _iter_from_risks(
         db, llm, planned=planned, report_title=report_title, asked=asked, by_section=by_section,
         failures=failures, charts=charts, charts_for=charts_for, chart_failures=chart_failures,
         found=found, insights_by_section=insights_by_section, insight_failures=insight_failures,
         insight_errors=insight_errors, texts=texts,
         message=message, history=history, remembered=remembered, folded_through=folded_through,
         trace=trace, write=bool(flags), chart_decisions=chart_decisions,
-    )
+    ):
+        yield item
 
 
-def iter_from_risks(
+async def _iter_from_risks(
     db: Database, llm: Any, *, planned: list[SectionPlan], report_title: str,
     asked: list[_Ask], by_section: dict[str, list[_Ask]], failures: list[str],
     charts: list[dict[str, Any]], charts_for: dict[str, list[dict[str, Any]]],
@@ -657,7 +572,7 @@ def iter_from_risks(
     if write:
         risks_section = next(section for section in planned if section.id == "risks")
         yield status("report-risks", "问题与风险", "正在写这一节", state="running")
-        content, _points = _write_section(
+        content, _points = await _write_section_async(
             llm, message, history, risks_section, _asks_for(risks_section, by_section), found, [],
             _insights_for(risks_section, insights_by_section),
             remembered=remembered, folded_through=folded_through, prior=_body_for_summary(planned, texts),
@@ -673,7 +588,7 @@ def iter_from_risks(
         yield status("report-risks", "问题与风险", "查询结果里没有要单写的问题", state="done")
 
     yield status("report-summary", "摘要", "正在根据已写章节写摘要", state="running")
-    summary_text, _points = _write_summary(
+    summary_text, _points = await _write_summary_async(
         llm, message, history, _body_for_summary(planned, texts),
         remembered=remembered, folded_through=folded_through,
         trace=trace,
@@ -684,7 +599,7 @@ def iter_from_risks(
     report = _assemble(planned, texts) or "The report draft is empty."
     evidence = _report_evidence(asked, insights_by_section, found, charts, chart_decisions or [])
     yield status("report-review", "审核", "正在给整份报告打分", state="running")
-    report, score, review_error = _review_rounds(
+    report, score, review_error = await _review_rounds_async(
         llm, message=message, report=report, evidence=evidence, remembered=remembered,
         planned=planned, charts_for=charts_for, trace=trace,
     )
@@ -742,7 +657,8 @@ def iter_from_risks(
     )
 
 
-def _plan(
+
+async def _plan_async(
     llm: Any, *, message: str, history: list[dict[str, Any]], hint: str | None,
     remembered: str = "", folded_through: int = 0, trace: _RunTrace | None = None,
 ) -> tuple[list[SectionPlan], str]:
@@ -757,9 +673,9 @@ def _plan(
         f"=== 规划问题 ===\n{(hint or '').strip() or '（无）'}"
     )
     try:
-        raw = _call_json(
+        raw = await _call_json_async(
             llm,
-            model=model_calls.SCHOOL_REASONER,
+            model=model_calls.DEEPSEEK_FLASH,
             system=attach(REPORT_QUESTIONS_PROMPT.format(
                 max_questions=MAX_SECTION_QUESTIONS,
                 max_searches=MAX_SECTION_SEARCHES,
@@ -772,7 +688,7 @@ def _plan(
             temperature=0,
             trace=trace,
         )
-    except (ModelCapacityExceeded, ProviderError):
+    except (ModelCapacityExceeded, ProviderError, JsonRepairExhausted):
         raise
     except Exception:
         raw = {}
@@ -795,51 +711,6 @@ def _fill_risks(planned: list[SectionPlan], questions: list[str], searches: list
     return filled
 
 
-def _query(
-    db: Database, llm: Any, planned: list[SectionPlan], *,
-    partnership_id: str, brand_id: str, distributor_id: str, session_id: str,
-    history: list[dict[str, Any]], folded_through: int, summary: str,
-    trace: _RunTrace | None = None,
-) -> tuple[list[_Ask], dict[str, list[_Ask]], list[str]]:
-    """Run each distinct planned question once. Repair and the reflection score live in text2sql."""
-    seen: dict[str, _Ask] = {}
-    asked: list[_Ask] = []
-    failures: list[str] = []
-    by_section: dict[str, list[_Ask]] = {section.id: [] for section in planned}
-    for section in planned:
-        for question in section.questions:
-            key = question.casefold()
-            item = seen.get(key)
-            if item is None:
-                item, note = _ask(
-                    db, llm, question=question, qid=f"q{len(asked) + 1}",
-                    partnership_id=partnership_id, brand_id=brand_id, distributor_id=distributor_id,
-                    session_id=session_id, history=history, folded_through=folded_through, summary=summary,
-                    trace=trace,
-                )
-                seen[key] = item
-                asked.append(item)
-                if note:
-                    failures.append(note)
-            by_section[section.id].append(item)
-    return asked, by_section, failures
-
-
-def _ask(
-    db: Database, llm: Any, *, question: str, qid: str,
-    partnership_id: str, brand_id: str, distributor_id: str, session_id: str,
-    history: list[dict[str, Any]], folded_through: int, summary: str,
-    trace: _RunTrace | None = None,
-) -> tuple[_Ask, str]:
-    """One planned question. Statement repair and the reflection score live in text2sql."""
-    result = answer_question_impl()(
-        db, question=question, partnership_id=partnership_id, brand_id=brand_id,
-        distributor_id=distributor_id, session_id=session_id, history=history,
-        folded_through=folded_through, summary=summary,
-        run_id=None if trace is None else trace.run_id, 
-        step_id=None if trace is None else trace.step_id,
-    )
-    return _Ask(qid, question, result), result.handoff
 
 
 def _asks_for(section: SectionPlan, by_section: dict[str, list[_Ask]]) -> list[_Ask]:
@@ -980,10 +851,12 @@ def _hydrate_full_rows(
         result.full_rows = _json_rows(rows)
 
 
-def _draw_charts(
+
+async def _draw_charts_async(
     llm: Any, message: str, planned: list[SectionPlan], by_section: dict[str, list[_Ask]],
     trace: _RunTrace | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]], list[str], list[ChartDecision]]:
+    """和 _draw_charts 同一套图。模型调用在当前事件循环里等，不再另开线程。"""
     charts: list[dict[str, Any]] = []
     charts_for: dict[str, list[dict[str, Any]]] = {}
     used_chart_ids: set[str] = set()
@@ -994,7 +867,7 @@ def _draw_charts(
             continue
         made: list[dict[str, Any]] = []
         for item in by_section.get(section.id) or []:
-            drawn, fails, decision = _chart_one(llm, message, section.id, item, trace=trace)
+            drawn, fails, decision = await _chart_one_async(llm, message, section.id, item, trace=trace)
             chart_failures.extend(fails)
             if drawn:
                 fitted = fit_chart_axes(_assign_chart_ids(drawn[:1], used_chart_ids))
@@ -1013,28 +886,36 @@ def _draw_charts(
     return charts, charts_for, chart_failures, decisions
 
 
-def _charts_and_insights(
+
+async def _charts_and_insights_async(
     llm: Any, message: str, planned: list[SectionPlan], by_section: dict[str, list[_Ask]],
     query_results: list[dict[str, Any]], trace: _RunTrace | None = None,
 ) -> tuple[
     list[dict[str, Any]], dict[str, list[dict[str, Any]]], list[str],
     dict[str, list[dict[str, Any]]], list[str], list[str], list[ChartDecision],
 ]:
-    """Charts and the four insight functions wait on the model at the same time."""
+    """画图和洞察一起等模型。其中一个失败，另一个会被取消。"""
     insight_sections = [section for section in planned if section.id in _INSIGHT_SECTION_IDS]
-    chart_pack, insight_pack = _overlap(
-        lambda: _draw_charts(llm, message, planned, by_section, trace),
-        lambda: _code_wizards(llm, insight_sections, query_results, trace=trace),
-    )
-    charts, charts_for, chart_failures, decisions = chart_pack
-    insights_by_section, insight_errors, insight_failures = insight_pack
+    try:
+        async with asyncio.TaskGroup() as group:
+            charts_task = group.create_task(
+                _draw_charts_async(llm, message, planned, by_section, trace),
+            )
+            insights_task = group.create_task(
+                _code_wizards_async(llm, insight_sections, query_results, trace=trace),
+            )
+    except BaseExceptionGroup as errors:
+        raise errors.exceptions[0] from errors
+    charts, charts_for, chart_failures, decisions = charts_task.result()
+    insights_by_section, insight_errors, insight_failures = insights_task.result()
     return charts, charts_for, chart_failures, insights_by_section, insight_errors, insight_failures, decisions
 
 
-def _chart_one(
+
+async def _chart_one_async(
     llm: Any, message: str, section_id: str, item: _Ask, trace: _RunTrace | None = None,
 ) -> tuple[list[dict[str, Any]], list[str], ChartDecision]:
-    """One query, one chart attempt. Empty rows skip the model; a bad drawing is dropped."""
+    """一张查询一张图。模型调用在当前事件循环里等。"""
     role = chart_role(item.question, message)
     period = decision_period(item.question, message)
     pending = ChartDecision(
@@ -1057,7 +938,7 @@ def _chart_one(
         ),
     }]
     try:
-        raw = _call_json(
+        raw = await _call_json_async(
             llm,
             model=model_calls.DEEPSEEK_FLASH,
             system=CHART_GENERATION_PROMPT.format(
@@ -1067,7 +948,7 @@ def _chart_one(
             messages=[{"role": "user", "content": chart_user_hint(role, message)}],
             schema=chart_schema(), temperature=0, trace=trace,
         )
-    except (ModelCapacityExceeded, ProviderError):
+    except (ModelCapacityExceeded, ProviderError, JsonRepairExhausted):
         raise
     except Exception as err:
         raw = {"error": str(err).split("\n", 1)[0][:300]}
@@ -1089,8 +970,11 @@ def _chart_one(
             return True, [], None, ""
         return False, [], "图表 JSON 没有可用的 echarts_option", ""
 
-    charts, attempts = with_reflection(
-        llm, kind="chart", first=json.dumps(raw, ensure_ascii=False), run=run, trace=trace,
+    async def run_async(text: str) -> tuple[bool, list[dict[str, Any]], str | None, str]:
+        return run(text)
+
+    charts, attempts = await with_reflection_async(
+        llm, kind="chart", first=json.dumps(raw, ensure_ascii=False), run=run_async, trace=trace,
     )
     if charts:
         return charts[:1], [], pending
@@ -1099,7 +983,7 @@ def _chart_one(
     return [], fails, replace(pending, reason=dropped, note=skip_note(role, dropped, period))
 
 
-def chart_for_query(
+async def chart_for_query(
     db: Database, llm: Any, message: str, question: str, result: QueryResult, *,
     partnership_id: str, brand_id: str, distributor_id: str, session_id: str,
     run_id: str | None = None, step_id: str | None = None,
@@ -1115,7 +999,7 @@ def chart_for_query(
         db, asked, partnership_id=partnership_id, brand_id=brand_id,
         distributor_id=distributor_id, session_id=session_id,
     )
-    made, failures, _decision = _chart_one(
+    made, failures, _decision = await _chart_one_async(
         llm, message, "chat", asked[0], trace=_RunTrace(db=db, run_id=run_id, step_id=step_id),
     )
     return fit_chart_axes(_assign_chart_ids(made, set())), failures
@@ -1216,74 +1100,43 @@ def _insight_section_block(sections: list[SectionPlan]) -> str:
     return "\n".join(lines)
 
 
-def _run_analyze(
+
+
+async def _run_snippet(snippet: str, query_results: list[dict[str, Any]]) -> dict[str, Any]:
+    """跑生成出来的分析代码。这段是阻塞的，放到线程里，避免卡住事件循环。"""
+    async with tool_limit():
+        return await asyncio.to_thread(execute, str(snippet or ""), query_results)
+
+
+async def _run_analyze_async(
     llm: Any, code: str, query_results: list[dict[str, Any]],
     trace: _RunTrace | None = None,
 ) -> tuple[list[dict[str, Any]], str | None, list[str]]:
-    """Run one analyze(datasets). A failure is repaired on its own."""
+    """和 _run_analyze 一样。执行代码在线程里，修代码的模型调用在当前循环里等。"""
     if not str(code or "").strip():
         return [], None, []
 
-    def run(snippet: str) -> tuple[bool, list[dict[str, Any]], str | None, str]:
-        result = execute(str(snippet or ""), query_results)
+    async def run(snippet: str) -> tuple[bool, list[dict[str, Any]], str | None, str]:
+        result = await _run_snippet(snippet, query_results)
         if result["error"]:
             return False, [], result["error"], _dataset_catalog(query_results)
         return True, result["insights"], None, ""
 
-    insights, attempts = with_reflection(llm, kind="code", first=str(code or ""), run=run, trace=trace)
+    insights, attempts = await with_reflection_async(
+        llm, kind="code", first=str(code or ""), run=run, trace=trace,
+    )
     return insights or [], None, [format_failures(attempts)] if attempts else []
 
 
-def _code_wizards(
-    llm: Any, sections: list[SectionPlan], query_results: list[dict[str, Any]],
-    trace: _RunTrace | None = None,
-) -> tuple[dict[str, list[dict[str, Any]]], list[str], list[str]]:
-    """One prompt, four analyze(datasets) functions. A failure is repaired on its own."""
-    by_section: dict[str, list[dict[str, Any]]] = {section.id: [] for section in sections}
-    if not sections:
-        return by_section, [], []
-    if not query_results:
-        return by_section, [], []
-    try:
-        raw = _call_json(
-            llm,
-            model=model_calls.DEEPSEEK_FLASH,
-            system=CODE_WIZARDS_PROMPT.format(
-                sections=_insight_section_block(sections),
-                query_results=json.dumps(_prompt_query_results(query_results), ensure_ascii=False, default=str),
-            ),
-            messages=[{"role": "user", "content": "为四个章节各写一段独立的 analyze(datasets)。"}],
-            schema=code_wizards_schema(), temperature=0, trace=trace,
-        )
-    except (ModelCapacityExceeded, ProviderError):
-        raise
-    except Exception as err:
-        message = str(err).split("\n", 1)[0][:200]
-        return by_section, [f"{section.title}: {message}" for section in sections], []
-    if not isinstance(raw, dict):
-        raw = {}
-    errors: list[str] = []
-    failures: list[str] = []
-    for section in sections:
-        insights, err, fails = _run_analyze(
-            llm, str(raw.get(section.id) or ""), query_results, trace=trace,
-        )
-        by_section[section.id] = insights
-        if err:
-            errors.append(f"{section.title}: {err}")
-        failures.extend(fails)
-    return by_section, errors, failures
-
-
-def _code_wizard(
+async def _code_wizard_async(
     llm: Any, section: SectionPlan, query_results: list[dict[str, Any]],
     trace: _RunTrace | None = None,
 ) -> tuple[list[dict[str, Any]], str | None, list[str]]:
-    """Ask for analyze(datasets) for one chapter. datasets is every successful query."""
+    """只为一个章节写分析代码，并在当前循环里等模型和执行结果。"""
     if not query_results:
         return [], None, []
     try:
-        raw = _call_json(
+        raw = await _call_json_async(
             llm,
             model=model_calls.DEEPSEEK_FLASH,
             system=CODE_WIZARD_PROMPT.format(
@@ -1300,7 +1153,49 @@ def _code_wizard(
     except Exception as err:
         return [], str(err).split("\n", 1)[0][:200], []
     code = raw.get("code") if isinstance(raw, dict) else ""
-    return _run_analyze(llm, str(code or ""), query_results, trace=trace)
+    return await _run_analyze_async(llm, str(code or ""), query_results, trace=trace)
+
+
+async def _code_wizards_async(
+    llm: Any, sections: list[SectionPlan], query_results: list[dict[str, Any]],
+    trace: _RunTrace | None = None,
+) -> tuple[dict[str, list[dict[str, Any]]], list[str], list[str]]:
+    """一次让模型写出四段分析代码，再分别执行。和画图共用同一个事件循环。"""
+    by_section: dict[str, list[dict[str, Any]]] = {section.id: [] for section in sections}
+    if not sections:
+        return by_section, [], []
+    if not query_results:
+        return by_section, [], []
+    try:
+        raw = await _call_json_async(
+            llm,
+            model=model_calls.DEEPSEEK_FLASH,
+            system=CODE_WIZARDS_PROMPT.format(
+                sections=_insight_section_block(sections),
+                query_results=json.dumps(_prompt_query_results(query_results), ensure_ascii=False, default=str),
+            ),
+            messages=[{"role": "user", "content": "为四个章节各写一段独立的 analyze(datasets)。"}],
+            schema=code_wizards_schema(), temperature=0, trace=trace,
+        )
+    except (ModelCapacityExceeded, ProviderError, JsonRepairExhausted):
+        raise
+    except Exception as err:
+        message = str(err).split("\n", 1)[0][:200]
+        return by_section, [f"{section.title}: {message}" for section in sections], []
+    if not isinstance(raw, dict):
+        raw = {}
+    errors: list[str] = []
+    failures: list[str] = []
+    for section in sections:
+        insights, err, fails = await _run_analyze_async(
+            llm, str(raw.get(section.id) or ""), query_results, trace=trace,
+        )
+        by_section[section.id] = insights
+        if err:
+            errors.append(f"{section.title}: {err}")
+        failures.extend(fails)
+    return by_section, errors, failures
+
 
 
 def _history(history: list[dict[str, Any]], folded_through: int) -> list[dict[str, Any]]:
@@ -1370,55 +1265,62 @@ def _read_section(raw: Any) -> tuple[str, list[str]]:
     return content, points
 
 
-def _write_body_sections(
+
+async def _write_body_sections_async(
     llm: Any, message: str, history: list[dict[str, Any]], planned: list[SectionPlan],
     by_section: dict[str, list[_Ask]], found: list[_Search],
     charts_for: dict[str, list[dict[str, Any]]], insights_by_section: dict[str, list[dict[str, Any]]],
     *, remembered: str = "", folded_through: int = 0, trace: _RunTrace | None = None,
     chart_decisions: list[ChartDecision] | None = None,
 ) -> dict[str, str]:
-    """Write the four independent chapters together. Summary and risks wait for these texts."""
+    """四节正文一起写。摘要和风险等这些正文写完。"""
     sections = [section for section in planned if section.id not in {"summary", "risks"}]
     if not sections:
         return {}
 
-    def writer(section: SectionPlan) -> Callable[[], tuple[str, str]]:
+    async def write_one(section: SectionPlan) -> tuple[str, str]:
         owned = charts_for.get(section.id, []) if section.chart else []
         notes = [
             item.as_dict() for item in chart_decisions or []
             if item.section_id == section.id
         ]
+        content, _points = await _write_section_async(
+            llm, message, history, section, _asks_for(section, by_section), found, owned,
+            _insights_for(section, insights_by_section),
+            remembered=remembered, folded_through=folded_through, trace=trace,
+            chart_notes=notes,
+        )
+        content = finish_section(content, owned if section.chart else [])
+        return section.id, content or "这一节没有写成。"
 
-        def run() -> tuple[str, str]:
-            content, _points = _write_section(
-                llm, message, history, section, _asks_for(section, by_section), found, owned,
-                _insights_for(section, insights_by_section),
-                remembered=remembered, folded_through=folded_through, trace=trace,
-                chart_notes=notes,
-            )
-            content = finish_section(content, owned if section.chart else [])
-            return section.id, content or "这一节没有写成。"
+    async def write_all() -> dict[str, str]:
+        try:
+            async with asyncio.TaskGroup() as group:
+                tasks = [group.create_task(write_one(section)) for section in sections]
+        except BaseExceptionGroup as errors:
+            raise errors.exceptions[0] from errors
+        return dict(task.result() for task in tasks)
 
-        return run
-
-    return dict(_overlap(*[writer(section) for section in sections]))
+    return await write_all()
 
 
-def _write_section(
+
+async def _write_section_async(
     llm: Any, message: str, history: list[dict[str, Any]], section: SectionPlan,
     asked: list[_Ask], found: list[_Search], charts: list[dict[str, Any]], insights: list[dict[str, Any]],
     *, remembered: str = "", folded_through: int = 0, prior: str = "", trace: _RunTrace | None = None,
     chart_notes: list[dict[str, Any]] | None = None,
 ) -> tuple[str, list[str]]:
+    """和 _write_section 同一段正文。模型调用在当前事件循环里等。"""
     messages = _history(history, folded_through)
     messages.append({
         "role": "user",
         "content": _section_payload(section, asked, found, charts, insights, prior, chart_notes),
     })
     try:
-        raw = _call_json(
+        raw = await _call_json_async(
             llm,
-            model=model_calls.SCHOOL_REASONER,
+            model=model_calls.DEEPSEEK_FLASH,
             system=attach(WRITING_PROMPT.format(
                 message=(message or "").strip()[:4000] or _FALLBACK,
                 section_title=section.title,
@@ -1427,30 +1329,32 @@ def _write_section(
             messages=messages,
             schema=section_schema(), temperature=0, trace=trace,
         )
-    except (ModelCapacityExceeded, ProviderError):
+    except (ModelCapacityExceeded, ProviderError, JsonRepairExhausted):
         raise
     except Exception:
         return "", []
     return _read_section(raw)
 
 
-def _write_summary(
+
+async def _write_summary_async(
     llm: Any, message: str, history: list[dict[str, Any]], body: str,
     *, remembered: str = "", folded_through: int = 0, trace: _RunTrace | None = None,
 ) -> tuple[str, list[str]]:
+    """和 _write_summary 同一段摘要。在已经跑着的事件循环里等模型。"""
     messages = _history(history, folded_through)
     messages.append({"role": "user", "content": f"=== 已写章节 ===\n{body}"})
     try:
-        raw = _call_json(
+        raw = await _call_json_async(
             llm,
-            model=model_calls.SCHOOL_REASONER,
+            model=model_calls.DEEPSEEK_FLASH,
             system=attach(SUMMARY_PROMPT.format(
                 message=(message or "").strip()[:4000] or _FALLBACK,
             ), remembered),
             messages=messages,
             schema=section_schema(), temperature=0, trace=trace,
         )
-    except (ModelCapacityExceeded, ProviderError):
+    except (ModelCapacityExceeded, ProviderError, JsonRepairExhausted):
         raise
     except Exception:
         return "", []
@@ -1901,13 +1805,14 @@ def _review_score(raw: Any) -> tuple[int | None, list[dict[str, int | str]]]:
     return max(0, min(100, score)), []
 
 
-def _review_report(
+
+async def _review_report_async(
     llm: Any, *, message: str, report: str, evidence: str, previous_issues: str = "（无）",
     remembered: str = "", trace: _RunTrace | None = None,
 ) -> tuple[int | None, list[dict[str, str]], list[dict[str, int | str]], str | None]:
-    """Score the current draft from five chapter marks. Later rounds check the last issues."""
+    """和 _review_report 同一套打分。在已经跑着的事件循环里等模型。"""
     try:
-        raw = _call_json(
+        raw = await _call_json_async(
             llm,
             model=model_calls.DEEPSEEK_FLASH,
             system=attach(REPORT_REVIEW_PROMPT.format(
@@ -1920,7 +1825,7 @@ def _review_report(
             messages=[{"role": "user", "content": "找出问题并给这整份报告打分。"}],
             schema=review_schema(), temperature=0, trace=trace,
         )
-    except (ModelCapacityExceeded, ProviderError):
+    except (ModelCapacityExceeded, ProviderError, JsonRepairExhausted):
         raise
     except Exception as err:
         return None, [], [], str(err).split("\n", 1)[0][:200]
@@ -1930,18 +1835,19 @@ def _review_report(
     return score, _review_issues(raw), chapters, None
 
 
-def _review_rounds(
+
+async def _review_rounds_async(
     llm: Any, *, message: str, report: str, evidence: str, remembered: str = "",
     planned: list[SectionPlan] | None = None, charts_for: dict[str, list[dict[str, Any]]] | None = None,
     trace: _RunTrace | None = None,
 ) -> tuple[str, int | None, str | None]:
-    """Hard-check, score, and rewrite every named chapter in one call. Two revisions by default."""
+    """和 _review_rounds 同一套审核。在已经跑着的事件循环里等模型。"""
     report = apply_hard_fixes(report)
     if planned is not None:
         report = place_charts_in_sections(report, planned, charts_for or {})
     gates = hard_issues(report, message=message, evidence=evidence)
     if gates:
-        report = _revise_report(
+        report = await _revise_report_async(
             llm, message=message, report=report, score=0, chapters=[], issues=gates,
             evidence=evidence, remembered=remembered, trace=trace,
         ) or report
@@ -1950,7 +1856,7 @@ def _review_rounds(
     error: str | None = None
     previous = "（无）"
     for round_index in range(1, MAX_REVIEW_ROUNDS + 1):
-        score, issues, chapters, error = _review_report(
+        score, issues, chapters, error = await _review_report_async(
             llm, message=message, report=report, evidence=evidence,
             previous_issues=previous, remembered=remembered,
             trace=trace,
@@ -1959,7 +1865,7 @@ def _review_rounds(
             score = PASS_SCORE - 1
         if error or score is None or score >= PASS_SCORE or not issues:
             return report, score, error
-        revised = _revise_report(
+        revised = await _revise_report_async(
             llm, message=message, report=report, score=score, chapters=chapters, issues=issues,
             evidence=evidence, remembered=remembered,
             trace=trace,
@@ -1970,7 +1876,7 @@ def _review_rounds(
         previous = json.dumps(issues, ensure_ascii=False)
         if round_index == MAX_REVIEW_ROUNDS:
             break
-    score, issues, _, error = _review_report(
+    score, issues, _, error = await _review_report_async(
         llm, message=message, report=report, evidence=evidence,
         previous_issues=previous, remembered=remembered,
         trace=trace,
@@ -1994,14 +1900,15 @@ def _revise_instruction(issues: list[dict[str, str]]) -> str:
     return f"一次改完这些章节，不要只改一节：{'、'.join(titles)}。"
 
 
-def _revise_report(
+
+async def _revise_report_async(
     llm: Any, *, message: str, report: str, score: int, chapters: list[dict[str, int | str]],
     issues: list[dict[str, str]], evidence: str, remembered: str = "",
     trace: _RunTrace | None = None,
 ) -> str:
-    """Rewrite every named chapter in one call. Empty means keep the original."""
+    """和 _revise_report 同一次改写。在已经跑着的事件循环里等模型。"""
     try:
-        raw = _call_json(
+        raw = await _call_json_async(
             llm,
             model=model_calls.DEEPSEEK_FLASH,
             system=attach(REPORT_REVISE_PROMPT.format(
@@ -2015,7 +1922,7 @@ def _revise_report(
             messages=[{"role": "user", "content": _revise_instruction(issues)}],
             schema=revise_schema(), temperature=0, trace=trace,
         )
-    except (ModelCapacityExceeded, ProviderError):
+    except (ModelCapacityExceeded, ProviderError, JsonRepairExhausted):
         raise
     except Exception:
         return ""

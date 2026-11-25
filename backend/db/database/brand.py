@@ -107,6 +107,10 @@ class BrandMixin:
             row = s.get(orm.User, id)
             return User(id=row.id, distributor_id=row.distributor_id, name=row.name) if row else None
 
+    def distributor_ids(self) -> list[str]:
+        with self.tx() as s:
+            return list(s.scalars(select(orm.Distributor.id).order_by(orm.Distributor.id)))
+
     def users(self, distributor_id: str | None = None) -> list[User]:
         with self.tx() as s:
             q = select(orm.User).order_by(orm.User.name, orm.User.id)

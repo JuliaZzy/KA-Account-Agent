@@ -75,9 +75,10 @@ class _LegacyStepLimit(Exception):
 
 
 def _ledger(trace: _RunTrace | None, purpose: str) -> dict[str, Any]:
-    if trace is None or trace.db is None or not trace.run_id or not trace.step_id:
-        return {}
-    return {"db": trace.db, "run_id": trace.run_id, "step_id": trace.step_id, "purpose": purpose}
+    found: dict[str, Any] = {"purpose": purpose}
+    if trace is not None and trace.db is not None and trace.run_id and trace.step_id:
+        found.update(db=trace.db, run_id=trace.run_id, step_id=trace.step_id)
+    return found
 
 
 def _ds_client():
@@ -90,7 +91,7 @@ def _ask_ds(
 ) -> dict[str, Any]:
     """One JSON object from deepseek-flash, thinking off."""
     _charge_model_call(trace)
-    return model_calls.flash_json(
+    return model_calls.deepseek_json(
         system=system, messages=[{"role": "user", "content": user}], schema=schema,
         temperature=0, client=_ds_client(), **_ledger(trace, purpose),
     )
@@ -220,7 +221,7 @@ def _ask_school(
     """Run the historical planning role through the same DeepSeek JSON route as ReAct."""
     _charge_model_call(trace)
     schema = table_schema() if purpose == "data.pick" else reflection_schema()
-    return model_calls.flash_json(
+    return model_calls.deepseek_json(
         system=system, messages=[{"role": "user", "content": user}], schema=schema,
         temperature=0, client=_ds_client(), **_ledger(trace, purpose),
     )

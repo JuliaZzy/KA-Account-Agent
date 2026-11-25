@@ -7,6 +7,8 @@ the database's isolated reader role. Attempts are logged for review.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import logging
 import re
@@ -78,9 +80,10 @@ class _RunTrace:
 
 
 def _ledger(trace: _RunTrace | None, purpose: str) -> dict[str, Any]:
-    if trace is None or trace.db is None or not trace.run_id or not trace.step_id:
-        return {}
-    return {"db": trace.db, "run_id": trace.run_id, "step_id": trace.step_id, "purpose": purpose}
+    found: dict[str, Any] = {"purpose": purpose}
+    if trace is not None and trace.db is not None and trace.run_id and trace.step_id:
+        found.update(db=trace.db, run_id=trace.run_id, step_id=trace.step_id)
+    return found
 
 
 def _ds_client():
@@ -92,7 +95,7 @@ def _ask_ds(
     purpose: str = "data.react",
 ) -> dict[str, Any]:
     """One JSON object from deepseek-flash, thinking off."""
-    return model_calls.flash_json(
+    return model_calls.deepseek_json(
         system=system, messages=[{"role": "user", "content": user}], schema=schema,
         temperature=0, client=_ds_client(), **_ledger(trace, purpose),
     )
@@ -258,6 +261,48 @@ def _next_action(
                    purpose="data.react")
 
 
+_ORIGINAL_NEXT_ACTION = _next_action
+
+
+async def _ask_ds_async(
+    *, system: str, user: str, schema: dict[str, Any], trace: _RunTrace | None = None,
+    purpose: str = "data.react",
+) -> dict[str, Any]:
+    """和 _ask_ds 一样向 DeepSeek 要一个 JSON。在已经跑着的事件循环里等。"""
+    return await model_calls.deepseek_json_async(
+        system=system, messages=[{"role": "user", "content": user}], schema=schema,
+        temperature=0, client=_ds_client(), **_ledger(trace, purpose),
+    )
+
+
+async def _next_action_async(
+    *, question: str, context: str, history: list[dict[str, Any]] | None,
+    folded_through: int, observations: list[dict[str, Any]], trace: _RunTrace,
+    remaining: dict[str, int], required_columns: list[str] | None = None,
+) -> dict[str, Any]:
+    """和 _next_action 一样选下一步。在已经跑着的事件循环里等模型。"""
+    system = attach(REACT, context)
+    user = json.dumps({
+        "original_question": _question_text(question, history, folded_through),
+        "catalog": catalog_text(),
+        "remaining": remaining,
+        "required_columns": required_columns or [],
+        "observations": observations,
+    }, ensure_ascii=False)
+    # 测试会换掉 _next_action。换过就用测试给的结果，否则在当前循环里等模型。
+    if _next_action is not _ORIGINAL_NEXT_ACTION:
+        chosen = _next_action(
+            question=question, context=context, history=history, folded_through=folded_through,
+            observations=observations, trace=trace, remaining=remaining, required_columns=required_columns,
+        )
+        if inspect.isawaitable(chosen):
+            return await chosen
+        return chosen
+    return await _ask_ds_async(
+        system=system, user=user, schema=action_schema(), trace=trace, purpose="data.react",
+    )
+
+
 def _note(observations: list[dict[str, Any]], turn: int, **fields: Any) -> dict[str, Any]:
     """Append one observation for this turn and return it so a score can be attached later."""
     entry = {"turn": turn, **fields}
@@ -333,12 +378,29 @@ def answer_question(
     A successful query is retained if a later attempt fails. `reflect=False` returns
     after the first successful query for callers that do not need semantic review.
     """
+    return model_calls.enter(answer_question_async(
+        db, question=question, partnership_id=partnership_id, brand_id=brand_id,
+        distributor_id=distributor_id, session_id=session_id, reflect=reflect, history=history,
+        folded_through=folded_through, summary=summary, run_id=run_id, step_id=step_id,
+        required_columns=required_columns,
+    ))
+
+
+async def answer_question_async(
+    db: Database, *, question: str,
+    partnership_id: str, brand_id: str, distributor_id: str, session_id: str | None = None,
+    reflect: bool = True, history: list[dict[str, Any]] | None = None,
+    folded_through: int = 0, summary: str = "",
+    run_id: str | None = None, step_id: str | None = None,
+    required_columns: list[str] | None = None,
+) -> QueryResult:
+    """answer_question 的协程版。SQL 在线程里跑，模型调用在当前事件循环里等。"""
     original = (question or "").strip()[:_MAX_QUESTION]
     required = [str(column).strip() for column in (required_columns or []) if str(column).strip()]
     if not original:
         return QueryResult(False, None, [], 0, "empty question", "generation", [])
     trace = _RunTrace(db=db, run_id=run_id, step_id=step_id)
-    person = actor_id(db, session_id)
+    person = await asyncio.to_thread(actor_id, db, session_id)
     context = prompt_context(standing_block(db, partnership_id, person), summary_block(summary))
     observations: list[dict[str, Any]] = []
     inspected: list[str] = []
@@ -357,7 +419,7 @@ def answer_question(
             stop_reason = "sql_attempts_exhausted"
             break
         try:
-            action = _next_action(
+            action = await _next_action_async(
                 question=original, context=context, history=history,
                 folded_through=folded_through, observations=observations, trace=trace,
                 remaining={
@@ -388,7 +450,7 @@ def answer_question(
             if unrated_entry is not None:
                 unrated_entry["score"] = unrated.score
             if unrated.log_id is not None:
-                _log_score(db, unrated.log_id, unrated.score)
+                await asyncio.to_thread(_log_score, db, unrated.log_id, unrated.score)
             if best is None or unrated.score >= (best.score or 0):
                 best = unrated
             unrated = unrated_entry = None
@@ -424,7 +486,7 @@ def answer_question(
             break
         sql = _strip_fence(str(action.get("sql") or ""))
         sql_attempts += 1
-        latest = run_statement(
+        latest = await run_statement_async(
             db, sql, question=original, partnership_id=partnership_id, brand_id=brand_id,
             distributor_id=distributor_id, session_id=session_id, tables=inspected,
             run_id=run_id, turn=turn,
@@ -509,6 +571,20 @@ def run_statement(
         truncated=truncated,
         columns=columns,
     )
+
+
+async def run_statement_async(
+    db: Database, sql: str, *, question: str,
+    partnership_id: str, brand_id: str, distributor_id: str, session_id: str | None = None,
+    tables: list[str] | None = None, run_id: str | None = None, turn: int | None = None,
+) -> QueryResult:
+    """和 run_statement 一样跑一条 SQL。查库是阻塞的，放到线程里，避免卡住事件循环。"""
+    async with model_calls.tool_limit():
+        return await asyncio.to_thread(
+            run_statement, db, sql, question=question, partnership_id=partnership_id,
+            brand_id=brand_id, distributor_id=distributor_id, session_id=session_id,
+            tables=tables, run_id=run_id, turn=turn,
+        )
 
 
 def _clamp_score(value: Any) -> int:

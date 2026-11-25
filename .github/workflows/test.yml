@@ -1,0 +1,21 @@
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      PYTHON_IMAGE: python:3.12-slim-bookworm
+      POSTGRES_IMAGE: postgres:17-alpine
+      REDIS_IMAGE: redis:7-alpine
+      MILVUS_IMAGE: milvusdb/milvus:v2.5.15
+      PIP_INDEX_URL: https://pypi.org/simple
+    steps:
+      - uses: actions/checkout@v4
+      - name: pytest
+        run: ./dev test

@@ -1,47 +1,15 @@
-"""把一条聊天回复写入会话，并产出工作台要读的事件。
-
-每个代理做完自己的事之后调用这里。编排器用它处理工具，以及计划里没有点名任何人时的直接回答。
-"""
+"""把一条聊天回复写入会话，并产出工作台要读的事件。"""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from typing import Any
 
 from ..db import Database
-from ..llm import calls as model_calls
-from ..memory import attach, prompt_context, prompt_turns, record_history, standing_block, summary_block
+from ..memory import record_history
 from ..services.run_names import StepStatus, StepType, step_name
-from .prompt import ANSWER
 
 
-def one_shot(
-    db: Database, session: dict[str, Any], text: str, extra: dict[str, Any] | None = None,
-    llm: Any | None = None,
-) -> Iterator[dict[str, Any]]:
-    assistant: dict[str, Any] = {"role": "assistant", "content": text}
-    history = [*(session.get("history") or []), {"role": "user", "content": "(message)"}, assistant]
-    record_history(db, session, history)
-    yield {"type": "token", "text": text}
-    yield {
-        "type": "done", "stage": session.get("stage"), "slots": session.get("slots"), "draft": None,
-        "gaps": [], "gaps_detail": [], "advisories": [], "confirm_token": None, "submitted": None,
-        **(extra or {}),
-    }
-
-
-def _chat_messages(session: dict[str, Any], prompt: str) -> list[dict[str, Any]]:
-    history = list(session.get("history") or [])
-    messages = [
-        {"role": m.get("role"), "content": str(m.get("content") or "")}
-        for m in prompt_turns(history, int(session.get("folded_through") or 0))
-        if m.get("role") in ("user", "assistant")
-    ]
-    messages.append({"role": "user", "content": prompt})
-    return messages
-
-
-def save_reply(
+async def save_reply(
     db: Database, session: dict[str, Any], text: str, reply: str, extra: dict[str, Any] | None,
     llm: Any | None = None, session_fields: dict[str, Any] | None = None, run_id: str | None = None,
 ) -> dict[str, Any]:
@@ -117,9 +85,15 @@ def save_reply(
     try:
         record_history(
             db, session, [*history, {"role": "user", "content": text}, assistant], llm=llm,
-            fold=True, run_id=run_id,
+            fold=False, run_id=run_id,
             **(session_fields or {}),
         )
+        from ..memory import FOLD_TOKENS, _prefix_tokens, fold_session_async
+
+        saved = db.session(session["id"]) or session
+        folded = int(saved.get("folded_through") or 0)
+        if _prefix_tokens(list(saved.get("history") or []), folded) >= FOLD_TOKENS:
+            await fold_session_async(db, llm, str(session["id"]), run_id)
     except Exception as exc:
         if step is not None:
             db.finish_step(step["id"], StepStatus.FAILED, None, {"message": str(exc)})
@@ -131,30 +105,3 @@ def save_reply(
         "gaps": [], "gaps_detail": [], "advisories": [], "confirm_token": None, "submitted": None,
         **extra,
     }
-
-
-def answer_directly(
-    db: Database, llm: Any, session: dict[str, Any], text: str, *,
-    prompt_text: str | None = None, system: str | None = None, extra: dict[str, Any] | None = None,
-    done_step: tuple[str, str, str] | None = None, session_fields: dict[str, Any] | None = None,
-    purpose: str = "orchestrator.answer",
-) -> Iterator[dict[str, Any]]:
-    from .status import status
-
-    parts: list[str] = []
-    system = attach(system or ANSWER, prompt_context(
-        standing_block(db, session["partnership_id"], session.get("user_id")), summary_block(session.get("summary")),
-    ))
-    for chunk in model_calls.school_text(
-        model_calls.SCHOOL_CHAT, client=llm, system=system,
-        messages=_chat_messages(session, prompt_text or text),
-        purpose=purpose,
-    ):
-        parts.append(chunk)
-        yield {"type": "token", "text": chunk}
-    reply = "".join(parts).strip() or "How can I help?"
-    # Close the step before the reply is saved, so the trace shows it finished.
-    if done_step is not None:
-        step_id, title, detail = done_step
-        yield status(step_id, title, detail, state="done")
-    return save_reply(db, session, text, reply, extra, llm=llm, session_fields=session_fields)

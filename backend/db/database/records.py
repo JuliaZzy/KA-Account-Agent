@@ -292,6 +292,28 @@ class RecordMixin:
             s.flush()
             return _row_dict(row)
 
+    def fail_latest_model_call(self, run_id: str, error: dict[str, Any]) -> str | None:
+        """把这次 Run 上最近一条模型调用标成失败。
+
+        解析失败在写入时已经是 failed。schema 对不上时那一行先记成 succeeded，
+        修复次数用完后在这里改过来。返回这条调用的 id；没有调用时返回 None。
+        """
+        with self.tx() as s:
+            row = s.scalars(
+                select(orm.ModelCall)
+                .where(orm.ModelCall.run_id == run_id)
+                .order_by(orm.ModelCall.created_at.desc(), orm.ModelCall.id.desc())
+                .limit(1)
+                .with_for_update()
+            ).first()
+            if row is None:
+                return None
+            if row.status != StepStatus.FAILED:
+                row.status = StepStatus.FAILED
+                row.error_json = error
+            s.flush()
+            return row.id
+
     def model_budget(self, run_id: str) -> dict[str, Any] | None:
         """Caps and spend already stored for this run. None when the run is missing.
 

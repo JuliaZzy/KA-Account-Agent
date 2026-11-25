@@ -118,6 +118,7 @@ class StepEvent(StrEnum):
     MODEL_ROUTE_SELECTED = "model.route_selected"
     MODEL_ROUTE_FALLBACK = "model.route_fallback"
     MODEL_QUALITY_GATE_FAILED = "model.quality_gate_failed"
+    MODEL_OUTPUT_TRUNCATED = "model.output_truncated"
     TOOL_STARTED = "tool.started"
     TOOL_COMPLETED = "tool.completed"
     TOOL_FAILED = "tool.failed"

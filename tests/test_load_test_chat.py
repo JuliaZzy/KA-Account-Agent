@@ -111,6 +111,9 @@ def test_open_loop_reports_generator_drops_separately(monkeypatch):
         def session_run_facts(self, _ids):
             return [{"run_id": "run-1", "status": "succeeded"}]
 
+        def session_route_counts(self, _ids):
+            return {"route_selected": 1, "route_fallback": 0}
+
     monkeypatch.setattr(load_test_chat, "_create_session", create_session)
     monkeypatch.setattr(load_test_chat, "_one", one)
     monkeypatch.setattr(load_test_chat, "_ledger_usage", lambda *_args, **_kwargs: None)
@@ -128,3 +131,11 @@ def test_open_loop_reports_generator_drops_separately(monkeypatch):
     assert report["summary"]["offered"] == 4
     assert report["summary"]["submitted"] == 1
     assert report["summary"]["outcomes"]["generator_dropped"] == 3
+    assert report["summary"]["route_fallback"] == 0
+
+
+def test_healthy_smoke_fails_when_any_call_left_the_primary_model():
+    assert load_test_chat.fallback_gate(0, allow_fallback=False) == 0
+    assert load_test_chat.fallback_gate(1, allow_fallback=False) == 1
+    assert load_test_chat.fallback_gate(None, allow_fallback=False) == 1
+    assert load_test_chat.fallback_gate(3, allow_fallback=True) == 0

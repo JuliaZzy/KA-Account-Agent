@@ -208,6 +208,19 @@ class QueueMixin:
             s.flush()
             return "dead_letter"
 
+    def defer_pending_outbox(self, outbox_id: str, seconds: int = 5) -> None:
+        """Move one pending row out of the head of the scan without starting its wait over."""
+        now = utcnow()
+        with self.tx() as s:
+            job = s.scalars(
+                select(orm.OutboxJob)
+                .where(orm.OutboxJob.id == outbox_id, orm.OutboxJob.status == OutboxStatus.PENDING)
+                .with_for_update()
+            ).first()
+            if job is None:
+                return
+            job.next_attempt_at = now + timedelta(seconds=seconds)
+
     def find_pending_outbox_jobs(self, limit: int = 100) -> list[dict[str, Any]]:
         """Pending outbox rows whose `next_attempt_at` has arrived, oldest first."""
         now = utcnow()
@@ -458,9 +471,22 @@ class QueueMixin:
             .with_for_update()
         ).first()
 
+    def record_plan_failure(self, run_id: str, error: dict[str, Any]) -> None:
+        """记一条计划不可用的事件。对话还要继续回答，所以这不是死信。"""
+        now = utcnow()
+        with self.tx() as s:
+            run = s.get(orm.AgentRun, run_id)
+            if run is None:
+                return
+            self._append_event(s, run_id, "plan.unusable", error, now)
+
     def _dead_letter(
         self, s: Session, run: orm.AgentRun, error: dict[str, Any], now: datetime, *, attempts: int,
     ) -> None:
+        error = dict(error)
+        call_id = self._latest_failed_model_call(s, run.id)
+        if call_id:
+            error["failed_model_call_id"] = call_id
         box = self._latest_execute_outbox(s, run.id)
         if box is not None and isinstance(box.payload_json, dict):
             payload = dict(box.payload_json)
@@ -479,6 +505,17 @@ class QueueMixin:
             error_json=error,
             created_at=now,
         ))
+
+    @staticmethod
+    def _latest_failed_model_call(s: Session, run_id: str) -> str | None:
+        """放弃这条 Run 时，指向最近一次失败的模型调用。没有就空着。"""
+        row = s.scalars(
+            select(orm.ModelCall)
+            .where(orm.ModelCall.run_id == run_id, orm.ModelCall.status == "failed")
+            .order_by(orm.ModelCall.created_at.desc(), orm.ModelCall.id.desc())
+            .limit(1)
+        ).first()
+        return None if row is None else row.id
 
     def _fail_locked_run(
         self, s: Session, run: orm.AgentRun, error: dict[str, Any], reason: str, now: datetime,

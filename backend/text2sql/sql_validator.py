@@ -22,7 +22,7 @@ MAX_SELECTS = 8
 
 
 def _limit_from_env(name: str, default: int) -> int:
-    """An experiment can lower the caps (the seed has too few rows to ever reach 100/200).
+    """An experiment can lower the cap (the seed has too few rows to ever reach 200).
     Anything unparsable or non-positive falls back to the default."""
     try:
         value = int(os.environ.get(name, ""))
@@ -31,9 +31,9 @@ def _limit_from_env(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
-DEFAULT_LIMIT = _limit_from_env("KA_SQL_DEFAULT_LIMIT", 100)
-MAX_LIMIT = max(DEFAULT_LIMIT, _limit_from_env("KA_SQL_MAX_LIMIT", 200))
-MAX_OFFSET = 5_000
+# Missing LIMIT is filled with this; a larger written LIMIT is lowered to it.
+ROW_LIMIT = _limit_from_env("KA_SQL_ROW_LIMIT", 200)
+MAX_OFFSET = 40
 
 # Functions sqlglot does not model as their own class. Anything else anonymous is rejected.
 _ALLOWED_ANONYMOUS = frozenset({
@@ -120,7 +120,7 @@ def _const_int(node: exp.Expression) -> int | None:
 
 def _cap_numbers(sql: str) -> str:
     def limit(match: re.Match[str]) -> str:
-        return f"LIMIT {min(int(match.group(1)), MAX_LIMIT)}"
+        return f"LIMIT {min(int(match.group(1)), ROW_LIMIT)}"
 
     def offset(match: re.Match[str]) -> str:
         return f"OFFSET {min(int(match.group(1)), MAX_OFFSET)}"
@@ -133,14 +133,14 @@ def system_row_cap(raw: str, sanitized: str) -> int | None:
     """The row cap the system imposed on this statement, or None when the author's LIMIT stood.
 
     `LIMIT 5` written by the model is the question's answer, not a truncation. A LIMIT the
-    validator appended (none written) or lowered (above MAX_LIMIT) is: hitting it means the
+    validator appended (none written) or lowered (above ROW_LIMIT) is: hitting it means the
     result may be cut short, and callers should say so instead of reporting a row count.
     """
     final = _LIMIT_RE.findall(sanitized)
     if not final:
         return None
     written = _LIMIT_RE.findall(raw or "")
-    if not written or int(written[-1]) > MAX_LIMIT:
+    if not written or int(written[-1]) > ROW_LIMIT:
         return int(final[-1])
     return None
 
@@ -214,5 +214,5 @@ def validate(sql: str) -> tuple[bool, str, str]:
 
     rendered = expr.sql(dialect="postgres").strip().rstrip(";")
     if _LIMIT_RE.search(rendered) is None:
-        rendered = f"{rendered} LIMIT {DEFAULT_LIMIT}"
+        rendered = f"{rendered} LIMIT {ROW_LIMIT}"
     return True, "", _cap_numbers(rendered)

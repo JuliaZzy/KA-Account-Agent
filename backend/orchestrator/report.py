@@ -9,9 +9,9 @@ from ..db import Database
 from ..memory import actor_id, prompt_context, standing_block, summary_block
 from ..report.turn import (
     ReportDraft,
-    _plan,
+    _iter_after_queries,
+    _plan_async,
     asks_from_payloads,
-    iter_after_queries,
     planned_questions,
     planned_searches,
     searches_from_payloads,
@@ -24,10 +24,10 @@ from .plan import PlanTask
 REPORT_KEY = "report"
 
 
-def execute_report(
+async def execute_report(
     db: Database, llm: Any, run: dict[str, Any], session: dict[str, Any],
 ) -> dict[str, Any] | None:
-    """Advance one report claim. None means parked for nested data runs."""
+    """这次领取已经在事件循环里。规划和写正文都在这个循环上等，不再另外打开。"""
     from ..llm.context import reset_call_context, set_call_context
 
     payload = run.get("input_json") if isinstance(run.get("input_json"), dict) else {}
@@ -42,14 +42,14 @@ def execute_report(
         db=db, run_id=str(run["id"]), step_id=step_id or None, purpose="report",
     )
     try:
-        return _advance_report(
+        return await _advance_report(
             db, llm, run, session, payload, asked_text, state, report, step_id,
         )
     finally:
         reset_call_context(token)
 
 
-def _advance_report(
+async def _advance_report(
     db: Database, llm: Any, run: dict[str, Any], session: dict[str, Any],
     payload: dict[str, Any], text: str, state: dict[str, Any] | None,
     report: dict[str, Any] | None, step_id: str,
@@ -60,9 +60,9 @@ def _advance_report(
         finish_child(db, run, result)
         return result
     if phase == "planned":
-        return _resume_decision(db, llm, run, session, payload, text, step_id, report or {}, "await_query")
+        return await _resume_decision(db, llm, run, session, payload, text, step_id, report or {}, "await_query")
     if not phase:
-        return _start(
+        return await _start(
             db, llm, run, session, payload, text, step_id,
         )
     wave_id = state.get("wave_id") if isinstance(state, dict) else None
@@ -71,11 +71,11 @@ def _advance_report(
     if isinstance(wave_id, str) and wave_id:
         results.update(collect_wave(db, run, session_id, wave_id))
     if phase == "await_query":
-        return _after_query(db, llm, run, session, payload, text, step_id, report or {}, results)
+        return await _after_query(db, llm, run, session, payload, text, step_id, report or {}, results)
     return _fail(db, run, payload, "unknown report phase", step_id)
 
 
-def _resume_decision(
+async def _resume_decision(
     db: Database, llm: Any, run: dict[str, Any], session: dict[str, Any],
     payload: dict[str, Any], text: str, step_id: str, report: dict[str, Any], next_phase: str,
 ) -> dict[str, Any] | None:
@@ -101,18 +101,18 @@ def _resume_decision(
             return None
     planned = [SectionPlan(**item) for item in report.get("sections") or [] if isinstance(item, dict)]
     empty = {section.id: [] for section in planned}
-    return _consume(
+    return await _consume(
         db, llm, run, session, payload, text, step_id, planned,
         str(report.get("title") or ""), [], empty, [], found=[],
     )
 
 
-def _start(
+async def _start(
     db: Database, llm: Any, run: dict[str, Any], session: dict[str, Any],
     payload: dict[str, Any], text: str, step_id: str,
 ) -> dict[str, Any] | None:
     remembered = _remembered(db, session)
-    planned, title = _plan(
+    planned, title = await _plan_async(
         llm, message=text, history=list(session.get("history") or []),
         hint=None, remembered=remembered,
         folded_through=int(session.get("folded_through") or 0),
@@ -133,7 +133,7 @@ def _start(
     _close_decision(db, run["id"], "report.plan", decision, tasks)
     if not tasks:
         empty = {section.id: [] for section in planned}
-        return _consume(
+        return await _consume(
             db, llm, run, session, payload, text, step_id, planned, title, [], empty, [],
             found=[],
         )
@@ -142,13 +142,13 @@ def _start(
     if parked is not None:
         return None
     empty = {section.id: [] for section in planned}
-    return _consume(
+    return await _consume(
         db, llm, run, session, payload, text, step_id, planned, title, [], empty, [],
         found=[],
     )
 
 
-def _after_query(
+async def _after_query(
     db: Database, llm: Any, run: dict[str, Any], session: dict[str, Any],
     payload: dict[str, Any], text: str, step_id: str,
     report: dict[str, Any], results: dict[str, dict[str, Any]],
@@ -168,21 +168,22 @@ def _after_query(
         if task_id and query
     ]
     found = searches_from_payloads(search_pairs, results)
-    return _consume(
+    return await _consume(
         db, llm, run, session, payload, text, step_id, planned,
         str(report.get("title") or ""), asked, by_section, failures,
         found=found,
     )
 
 
-def _consume(
+async def _consume(
     db: Database, llm: Any, run: dict[str, Any], session: dict[str, Any],
     payload: dict[str, Any], text: str, step_id: str,
     planned: Any, title: str, asked: list, by_section: dict, failures: list[str],
     *, found: list,
 ) -> dict[str, Any] | None:
     partnership = db.partnership(str(session["partnership_id"]))
-    items = iter_after_queries(
+    draft: ReportDraft | None = None
+    async for item in _iter_after_queries(
         db, llm, planned=planned, report_title=title, asked=asked, by_section=by_section,
         failures=failures, message=text, history=list(session.get("history") or []),
         remembered=_remembered(db, session),
@@ -193,9 +194,7 @@ def _consume(
         session_id=str(session["id"]),
         trace=_trace(db, run["id"], step_id),
         found=found,
-    )
-    draft: ReportDraft | None = None
-    for item in items:
+    ):
         if isinstance(item, ReportDraft):
             draft = item
     return _done(db, run, payload, draft, step_id)

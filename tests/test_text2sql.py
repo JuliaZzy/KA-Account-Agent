@@ -107,7 +107,7 @@ def test_returned_rows_keep_every_cell_and_the_prompt_copy_is_short():
 
 def test_validator_accepts_a_read_and_caps_the_limit():
     ok, err, sql = validate("SELECT term_end_date FROM contracts WHERE term_end_date >= '2026-01-01'")
-    assert ok and err == "" and "term_end_date" in sql and "LIMIT 100" in sql.upper()
+    assert ok and err == "" and "term_end_date" in sql and "LIMIT 200" in sql.upper()
 
     ok, _, sql = validate("SELECT id FROM products LIMIT 99999")
     assert ok and "LIMIT 200" in sql.upper()
@@ -514,7 +514,7 @@ def test_truncated_query_can_report_the_exact_total(db):
 
 def test_only_a_system_applied_limit_counts_as_a_cap():
     for sql, cap in [
-        ("SELECT id FROM products", 100),
+        ("SELECT id FROM products", 200),
         ("SELECT id FROM products LIMIT 99999", 200),
         ("SELECT id FROM products LIMIT 5", None),
         ("SELECT id FROM products LIMIT 200", None),
@@ -832,26 +832,22 @@ def test_each_attempt_log_keeps_its_turn_and_later_score(db, monkeypatch):
     assert row["id"] == result.log_id and row["turn"] == 2 and row["score"] == 90
 
 
-def test_row_caps_can_be_lowered_for_an_experiment_but_never_below_the_default(monkeypatch):
+def test_row_cap_can_be_lowered_for_an_experiment(monkeypatch):
     import importlib
 
     from backend.text2sql import sql_validator
 
     try:
-        monkeypatch.setenv("KA_SQL_DEFAULT_LIMIT", "50")
-        monkeypatch.setenv("KA_SQL_MAX_LIMIT", "80")
+        monkeypatch.setenv("KA_SQL_ROW_LIMIT", "80")
         lowered = importlib.reload(sql_validator)
-        assert (lowered.DEFAULT_LIMIT, lowered.MAX_LIMIT) == (50, 80)
+        assert lowered.ROW_LIMIT == 80
         ok, _error, clean = lowered.validate("SELECT id FROM purchase_orders")
-        assert ok and clean.endswith("LIMIT 50")
+        assert ok and clean.endswith("LIMIT 80")
         ok, _error, clean = lowered.validate("SELECT id FROM purchase_orders LIMIT 150")
         assert ok and clean.endswith("LIMIT 80")
         assert lowered.system_row_cap("SELECT id FROM purchase_orders LIMIT 150", clean) == 80
-        monkeypatch.setenv("KA_SQL_DEFAULT_LIMIT", "nonsense")
-        monkeypatch.setenv("KA_SQL_MAX_LIMIT", "10")
-        assert importlib.reload(sql_validator).DEFAULT_LIMIT == 100
-        assert sql_validator.MAX_LIMIT == 100  # a max below the default would make LIMIT contradict itself
+        monkeypatch.setenv("KA_SQL_ROW_LIMIT", "nonsense")
+        assert importlib.reload(sql_validator).ROW_LIMIT == 200
     finally:
-        monkeypatch.delenv("KA_SQL_DEFAULT_LIMIT", raising=False)
-        monkeypatch.delenv("KA_SQL_MAX_LIMIT", raising=False)
+        monkeypatch.delenv("KA_SQL_ROW_LIMIT", raising=False)
         importlib.reload(sql_validator)

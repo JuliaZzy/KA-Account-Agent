@@ -137,7 +137,7 @@ class Extraction:
     slots: PoSlots
     reply_language: str
 
-def extract_turn(
+async def extract_turn(
     llm: Any,
     *,
     manifest: str,
@@ -167,7 +167,7 @@ def extract_turn(
         for m in prompt_turns(history, folded_through)
     ] + [{"role": "user", "content": user_content}]
     ledger = dict(db=db, run_id=run_id, step_id=step_id, purpose="po.extract")
-    raw = model_calls.flash_json(
+    raw = await model_calls.deepseek_json_async(
         system=system, messages=msgs, schema=EXTRACT_SCHEMA, temperature=0, client=llm, **ledger,
     )
     lang = raw.get("reply_language")

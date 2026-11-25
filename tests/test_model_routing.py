@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from datetime import timedelta
+
+import pytest
 
 from backend.db import utcnow
 from backend.llm import calls
@@ -59,7 +60,7 @@ def test_plan_policy_has_primary_fallback_and_budget_metadata():
     assert policy.primary.model == "qwen3.7-flash"
     assert policy.fallbacks[0].model == "deepseek-flash"
     assert policy.max_tokens == 1200
-    assert policy.max_model_calls == 2
+    assert policy.max_model_calls == 6
 
 
 def test_chat_and_open_runs_have_safety_net_budgets():
@@ -68,7 +69,7 @@ def test_chat_and_open_runs_have_safety_net_budgets():
 
     assert chat.max_model_calls == 8
     assert chat.max_tokens == 32_000
-    assert opened.max_model_calls == 2
+    assert opened.max_model_calls == 4
     assert opened.max_tokens == 8_000
     assert run_budget_for("po").max_model_calls is None
 
@@ -169,6 +170,43 @@ def test_answer_policy_prefers_cheap_qwen():
     assert policy.fallbacks[0].model == "deepseek-flash"
 
 
+def test_internal_provider_error_does_not_fall_back(monkeypatch):
+    seen: list[str] = []
+
+    def fake_once(model_name: str, **kwargs):
+        seen.append(model_name)
+        raise ProviderError("qwen", model_name, "internal")
+
+    monkeypatch.setattr(calls, "_call_model_once", fake_once)
+    with pytest.raises(ProviderError) as caught:
+        calls.call_model(
+            "qwen3.7-flash", brand="qwen", kind="chat_completion", expect="json",
+            purpose="orchestrator.plan",
+        )
+
+    assert caught.value.kind == "internal"
+    assert seen == ["qwen3.7-flash"]
+
+
+def test_circuit_open_uses_the_fallback_immediately(monkeypatch):
+    seen: list[str] = []
+
+    def fake_once(model_name: str, **kwargs):
+        seen.append(model_name)
+        if len(seen) == 1:
+            raise ProviderError("qwen", model_name, "circuit_open", retry_after_seconds=30)
+        return ModelResult("fake", model_name, {"tasks": []}, 1, 1, "estimated")
+
+    monkeypatch.setattr(calls, "_call_model_once", fake_once)
+    result = calls.call_model(
+        "qwen3.7-flash", brand="qwen", kind="chat_completion", expect="json",
+        purpose="orchestrator.plan",
+    )
+
+    assert result.body == {"tasks": []}
+    assert seen == ["qwen3.7-flash", "deepseek-flash"]
+
+
 def test_plan_provider_error_uses_the_configured_fallback(monkeypatch):
     seen: list[tuple[str, str]] = []
 
@@ -206,18 +244,17 @@ def test_route_events_are_written_to_the_existing_trace(monkeypatch):
     assert db.events[0][1]["trace_id"] == "trace-1"
 
 
-def test_quality_gate_failure_falls_back_and_is_visible_in_trace(monkeypatch):
+def test_plan_semantic_errors_stay_with_the_planner(monkeypatch):
     db = _TraceDb()
     calls_seen: list[str] = []
 
     def fake_once(model_name: str, **kwargs):
         calls_seen.append(model_name)
-        body = (
-            {"tasks": [{"id": "bad", "kind": "unknown", "name": "x"}]}
-            if len(calls_seen) == 1
-            else {"tasks": []}
+        return ModelResult(
+            "fake", model_name,
+            {"tasks": [{"id": "bad", "kind": "unknown", "name": "x"}]},
+            1, 1, "estimated",
         )
-        return ModelResult("fake", model_name, body, 1, 1, "estimated")
 
     monkeypatch.setattr(calls, "_call_model_once", fake_once)
     result = calls.call_model(
@@ -225,17 +262,17 @@ def test_quality_gate_failure_falls_back_and_is_visible_in_trace(monkeypatch):
         purpose="orchestrator.plan", db=db, run_id="run-1", step_id="step-1",
     )
 
-    assert result.body == {"tasks": []}
-    assert calls_seen == ["qwen3.7-flash", "deepseek-flash"]
-    assert any(event[0] == "model.quality_gate_failed" for event in db.events)
-    assert any(event[0] == "model.route_fallback" for event in db.events)
+    assert result.body["tasks"][0]["kind"] == "unknown"
+    assert calls_seen == ["qwen3.7-flash"]
+    assert not any(event[0] == "model.quality_gate_failed" for event in db.events)
+    assert not any(event[0] == "model.route_fallback" for event in db.events)
 
 
-def test_quality_gate_failure_falls_back_after_model_completed(db, monkeypatch):
+def test_plan_route_returns_the_first_json_object(db, monkeypatch):
     policy = policy_for("orchestrator.plan")
     assert policy is not None
-    tight = replace(policy, max_model_calls=1)
-    monkeypatch.setattr(calls, "policy_for", lambda *_args, **_kwargs: tight)
+    assert policy.quality_gate == "response_parsed"
+    assert "invalid_json" not in policy.fallback_on
     run, _created = db.create_agent_run("dist-1", "u-a", "chat", "route-quality", {"message": "hi"})
     assert db.claim_chat_turn(run["id"], "worker-test", utcnow() + timedelta(minutes=5)) is not None
     step = db.insert_step(run["id"], "model", "model", {})
@@ -249,11 +286,10 @@ def test_quality_gate_failure_falls_back_after_model_completed(db, monkeypatch):
         db=db, run_id=run["id"], step_id=step["id"], purpose="orchestrator.plan",
     )
 
-    assert parsed == {"tasks": []}
+    assert parsed["tasks"][0]["id"] == "bad"
     types = [event["event_type"] for event in db.run_trace("dist-1", run["id"])["events"]]
-    assert types.count("model.completed") == 2
-    assert "model.quality_gate_failed" in types
-    assert "model.route_fallback" in types
+    assert types.count("model.completed") == 1
+    assert "model.route_fallback" not in types
 
 
 def test_report_route_allows_a_full_report_worth_of_calls():
@@ -265,8 +301,8 @@ def test_report_route_allows_a_full_report_worth_of_calls():
     write = policy_for("report.write")
     review = policy_for("report.review")
     optional = policy_for("report.optional")
-    assert write is not None and write.max_model_calls == 12
-    assert review is not None and review.max_model_calls == 8
+    assert write is not None and write.max_model_calls == 14
+    assert review is not None and review.max_model_calls == 10
     assert review.primary.model == "qwen3.7-flash"
     assert review.fallbacks[0].model == "deepseek-flash"
-    assert optional is not None and optional.max_model_calls == 12
+    assert optional is not None and optional.max_model_calls == 14

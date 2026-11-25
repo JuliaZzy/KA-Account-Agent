@@ -78,10 +78,9 @@ def resolve_text(arguments: dict[str, Any], context: dict[str, Any] | None) -> s
     return report
 
 
-def translate(*, text: str, target_language: str) -> str:
+async def translate(*, text: str, target_language: str) -> str:
     """One cheap official chat call. The reply text is the translation."""
-    out = "".join(model_calls.school_text(
-        model_calls.SCHOOL_CHAT,
+    out = (await model_calls.qwen_text_async(
         system=SYSTEM,
         messages=[{"role": "user", "content": f"目标语言：{target_language}\n\n原文：\n{text}"}],
         temperature=0.3,
@@ -101,7 +100,7 @@ def _target(arguments: dict[str, Any]) -> str:
     return ""
 
 
-def run(arguments: dict[str, Any], *, llm: Any = None, context: dict[str, Any] | None = None) -> dict[str, Any]:
+async def run(arguments: dict[str, Any], *, llm: Any = None, context: dict[str, Any] | None = None) -> dict[str, Any]:
     """`llm` is the chat model. Translation does not use it."""
     del llm
     target = _target(arguments)
@@ -109,6 +108,6 @@ def run(arguments: dict[str, Any], *, llm: Any = None, context: dict[str, Any] |
         return {"ok": False, "data": None, "error": "target_language required"}
     try:
         text = resolve_text(arguments, context)
-        return {"ok": True, "data": {"translation": translate(text=text, target_language=target)}, "error": None}
+        return {"ok": True, "data": {"translation": await translate(text=text, target_language=target)}, "error": None}
     except Exception as err:
         return {"ok": False, "data": None, "error": str(err)}

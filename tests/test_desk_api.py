@@ -14,6 +14,16 @@ def client(db, llm=None) -> TestClient:
     return TestClient(create_app(db=db, llm=llm or FakeLLM()))
 
 
+def test_quota_reports_the_org_day(db, monkeypatch):
+    assert client(db).get("/api/quota", params={"org_id": "dist-1"}).json() == {"exhausted": False}
+    monkeypatch.setenv("KA_ACCOUNT_ORG_DAILY_TOKENS", "1")
+    monkeypatch.setattr(
+        db, "org_daily_usage",
+        lambda _org: {"total_tokens": 5, "estimated_cost_cents": 0, "unknown_usage_calls": 0},
+    )
+    assert client(db).get("/api/quota", params={"org_id": "dist-1"}).json() == {"exhausted": True}
+
+
 def test_meta_lists_desk_configuration(db):
     from backend import service
 

@@ -20,6 +20,7 @@ import {
   sumBy,
   unitsLabel,
   activitiesFromEvents,
+  queueLine,
   stepsFromTrace,
 } from "./format";
 
@@ -156,6 +157,11 @@ describe("desk formatters", () => {
       { id: "2", title: "正在思考", detail: "", state: "running" },
     ]);
     expect(activitiesFromEvents([], "queued")).toEqual([]);
+    expect(queueLine("queued", 3)).toEqual({
+      id: "queue", title: "排队中，前面还有 3 个", detail: "", state: "running",
+    });
+    expect(queueLine("queued", 0)?.title).toBe("排队中");
+    expect(queueLine("running", 2)).toBeNull();
     expect(activitiesFromEvents([
       { sequence: 4, event_type: "tool.completed", payload_json: { tool_name: "report.draft" } },
     ], "running")).toEqual([

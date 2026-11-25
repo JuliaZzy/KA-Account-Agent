@@ -43,9 +43,13 @@ Celery execute_run
 
 建 run 在 `backend/services/chat_run.py` 的 `enqueue_chat_run`，事务在 `create_agent_run`。worker 入口是 `backend/celery/tasks.py` 的 `execute_run`，聊天执行是 `execute_chat`（编排 + `task_run`）。
 
-**投递重复**（outbox 已进 Celery 但 `dispatched` 没写上、sweeper 重投等）：队列里可能有两条相同 `run_id`。`claim_chat_turn` 只认 `queued` + 行锁，先抢到者改 `running` 并写租约（默认 10 分钟），再跑 `execute_chat`；后者 `claim` 失败则 **不执行、直接 ack**（终态 run 在 `claim` 前就会跳过）。同一 `run_id` 一般只有一个人在跑。
+**投递重复**（outbox 已进 Celery 但 `dispatched` 没写上、sweeper 重投等）：队列里可能有两条相同 `run_id`。`claim_chat_turn` 只认 `queued` + 行锁，先抢到者改 `running` 并写租约（默认 5 分钟，执行中每 1 分钟续期），再跑 `execute_chat`；后者 `claim` 失败则 **不执行、直接 ack**（终态 run 在 `claim` 前就会跳过）。同一 `run_id` 一般只有一个人在跑。续租只更新自己仍持有、且尚未过期的行；续不上就不再改状态，留给 sweeper。
 
-**排队但暂时领不到**（`GateFull` / 同会话 `SessionBusy` / 队列关等 `SoftBusy`）：run 仍是 `queued`，Celery **`retry` 且不 ack**，任务暂存在 worker 内存里，Redis 队列可能为空。sweeper 会误以为消息丢了或排队过久，所以在每次 `retry` 前写 **`queue_heartbeat_at`**；清扫用 `max(queued_at, queue_heartbeat_at)` 判断「还活着」，合法等待不补投、不判 `STUCK_QUEUE_EXPIRED`。详见 [retry.md](retry.md)。
+**座位满**：dispatcher 不把这条 outbox 推进 Celery，Run 留在 Postgres 的 `queued`。`capacity_wait_since` 从第一次等座位开始计时，重试不拨回零。聊天默认 120 秒、月报一类默认 900 秒，超时失败码 `CAPACITY_TIMEOUT`。worker 若在领取之后发现座位已经被占走，把 Run 放回 `queued`、outbox 改回 `pending`，然后 ack，不在 worker 里空转。
+
+**重复投递**：worker 先看状态。不是 `queued`（已经在跑或已经结束）就 ack 丢掉，不执行第二次。领取是事务里把 `queued` 改成 `running` 并写上 `lease_owner`。
+
+**丢消息**：看这条 Run 自己的 `dispatch_at` 和 `queue_heartbeat_at`，默认静默 60 秒就再投一次。不看 Redis 队列长度，也不因为补投次数把还在排队的 Run 判死。同会话 `SessionBusy` 和队列关闭仍是 Celery `retry`，重试前写心跳，避免被当成丢消息。详见 [retry.md](retry.md)。
 
 **已经跑过一半再进来**（worker 丢、租约过期后重领、checkpoint 续跑）：循环读 checkpoint；工具步按幂等键查 `tool_calls`，已有成功结果则复用、副作用不再发第二次。发信和 MCP 靠业务键防撞。worker 挂在 `running` 且租约过期时，sweeper 打回 `queued` 并再写 outbox；`reject_on_worker_lost` 可让 broker 再投一条，与上面 claim / checkpoint 叠在一起。
 
@@ -117,7 +121,7 @@ Run 接口只认 `X-User-Id`。用它查出 `users` 行，`org_id` 取 `distribu
 
 若 **dispatcher 一直发不出去**（broker 挂了、队列关着等），`mark_outbox_retry` 会按指数退避重试；超过 outbox 的 `max_attempts`（默认 10）时，同一事务里 outbox 进 `failed`、写入 `dead_letter_jobs`，仍停在 `queued` 的 run 会先过 `running` 再 `failed`，公开 `run.failed`（「这次没有完成」）。监控页和 `/trace` 里的 `dead_letter_jobs` 是运维兜底，不能指望用户自己翻 trace。
 
-若 **消息丢了或 worker 一直不来**，run 可以长时间只有 `run.created`、步骤条仍为空。sweeper 每 15 秒扫：pending outbox 再投；已 `dispatched` 且 broker 队列空闲时补投（有次数上限）；超过默认 2 小时或补投耗尽则 `failed` 并进死信，错误码 `STUCK_QUEUE_EXPIRED` / `STUCK_REDISPATCH_EXHAUSTED`。outbox 已送出且 run 仍 `queued` 超过 10 分钟时，库内记**内部**事件 `run.queue_stale`（不进聊天时间线）。
+若 **消息丢了或 worker 一直不来**，步骤条会先显示排队名次（`queue_ahead`）。sweeper 每 15 秒扫：有座位才把 pending outbox 投进 Celery；已 `dispatched` 且这条 Run 自己的投递和心跳都静默超过默认 60 秒就再投一次，不看队列长度，也不因补投次数失败。等座位超过聊天 120 秒或月报 900 秒则 `failed`，错误码 `CAPACITY_TIMEOUT`。outbox 已送出且 run 仍 `queued` 超过 10 分钟时，库内记**内部**事件 `run.queue_stale`（不进聊天时间线）。
 
 注意：失败清扫为了不改状态机边，有时会把 `queued` 先切到 `running` 再 `failed`，因此可能出现公开 `run.started` 紧挨 `run.failed`，但 worker 从未执行过业务代码。UI 上「正在运行」表示状态机过了一个关口，不等于模型已调用。
 
@@ -210,20 +214,20 @@ org 日预算看当天 `usage_records` 的 token 和费用。`KA_ACCOUNT_ORG_DAI
 
 ## 限流、并发、开关
 
-限流是 Redis 固定窗口，key 带 org、用户、接口和分钟。默认每分钟每家 1000 次创建、每个用户 200 次创建、每家 10000 次读取、每个用户 2000 次读取。超过返回 429 `RATE_LIMITED`。`0` 表示这一档不限制。
+限流是 Redis 固定窗口，key 带 org、用户、接口和分钟。默认每分钟每家 1000 次创建、每个用户 200 次创建、每家 10000 次读取、每个用户 2000 次读取。超过返回 429 `RATE_LIMITED`。`0` 表示这一档不限制。这是速率，不是积压。积压用每个用户还开着的根 Run 数量：聊天一类默认 12（`KA_ACCOUNT_QUEUE_USER`），月报一类默认 5（`KA_ACCOUNT_QUEUE_REPORT`）。创建时超过就 429，不进队列。
 
-并发也在 Redis，占满就拒绝并立刻还回计数：
+并发座位在 Redis，占满就不投进 Celery，Run 留在 Postgres：
 
 | 闸门 | 起点 |
 |---|---|
 | 全局同时 running | 100 |
 | 每个 org | 10 |
-| 每个用户 | 3 |
+| 每个用户 | 5 |
 | 每家发信和 MCP | 3 |
 | 每家搜索、查数、翻译、汇率 | 20 |
 | 每个模型 provider | 32 |
 
-闸门在建 run、领 run、真正调用工具之前、`call_model` 打模型之前。模型闸门满时不打厂商，抛出 `ModelCapacityExceeded` 并走 infrastructure requeue。厂商 429 是另一件事，见 [`retry.md`](retry.md)。
+dispatcher 看全局、组织、用户三档还有没有空位，有才 `dispatch_pending`。worker 领取之后再占这三把座位；占不到就把 Run 放回 Postgres。模型座位在 `call_model` 里占，满了抛 `ModelCapacityExceeded`，不扣业务次数，并开始容量等待。厂商 429 是另一件事，见 [`retry.md`](retry.md)。
 
 `SEND_EMAIL_ENABLED`、`MCP_TOOLS_ENABLED`、`QUEUE_ENABLED` 默认开。关上队列时 worker 不再领新的 `execute_run`，Celery 任务 30 秒后再试，已经领走的跑完。
 
@@ -258,9 +262,8 @@ org 日预算看当天 `usage_records` 的 token 和费用。`KA_ACCOUNT_ORG_DAI
 | `running` 且超过 `max_duration_seconds` | `failed`；若已请求取消则 `cancelled` |
 | 副作用 `tool_calls` 停在 `running` 超过 90 秒 | `response_lost`，并写 `tool.manual_review` |
 | outbox 仍是 `pending` | `dispatch_pending` |
-| 已送出但 run 还在 `queued` 超过宽限期（默认 120 秒，`KA_ACCOUNT_REDISPATCH_AFTER_SECONDS`），**且它所在的队列在 Redis 里是空的** | 从 queued Run 主表先过滤，再按 `queued_at` 取最多 100 条；`FOR UPDATE SKIP LOCKED` 锁住后递增 `redispatch_count`，最多补投 3 次。队列非空（Run 只是在排队）或读不到队列深度时不补投 |
-| 补投次数已满且仍 queued | 标记 `failed`，错误码 `STUCK_REDISPATCH_EXHAUSTED`，并写入 `dead_letter_jobs` |
-| 排队超过 `KA_ACCOUNT_QUEUED_MAX_AGE_SECONDS`（默认 2 小时）且没有心跳 | `failed / STUCK_QUEUE_EXPIRED` 并进入死信，不补投、不重放；worker 在 SoftBusy 重试时写 `queue_heartbeat_at`，合法等待的 Run 不会被判超龄 |
+| 已送出但 run 还在 `queued`，并且 `dispatch_at` 与心跳都早于宽限期（默认 60 秒，`KA_ACCOUNT_REDISPATCH_AFTER_SECONDS`） | 再投一次。不看队列长度，不因补投次数失败。重复消息在领取时被丢掉 |
+| `queued` 且 `capacity_wait_since` 超过本类等待预算（聊天 `KA_ACCOUNT_CHAT_WAIT_SECONDS` 默认 120 秒，月报 `KA_ACCOUNT_REPORT_WAIT_SECONDS` 默认 900 秒） | `failed / CAPACITY_TIMEOUT`，并写入 `dead_letter_jobs` |
 | 已派发且对应 Run 已终态、超过保留期 | 按批删除；默认保留 7 天，可用 `KA_ACCOUNT_OUTBOX_RETENTION_DAYS` 和 `KA_ACCOUNT_OUTBOX_CLEANUP_BATCH` 调整 |
 
 ## 回放、重试、重跑、修复

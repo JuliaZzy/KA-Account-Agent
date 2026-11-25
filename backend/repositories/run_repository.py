@@ -98,6 +98,11 @@ def claim_chat_turn(
 ) -> dict[str, Any] | None:
     return db.claim_chat_turn(run_id, worker_id, lease_expires_at)
 
+
+def renew_run_lease(db: Database, run_id: str, worker_id: str, lease_expires_at: datetime) -> str:
+    """`renewed` when this worker still holds a live lease, else `settled` or `lost`."""
+    return db.renew_run_lease(run_id, worker_id, lease_expires_at)
+
 def sweep_expired_leases(db: Database, limit: int = 100) -> int:
     return db.sweep_expired_leases(limit)
 

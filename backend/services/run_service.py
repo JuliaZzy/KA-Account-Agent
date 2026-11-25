@@ -76,6 +76,9 @@ def create_run(
     existing = find_run_by_idempotency_key(db, org_id, idempotency_key)
     if existing is not None:
         return existing, False
+    from .entry_guard import admit_backlog
+
+    admit_backlog(db, org_id, user_id, run_type)
     return create_agent_run(db, org_id, user_id, run_type, idempotency_key, run_input)
 
 
@@ -94,6 +97,9 @@ def rerun(
     existing = find_run_by_idempotency_key(db, org_id, idempotency_key)
     if existing is not None:
         return existing, False
+    from .entry_guard import admit_backlog
+
+    admit_backlog(db, org_id, user_id, parent["run_type"])
     copied = parent["input_json"] if run_input is None else run_input
     return create_agent_run(
         db, org_id, user_id, parent["run_type"], idempotency_key, copied, parent["id"],
@@ -101,7 +107,10 @@ def rerun(
 
 
 def get_run(db: Database, org_id: str, run_id: str) -> dict[str, Any]:
-    return _require_run(db, org_id, run_id)
+    run = _require_run(db, org_id, run_id)
+    if run["status"] == RunStatus.QUEUED:
+        run["queue_ahead"] = db.queue_ahead(org_id, run["user_id"], run["queued_at"], run["id"])
+    return run
 
 
 def event_cursor(after: int | None, last_event_id: str | None) -> int:

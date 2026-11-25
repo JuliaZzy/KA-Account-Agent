@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 
-import { api, cancelRun, createChatRun, followRun, getRunEvents, postJson, resumeRun, withUser, type RunEvent } from "../api";
+import { ApiError, api, cancelRun, createChatRun, followRun, getRunEvents, postJson, resumeRun, withUser, type AgentRun, type RunEvent } from "../api";
 import { CHAT_DOC_EXTS, CHAT_IMAGE_EXTS, clipAttachedFiles, fileExt } from "../chat-files";
 import {
   flightOf, isChatBusy, isForgotten, liveFromEvents, liveFromRun, onForgetChat,
@@ -16,6 +16,7 @@ import {
   lineFlag,
   money,
   activitiesFromEvents,
+  queueLine,
   trimNum,
   reportCharts,
   resultLink,
@@ -28,6 +29,7 @@ import {
   type ReportChart,
 } from "../format";
 import { Markdown } from "../markdown-view";
+import { quotaLocked, quotaNotice } from "../quota";
 import { DataTable, Tabs } from "../ui";
 
 type Turn = {
@@ -212,6 +214,8 @@ function ChatDesk() {
   const [snap, setSnap] = useState<Snap | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
   const [attachNote, setAttachNote] = useState<string | null>(null);
+  const [orgQuota, setOrgQuota] = useState(false);
+  const [turnQuota, setTurnQuota] = useState<string | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   // Follow new steps only while the reader is already at the bottom.
   // Thinking updates arrive continuously; snapping scrollTop on each one
@@ -422,10 +426,34 @@ function ChatDesk() {
     scrollingSelf.current = false;
   }, [sid, snap?.turns, flight.live, traceSteps]);
 
+  useEffect(() => {
+    const orgId = partnership.distributor_id;
+    let cancelled = false;
+    api<{ exhausted: boolean }>(`/api/quota?org_id=${encodeURIComponent(orgId)}`)
+      .then((body) => {
+        if (!cancelled) setOrgQuota(Boolean(body.exhausted));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [partnership.distributor_id]);
+
+  const quotaSignal = { exhausted: orgQuota, scope: turnQuota };
+  const quotaText = quotaNotice(quotaSignal);
+  const sendLocked = quotaLocked(quotaSignal);
+
+  function noteQuota(run: AgentRun) {
+    const scope = run.output_json?.quota_exhausted || run.error_json?.scope || null;
+    const code = run.error_json?.code || null;
+    if (scope === "org" || (code === "QUOTA_EXCEEDED" && scope !== "run")) setOrgQuota(true);
+    if (scope === "run" || scope === "org") setTurnQuota(scope);
+  }
+
   async function send(message: string, attached?: File[]) {
     const chatId = sidRef.current;
     const baseSnap = chatId ? snaps.get(chatId) : undefined;
-    if (!chatId || !baseSnap || isChatBusy(chatId)) return;
+    if (!chatId || !baseSnap || isChatBusy(chatId) || sendLocked) return;
     const chosen = attached ?? flightOf(chatId).files;
     const trimmed = message.trim();
     if (!trimmed && chosen.length === 0) return;
@@ -468,6 +496,8 @@ function ChatDesk() {
       if (!runId || !userId) throw new Error("run was not created");
       const ended = await followRun(runId, partnership.id, userId, stop.signal, (events, run) => {
         steps = activitiesFromEvents(events, run.status);
+        const waiting = queueLine(run.status, run.queue_ahead);
+        if (waiting) steps = [waiting, ...steps];
         patchFlight(chatId, {
           steps,
           ...liveFromRun(flightOf(chatId), run.output_json),
@@ -480,6 +510,11 @@ function ChatDesk() {
         return;
       }
       if (ended.status === "failed") {
+        if (ended.error_json?.code === "QUOTA_EXCEEDED") {
+          noteQuota(ended);
+          committed = true;
+          return;
+        }
         throw new Error(ended.error_json?.message || "The model could not finish this reply.");
       }
       if (ended.status === "waiting_for_user") {
@@ -487,6 +522,7 @@ function ChatDesk() {
         patchFlight(chatId, { approvalTool: parkedTool ?? "这个工具" });
         return;
       }
+      noteQuota(ended);
       const session = await api<SessionRow>(withUser(`/api/sessions/${chatId}`, userId));
       const next = fromSession(session, greeting(partnership));
       const last = next.turns[next.turns.length - 1];
@@ -494,6 +530,10 @@ function ChatDesk() {
       commitSnap(chatId, { ...next, title: next.title ?? title, tags: next.tags.length ? next.tags : tags });
       committed = true;
     } catch (err) {
+      if (err instanceof ApiError && err.code === "QUOTA_EXCEEDED") {
+        setOrgQuota(true);
+        committed = true;
+      }
       // Abort is the cancel click, or leaving the page. Neither is a send failure.
       if (!committed && !(err instanceof Error && err.name === "AbortError")) {
         patchFlight(chatId, { error: err instanceof Error ? err.message : "send failed" });
@@ -524,6 +564,8 @@ function ChatDesk() {
       });
       const ended = await followRun(runId, partnership.id, userId, stop.signal, (events, run) => {
         steps = activitiesFromEvents(events, run.status);
+        const waiting = queueLine(run.status, run.queue_ahead);
+        if (waiting) steps = [waiting, ...steps];
         patchFlight(chatId, {
           steps,
           ...liveFromRun(flightOf(chatId), run.output_json),
@@ -537,6 +579,12 @@ function ChatDesk() {
         return;
       }
       if (ended.status === "failed") {
+        if (ended.error_json?.code === "QUOTA_EXCEEDED") {
+          noteQuota(ended);
+          committed = true;
+          patchFlight(chatId, { approvalTool: null });
+          return;
+        }
         throw new Error(ended.error_json?.message || "The model could not finish this reply.");
       }
       if (ended.status === "waiting_for_user") {
@@ -544,6 +592,7 @@ function ChatDesk() {
         patchFlight(chatId, { approvalTool: parkedTool ?? "这个工具" });
         return;
       }
+      noteQuota(ended);
       const session = await api<SessionRow>(withUser(`/api/sessions/${chatId}`, userId));
       const next = fromSession(session, greeting(partnership));
       const last = next.turns[next.turns.length - 1];
@@ -850,14 +899,15 @@ function ChatDesk() {
           className="composer"
           onSubmit={(event) => {
             event.preventDefault();
-            if (flight.approvalTool) return;
+            if (flight.approvalTool || sendLocked) return;
             void send(flight.draft);
           }}
         >
           <div className="composer-box">
           <textarea
             value={flight.draft}
-            placeholder="下单、提问，或附上协议（PDF / Word）…"
+            disabled={sendLocked}
+            placeholder={sendLocked ? "今天的额度已经用完，请明天再试。" : "下单、提问，或附上协议（PDF / Word）…"}
             onCompositionStart={() => {
               composing.current = true;
             }}
@@ -872,7 +922,7 @@ function ChatDesk() {
               // keyCode 229: Chrome still delivering this Enter to the IME.
               // Safari reports isComposing false on that same key, so the ref counts too.
               const native = event.nativeEvent;
-              if (native.isComposing || native.keyCode === 229 || composing.current) return;
+              if (native.isComposing || native.keyCode === 229 || composing.current || sendLocked) return;
               event.preventDefault();
               void send(flight.draft);
             }}
@@ -885,6 +935,7 @@ function ChatDesk() {
                 type="file"
                 multiple
                 hidden
+                disabled={sendLocked}
                 accept=".png,.jpg,.jpeg,.webp,.pdf,.docx,.txt,.md"
                 onChange={(event) => {
                   const picked = [...(event.target.files ?? [])];
@@ -910,12 +961,13 @@ function ChatDesk() {
                 <StopIcon />
               </button>
             ) : (
-              <button className="btn-send" type="submit" aria-label="Send" disabled={flight.busy || !sid || Boolean(flight.approvalTool)}>
+              <button className="btn-send" type="submit" aria-label="Send" disabled={sendLocked || flight.busy || !sid || Boolean(flight.approvalTool)}>
                 <span className="material-symbols-outlined" aria-hidden="true">arrow_upward</span>
               </button>
             )}
           </div>
           </div>
+          {quotaText && <div className="warn">{quotaText}</div>}
           {attachNote && <div className="warn">{attachNote}</div>}
         </form>
       </section>

@@ -13,11 +13,11 @@ from ..repositories.run_repository import latest_checkpoint, note_running_reply
 from ..services.run_names import StepStatus, StepType, step_name
 from ..text2sql.text2sql import prompt_view
 from .gather import checkpoint_state, collect_wave, dispatch_wave, load_state, recovered_plan
-from .plan import InvalidPlan, graph_error, make_plan, parse_tasks
+from .plan import PLAN_FAILURE_MESSAGE, PLAN_UNUSABLE_NOTE, InvalidPlan, make_plan, parse_tasks, reject_plan
 from .prompt import ANSWER
 
 
-def execute_parent(db: Database, llm: Any, run: dict[str, Any], session: dict[str, Any]) -> dict[str, Any] | None:
+async def execute_parent(db: Database, llm: Any, run: dict[str, Any], session: dict[str, Any]) -> dict[str, Any] | None:
     """Advance one parent claim. None means parked for a wave (do not complete)."""
     payload = run.get("input_json") if isinstance(run.get("input_json"), dict) else {}
     text = str(payload.get("message") or "")
@@ -28,29 +28,41 @@ def execute_parent(db: Database, llm: Any, run: dict[str, Any], session: dict[st
     if saved is not None:
         return {"text": saved}
 
+    plan_note: str | None = None
     if state is None:
         recovered = recovered_plan(db, run)
         if recovered is None:
-            tasks = make_plan(
-                llm, message=text,
-                attachments=[name for name in (payload.get("attachments") or []) if isinstance(name, str)],
-                history=list(session.get("history") or []),
-                folded_through=int(session.get("folded_through") or 0),
-                open_po=_open_po(session),
-                db=db, run_id=run["id"],
-                memory=_session_memory(db, session),
-                checkpoint=lambda planned: checkpoint_state(
-                    planned, [], {}, extra={"phase": "planned"},
-                ),
-            )
-            finished = []
-            results = {}
+            noted = _unusable_plan(db, run)
+            if noted is not None:
+                tasks, finished, results, plan_note = [], [], {}, noted
+            else:
+                draft = await make_plan(
+                    llm, message=text,
+                    attachments=[name for name in (payload.get("attachments") or []) if isinstance(name, str)],
+                    history=list(session.get("history") or []),
+                    folded_through=int(session.get("folded_through") or 0),
+                    open_po=_open_po(session),
+                    db=db, run_id=run["id"],
+                    memory=_session_memory(db, session),
+                    checkpoint=lambda planned, rejected, note: checkpoint_state(
+                        planned,
+                        [str(item["id"]) for item in rejected if item.get("id")],
+                        {str(item["id"]): item for item in rejected if item.get("id")},
+                        extra={"phase": "planned", **({"plan_note": note} if note else {})},
+                    ),
+                )
+                tasks = draft.tasks
+                finished = [str(item["id"]) for item in draft.rejected if item.get("id")]
+                results = {str(item["id"]): item for item in draft.rejected if item.get("id")}
+                plan_note = draft.note
         else:
             tasks, finished, results = recovered
     else:
         tasks = parse_tasks({"tasks": state.get("tasks") or []})
         finished = [str(item) for item in (state.get("finished") or []) if item]
         results = dict(state.get("results") or {})
+        if isinstance(state.get("plan_note"), str):
+            plan_note = state["plan_note"]
         wave_id = state.get("wave_id")
         session_id = str(session["id"])
         if isinstance(wave_id, str) and wave_id:
@@ -59,27 +71,29 @@ def execute_parent(db: Database, llm: Any, run: dict[str, Any], session: dict[st
                 if task_id not in finished:
                     finished.append(task_id)
 
-    problem = graph_error(tasks)
-    if problem is not None:
-        raise InvalidPlan(problem)
+    rejected = reject_plan(tasks, set())
+    if rejected is not None:
+        _problem, code = rejected
+        raise InvalidPlan(PLAN_FAILURE_MESSAGE, code=code)
 
     if not tasks:
-        return {"text": _answer(db, llm, run, session, text, tasks, finished, results)}
+        return {"text": await _answer(db, llm, run, session, text, tasks, finished, results, plan_note)}
 
     parked = dispatch_wave(db, run, session, tasks, finished, results, payload)
     if parked is not None:
         return None
-    return {"text": _answer(db, llm, run, session, text, tasks, finished, results)}
+    return {"text": await _answer(db, llm, run, session, text, tasks, finished, results, plan_note)}
 
 
-def _answer(
+async def _answer(
     db: Database, llm: Any, run: dict[str, Any], session: dict[str, Any], text: str,
     tasks: list[Any], finished: list[str], results: dict[str, dict[str, Any]],
+    plan_note: str | None = None,
 ) -> str:
     reply = _answer_from_step(db, run)
     if reply is None:
-        reply = compose_answer(
-            db, llm, session, text, list(results.values()), run_id=run["id"],
+        reply = await compose_answer(
+            db, llm, session, text, list(results.values()), run_id=run["id"], plan_note=plan_note,
             checkpoint_for=lambda text: checkpoint_state(
                 tasks, finished, results, extra={"phase": "answer_done", "answer": text},
             ),
@@ -115,9 +129,9 @@ def _answer_from_step(db: Database, run: dict[str, Any]) -> str | None:
     return None
 
 
-def compose_answer(
+async def compose_answer(
     db: Database, llm: Any, session: dict[str, Any], text: str,
-    results: list[dict[str, Any]], *, run_id: str,
+    results: list[dict[str, Any]], *, run_id: str, plan_note: str | None = None,
     checkpoint_for: Callable[[str], dict[str, Any]] | None = None,
 ) -> str:
     memory = _session_memory(db, session)
@@ -129,9 +143,14 @@ def compose_answer(
     ]
     materials = _materials(results)
     opening = empty_named_period_line(text, results)
-    user = text if not materials else (
-        f"=== 用户 ===\n{text}\n\n=== 这一轮结果 ===\n{materials}"
-    )
+    if plan_note:
+        user = f"=== 计划 ===\n{plan_note}\n\n=== 用户 ===\n{text}"
+        if materials:
+            user += f"\n\n=== 这一轮结果 ===\n{materials}"
+    else:
+        user = text if not materials else (
+            f"=== 用户 ===\n{text}\n\n=== 这一轮结果 ===\n{materials}"
+        )
     if opening:
         user = (
             f"=== 开口 ===\n第一句必须逐字是：{opening}\n"
@@ -155,14 +174,11 @@ def compose_answer(
     caught: Exception | None = None
     reply = ""
     try:
-        parts: list[str] = []
-        for chunk in model_calls.school_text(
-            model_calls.SCHOOL_CHAT, client=llm, system=system, messages=messages,
-            on_text=on_text, db=db, run_id=run_id, step_id=step_id, purpose="orchestrator.answer",
-        ):
-            parts.append(chunk)
         reply = ensure_empty_period_opening(
-            "".join(parts).strip() or "How can I help?", opening,
+            (await model_calls.qwen_text_async(
+                client=llm, system=system, messages=messages,
+                on_text=on_text, db=db, run_id=run_id, step_id=step_id, purpose="orchestrator.answer",
+            )).strip() or "How can I help?", opening,
         )
     except Exception as err:
         caught = err
@@ -184,6 +200,24 @@ def _session_memory(db: Database, session: dict[str, Any]) -> str:
         standing_block(db, session["partnership_id"], session.get("user_id")),
         summary_block(session.get("summary")),
     )
+
+
+def _unusable_plan(db: Database, run: dict[str, Any]) -> str | None:
+    """A failed PLAN step already recorded. Resume answers instead of planning again."""
+    org_id = str(run.get("org_id") or "")
+    if not org_id:
+        return None
+    trace = db.run_trace(org_id, run["id"]) or {}
+    for step in trace.get("steps") or []:
+        step_input = step.get("input_json") if isinstance(step.get("input_json"), dict) else {}
+        if step_input.get("purpose") != "orchestrator.plan" or step.get("status") != StepStatus.FAILED:
+            continue
+        error = step.get("error_json") if isinstance(step.get("error_json"), dict) else {}
+        if error.get("message") == PLAN_UNUSABLE_NOTE or error.get("code") in {
+            "invalid_json", "tasks_not_array", "plan_cycle", "plan_truncated",
+        }:
+            return PLAN_UNUSABLE_NOTE
+    return None
 
 
 def _open_po(session: dict[str, Any]) -> bool:
@@ -247,5 +281,8 @@ def _materials(results: list[dict[str, Any]]) -> str:
                 **{k: v for k, v in item["payload"].items() if k != "charts"},
                 "charts_drawn": [str(c.get("title") or "") for c in drawn if isinstance(c, dict)],
             }
+        if item.get("quota_exhausted") or item.get("error") in ("COST_BUDGET_EXCEEDED", "QUOTA_EXCEEDED"):
+            item["error"] = "没有生成"
+            item.pop("quota_exhausted", None)
         rendered.append(item)
     return json.dumps(rendered, ensure_ascii=False, default=str)

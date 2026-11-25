@@ -14,6 +14,7 @@ from datetime import timedelta
 from ..config import env
 from ..db import Database, utcnow
 from .dispatcher import dispatch_pending, republish_unclaimed
+from .entry_guard import BACKGROUND_RUN_TYPES, limits
 from .run_worker import sweep_expired_leases, sweep_waiting_for_tasks
 
 log = logging.getLogger(__name__)
@@ -23,6 +24,7 @@ def sweep(db: Database) -> None:
     sweep_expired_leases(db)
     sweep_waiting_for_tasks(db)
     db.sweep_attention()
+    _fail_capacity(db)
     republish_unclaimed(db)
     dispatch_pending(db)
     db.purge_dispatched_outbox(
@@ -40,6 +42,16 @@ def main() -> None:
         except Exception:
             log.exception("sweep failed")
         time.sleep(pause)
+
+
+def _fail_capacity(db: Database) -> None:
+    cap = limits()
+    now = utcnow()
+    db.fail_capacity_waits(
+        now - timedelta(seconds=cap.chat_wait_seconds),
+        now - timedelta(seconds=cap.report_wait_seconds),
+        tuple(BACKGROUND_RUN_TYPES),
+    )
 
 
 def _seconds() -> float:

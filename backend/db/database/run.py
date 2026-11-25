@@ -302,6 +302,7 @@ class RunMixin:
         elif to_status in (RunStatus.WAITING_FOR_USER, RunStatus.WAITING_FOR_TASKS):
             run.lease_owner = None
             run.lease_expires_at = None
+            run.capacity_wait_since = None
         elif to_status == RunStatus.QUEUED:
             run.lease_owner = None
             run.lease_expires_at = None
@@ -312,15 +313,18 @@ class RunMixin:
         elif to_status == RunStatus.SUCCEEDED:
             run.output_json = output
             run.ended_at = now
+            run.capacity_wait_since = None
         elif to_status == RunStatus.FAILED:
             run.error_json = error
             run.ended_at = now
             run.lease_owner = None
             run.lease_expires_at = None
+            run.capacity_wait_since = None
         elif to_status == RunStatus.CANCELLED:
             run.ended_at = now
             run.lease_owner = None
             run.lease_expires_at = None
+            run.capacity_wait_since = None
 
     def request_run_cancel(
         self,
@@ -645,6 +649,41 @@ class RunMixin:
             s.flush()
             return _row_dict(run)
 
+    def renew_run_lease(self, run_id: str, worker_id: str, lease_expires_at: datetime) -> str:
+        """Push this worker's deadline forward. Returns `renewed`, `settled`, or `lost`.
+
+        The update is the fence: the row must still be `running`, owned by this
+        worker, and not yet expired. A swept or stolen lease is not resurrected.
+        `settled` means this worker already parked or finished the row, so the
+        heartbeat should stop without treating that as a lost lease.
+        """
+        now = utcnow()
+        with self.tx() as s:
+            renewed = s.scalars(
+                update(orm.AgentRun)
+                .where(
+                    orm.AgentRun.id == run_id,
+                    orm.AgentRun.status == RunStatus.RUNNING,
+                    orm.AgentRun.lease_owner == worker_id,
+                    orm.AgentRun.lease_expires_at.is_not(None),
+                    orm.AgentRun.lease_expires_at > now,
+                )
+                .values(lease_expires_at=lease_expires_at)
+                .returning(orm.AgentRun.id)
+            ).first()
+            if renewed is not None:
+                return "renewed"
+            run = s.get(orm.AgentRun, run_id)
+            if run is not None and run.status in (
+                RunStatus.WAITING_FOR_USER,
+                RunStatus.WAITING_FOR_TASKS,
+                RunStatus.SUCCEEDED,
+                RunStatus.FAILED,
+                RunStatus.CANCELLED,
+            ):
+                return "settled"
+            return "lost"
+
     def sweep_expired_leases(self, limit: int = 100) -> int:
         """Return expired running leases to queued and append a new execute outbox.
 
@@ -755,8 +794,6 @@ class RunMixin:
         self,
         older_than: datetime,
         limit: int = 100,
-        *,
-        max_redispatches: int = 3,
     ) -> list[dict[str, Any]]:
         """Read old queued execute payloads without changing their retry budget."""
         dispatched = select(orm.OutboxJob.id).where(
@@ -772,7 +809,6 @@ class RunMixin:
                     orm.AgentRun.status == RunStatus.QUEUED,
                     orm.AgentRun.queued_at < older_than,
                     _queue_last_seen() < older_than,
-                    orm.AgentRun.redispatch_count < max_redispatches,
                     dispatched,
                 )
                 .order_by(orm.AgentRun.queued_at, orm.AgentRun.id)
@@ -801,7 +837,6 @@ class RunMixin:
         older_than: datetime,
         limit: int = 100,
         *,
-        max_redispatches: int = 3,
         open_only: bool | None = None,
         not_before: datetime | None = None,
     ) -> list[dict[str, Any]]:
@@ -826,7 +861,6 @@ class RunMixin:
                     orm.AgentRun.queued_at < older_than,
                     _queue_last_seen() < older_than,
                     _queue_last_seen() >= not_before if not_before is not None else True,
-                    orm.AgentRun.redispatch_count < max_redispatches,
                     _open_scope(open_only),
                     dispatched,
                 )
@@ -876,6 +910,175 @@ class RunMixin:
                 .where(orm.AgentRun.id == run_id, orm.AgentRun.status == RunStatus.QUEUED)
                 .values(queue_heartbeat_at=utcnow())
             )
+
+    def count_outstanding_runs(
+        self, org_id: str, user_id: str, *, background: bool, background_types: tuple[str, ...],
+    ) -> int:
+        """Root runs this user already has open. Children of a wave are not a second admission."""
+        kind = orm.AgentRun.run_type.in_(background_types) if background else orm.AgentRun.run_type.notin_(background_types)
+        with self.tx() as s:
+            count = s.scalar(
+                select(func.count())
+                .select_from(orm.AgentRun)
+                .where(
+                    orm.AgentRun.org_id == org_id,
+                    orm.AgentRun.user_id == user_id,
+                    orm.AgentRun.owner_run_id.is_(None),
+                    orm.AgentRun.status.in_((
+                        RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_FOR_TASKS,
+                    )),
+                    kind,
+                )
+            )
+            return int(count or 0)
+
+    def count_inflight(self, *, org_id: str | None = None, user_id: str | None = None) -> int:
+        """Runs holding a seat: `running`, or `queued` with a message already in the broker.
+
+        Title runs (`open`) do not take a chat seat.
+        """
+        dispatched = select(orm.OutboxJob.id).where(
+            orm.OutboxJob.job_type == "execute_run",
+            orm.OutboxJob.status == OutboxStatus.DISPATCHED,
+            orm.OutboxJob.payload_json["run_id"].as_string() == orm.AgentRun.id,
+        ).exists()
+        filters = [
+            orm.AgentRun.run_type != "open",
+            or_(
+                orm.AgentRun.status == RunStatus.RUNNING,
+                and_(orm.AgentRun.status == RunStatus.QUEUED, dispatched),
+            ),
+        ]
+        if org_id is not None:
+            filters.append(orm.AgentRun.org_id == org_id)
+        if user_id is not None:
+            filters.append(orm.AgentRun.user_id == user_id)
+        with self.tx() as s:
+            count = s.scalar(select(func.count()).select_from(orm.AgentRun).where(*filters))
+            return int(count or 0)
+
+    def queue_ahead(self, org_id: str, user_id: str, queued_at: datetime, run_id: str) -> int:
+        """How many of this user's queued runs were accepted before this one."""
+        with self.tx() as s:
+            count = s.scalar(
+                select(func.count())
+                .select_from(orm.AgentRun)
+                .where(
+                    orm.AgentRun.org_id == org_id,
+                    orm.AgentRun.user_id == user_id,
+                    orm.AgentRun.status == RunStatus.QUEUED,
+                    orm.AgentRun.id != run_id,
+                    or_(
+                        orm.AgentRun.queued_at < queued_at,
+                        and_(orm.AgentRun.queued_at == queued_at, orm.AgentRun.id < run_id),
+                    ),
+                )
+            )
+            return int(count or 0)
+
+    def note_capacity_wait(self, run_id: str) -> None:
+        """Start the capacity clock once. A later retry must not move it."""
+        with self.tx() as s:
+            s.execute(
+                update(orm.AgentRun)
+                .where(
+                    orm.AgentRun.id == run_id,
+                    orm.AgentRun.status == RunStatus.QUEUED,
+                    orm.AgentRun.capacity_wait_since.is_(None),
+                )
+                .values(capacity_wait_since=utcnow())
+            )
+
+    def park_for_capacity(self, run_id: str) -> bool:
+        """Give a claimed run back to Postgres. The Celery message is done.
+
+        The seat was taken by someone else between dispatch and claim. The outbox
+        returns to `pending` so the dispatcher can publish it when a seat is free.
+        """
+        now = utcnow()
+        with self.tx() as s:
+            run = s.scalars(
+                select(orm.AgentRun)
+                .where(orm.AgentRun.id == run_id, orm.AgentRun.status == RunStatus.RUNNING)
+                .with_for_update()
+            ).first()
+            if run is None:
+                return False
+            if run.capacity_wait_since is None:
+                run.capacity_wait_since = now
+            self._transition(
+                s, run, RunStatus.QUEUED, {"kind": "capacity"}, now,
+                error={"kind": "infrastructure", "code": "NO_RUN_SEAT", "message": "no running seat"},
+            )
+            boxes = list(s.scalars(
+                select(orm.OutboxJob)
+                .where(
+                    orm.OutboxJob.job_type == "execute_run",
+                    orm.OutboxJob.payload_json["run_id"].as_string() == run_id,
+                )
+                .order_by(orm.OutboxJob.created_at)
+                .with_for_update()
+            ))
+            if not boxes:
+                self._add_execute_outbox(s, run, now)
+            else:
+                latest = boxes[-1]
+                latest.status = OutboxStatus.PENDING
+                latest.next_attempt_at = now
+                for older in boxes[:-1]:
+                    if older.status == OutboxStatus.DISPATCHED:
+                        older.status = OutboxStatus.FAILED
+            s.flush()
+            return True
+
+    def fail_capacity_waits(
+        self,
+        chat_before: datetime,
+        report_before: datetime,
+        report_types: tuple[str, ...],
+        limit: int = 100,
+    ) -> int:
+        """Fail queued runs whose capacity wait has passed its product budget."""
+        now = utcnow()
+        overdue = or_(
+            and_(orm.AgentRun.run_type.in_(report_types), orm.AgentRun.capacity_wait_since < report_before),
+            and_(orm.AgentRun.run_type.notin_(report_types), orm.AgentRun.capacity_wait_since < chat_before),
+        )
+        with self.tx() as s:
+            runs = list(s.scalars(
+                select(orm.AgentRun)
+                .where(
+                    orm.AgentRun.status == RunStatus.QUEUED,
+                    orm.AgentRun.capacity_wait_since.is_not(None),
+                    overdue,
+                )
+                .order_by(orm.AgentRun.capacity_wait_since, orm.AgentRun.id)
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            ))
+            error = {
+                "kind": "permanent",
+                "code": "CAPACITY_TIMEOUT",
+                "message": "waited too long for a free seat",
+            }
+            for run in runs:
+                self._transition(
+                    s, run, RunStatus.RUNNING, {"reason": "capacity_timeout"}, now,
+                    actor_type="sweeper", actor_id="capacity",
+                )
+                self._fail_locked_run(s, run, error, "capacity_timeout", now)
+                self._dead_letter(s, run, error, now, attempts=int(run.attempts))
+                for box in s.scalars(
+                    select(orm.OutboxJob).where(
+                        orm.OutboxJob.job_type == "execute_run",
+                        orm.OutboxJob.payload_json["run_id"].as_string() == run.id,
+                        orm.OutboxJob.status.in_((OutboxStatus.PENDING, OutboxStatus.DISPATCHED)),
+                    ).with_for_update()
+                ):
+                    box.status = OutboxStatus.FAILED
+                    box.last_error_json = error
+            s.flush()
+            return len(runs)
 
     def release_unclaimed_dispatch(self, run_id: str, claimed_at: datetime) -> None:
         """Release a failed publish claim without undoing a newer worker or sweeper claim."""
@@ -1063,6 +1266,32 @@ class RunMixin:
                 }
                 for run, call in pairs
             ]
+
+    def session_route_counts(self, session_ids: list[str]) -> dict[str, int]:
+        """Route decisions for runs that belong to these chat sessions."""
+        cleaned = [str(item).strip() for item in session_ids if str(item).strip()]
+        counts = {"route_selected": 0, "route_fallback": 0}
+        if not cleaned:
+            return counts
+        with self.tx() as s:
+            rows = s.execute(
+                select(orm.RunEvent.event_type, func.count())
+                .join(orm.AgentRun, orm.RunEvent.run_id == orm.AgentRun.id)
+                .where(
+                    orm.AgentRun.input_json["session_id"].astext.in_(cleaned),
+                    orm.RunEvent.event_type.in_((
+                        StepEvent.MODEL_ROUTE_SELECTED,
+                        StepEvent.MODEL_ROUTE_FALLBACK,
+                    )),
+                )
+                .group_by(orm.RunEvent.event_type)
+            ).all()
+        for event_type, count in rows:
+            if event_type == StepEvent.MODEL_ROUTE_SELECTED:
+                counts["route_selected"] = int(count)
+            elif event_type == StepEvent.MODEL_ROUTE_FALLBACK:
+                counts["route_fallback"] = int(count)
+        return counts
 
     def session_run_facts(self, session_ids: list[str]) -> list[dict[str, Any]]:
         """Read runs belonging to the given sessions for bounded experiment follow-up."""
@@ -1343,6 +1572,7 @@ class RunMixin:
         """
         now = utcnow()
         day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        recent = now - timedelta(minutes=5)
         stuck_queued = and_(
             orm.AgentRun.status == RunStatus.QUEUED,
             orm.AgentRun.queued_at <= now - timedelta(minutes=10),
@@ -1438,6 +1668,17 @@ class RunMixin:
                     orm.ModelCall.error_json["code"].astext == "PROVIDER_RATE_LIMITED",
                     joined=orm.ModelCall,
                 ),
+                "model_internal": self._count(
+                    s, orm.ModelCall, org,
+                    orm.ModelCall.error_json["code"].astext == "PROVIDER_INTERNAL",
+                    joined=orm.ModelCall,
+                ),
+                "model_internal_recent": self._count(
+                    s, orm.ModelCall, org,
+                    orm.ModelCall.error_json["code"].astext == "PROVIDER_INTERNAL",
+                    orm.ModelCall.created_at >= recent,
+                    joined=orm.ModelCall,
+                ),
                 "route_selected": self._count(
                     s, orm.RunEvent, org, orm.RunEvent.event_type == StepEvent.MODEL_ROUTE_SELECTED,
                     joined=orm.RunEvent,
@@ -1446,8 +1687,30 @@ class RunMixin:
                     s, orm.RunEvent, org, orm.RunEvent.event_type == StepEvent.MODEL_ROUTE_FALLBACK,
                     joined=orm.RunEvent,
                 ),
+                "route_selected_recent": self._count(
+                    s, orm.RunEvent, org,
+                    orm.RunEvent.event_type == StepEvent.MODEL_ROUTE_SELECTED,
+                    orm.RunEvent.created_at >= recent,
+                    joined=orm.RunEvent,
+                ),
+                "route_fallback_recent": self._count(
+                    s, orm.RunEvent, org,
+                    orm.RunEvent.event_type == StepEvent.MODEL_ROUTE_FALLBACK,
+                    orm.RunEvent.created_at >= recent,
+                    joined=orm.RunEvent,
+                ),
                 "route_quality_gate_failed": self._count(
                     s, orm.RunEvent, org, orm.RunEvent.event_type == StepEvent.MODEL_QUALITY_GATE_FAILED,
+                    joined=orm.RunEvent,
+                ),
+                "plan_truncated": self._count(
+                    s, orm.RunEvent, org, orm.RunEvent.event_type == StepEvent.MODEL_OUTPUT_TRUNCATED,
+                    joined=orm.RunEvent,
+                ),
+                "plan_truncated_recent": self._count(
+                    s, orm.RunEvent, org,
+                    orm.RunEvent.event_type == StepEvent.MODEL_OUTPUT_TRUNCATED,
+                    orm.RunEvent.created_at >= recent,
                     joined=orm.RunEvent,
                 ),
                 "tool_calls": self._count(s, orm.ToolCall, orm.ToolCall.org_id == org_id),

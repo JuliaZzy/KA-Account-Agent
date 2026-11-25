@@ -141,14 +141,14 @@ Redis 不作为唯一事实来源：
 | OCR | 180s | urllib |
 | MCP HTTP | 60s | `backend/mcp/runtime.py` |
 | `web_search` / `translate` / `exchange_rate` / `send_email` | 30s | 工具注册表 |
-| `po.draft` / `contract.read` / `report.draft` | 300s | 工具注册表；租约 10 分钟，这些不算卡住 |
+| `po.draft` / `contract.read` / `report.draft` | 300s | 工具注册表；租约 5 分钟且执行中会续，这些不算卡住 |
 | `data.query` / `brand.search` | 120s | 工具注册表 |
 | MCP 副作用工具 | 60s | 工具注册表 |
 | 副作用停在 `running` | 90s 后记 `response_lost` | sweeper |
 | 数据库语句 | 120s | `KA_ACCOUNT_STATEMENT_TIMEOUT_MS` |
 | 连接池拿连接 | 30s | `KA_ACCOUNT_POOL_TIMEOUT` |
 | Qwen 单次调用（总时长 / chunk 间静默） | 30s / 10s | `KA_ACCOUNT_QWEN_TIMEOUT_SECONDS`、`KA_ACCOUNT_QWEN_CHUNK_IDLE_SECONDS` |
-| Run 租约 | 10 分钟 | `LEASE_FOR` |
+| Run 租约 | 5 分钟，执行中每 1 分钟续期 | `LEASE_FOR` / `LEASE_BEAT` |
 | `waiting_for_tasks` 无在途子女 | 15 分钟后清扫 | sweeper |
 | `queued` 已投递仍未领 | 120 秒宽限期后、且该队列在 Redis 里为空时，按 `queued_at` 过滤并补投，10 分钟记 `run.queue_stale` | 最多补投 3 次；仍未领取则失败并死信；排队超 1 小时直接失败 |
 | 已派发 outbox | 终态 Run 保留 7 天 | sweeper 每轮分批清理，仍 queued 的行保留 |

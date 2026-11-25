@@ -11,6 +11,7 @@ from ..db import Database
 from ..deps import get_db
 from ..memory import KIND_LABELS
 from ..schemas import PRODUCT_STATUS_VALUES
+from ..services.entry_guard import org_budget
 
 router = APIRouter()
 
@@ -27,6 +28,12 @@ def meta() -> dict[str, Any]:
         "memory_kinds": KIND_LABELS,
         "max_images": service.MAX_IMAGES,
     }
+
+
+@router.get("/api/quota")
+def quota(org_id: str, db: Database = Depends(get_db)) -> dict[str, bool]:
+    """Whether this distributor's daily token or cost cap is already spent."""
+    return {"exhausted": org_budget(db, org_id, "", warn=False) == "over"}
 
 
 @router.get("/api/partnerships")

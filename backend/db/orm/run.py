@@ -45,6 +45,9 @@ class AgentRun(Base):
     # queue while the run is legitimately waiting. Each retry stamps this column so the sweeper
     # does not read that silence as a lost message. `queued_at` stays the queue-entry time.
     queue_heartbeat_at: Mapped[datetime | None] = mapped_column(TimestampCol)
+    # When this queued run first started waiting for a run or model seat.
+    # Later retries do not move it. Cleared once the run leaves the queue for good.
+    capacity_wait_since: Mapped[datetime | None] = mapped_column(TimestampCol)
     started_at: Mapped[datetime | None] = mapped_column(TimestampCol)
     ended_at: Mapped[datetime | None] = mapped_column(TimestampCol)
     cancel_requested_at: Mapped[datetime | None] = mapped_column(TimestampCol)

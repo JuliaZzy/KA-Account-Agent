@@ -11,6 +11,44 @@ from backend.services.monitor import metrics_text, monitor
 _STAGES = {"queue", "claim", "plan", "child", "model", "tool", "answer", "history"}
 
 
+def test_recent_fallback_ratio_and_internal_errors_raise_alerts():
+    from backend.services.monitor import _alerts
+
+    facts = {
+        "failed": 0,
+        "created": 20,
+        "failed_codes": [],
+        "queue_lag": {"p95": 1, "p99": 1},
+        "duration": {"p99": 1},
+        "pending_jobs": 0,
+        "active_runs": 1,
+        "stuck_runs": 0,
+        "send_email_errors": 0,
+        "send_email_calls": 0,
+        "mcp_errors": 0,
+        "mcp_calls": 0,
+        "model_rate_limited": 0,
+        "tool_timeouts": 0,
+        "daily_tokens": 0,
+        "daily_cost_cents": 0,
+        "daily_unknown_usage_calls": 0,
+        "route_selected_recent": 10,
+        "route_fallback_recent": 2,
+        "model_internal_recent": 1,
+        "plan_truncated_recent": 1,
+    }
+    signals = {item["signal"] for item in _alerts(facts, 0, 0)}
+    assert "降级调用占比升高" in signals
+    assert "模型调用出现内部错误" in signals
+    assert "计划输出被截断" in signals
+
+    quiet = {**facts, "route_fallback_recent": 0, "model_internal_recent": 0, "plan_truncated_recent": 0}
+    quiet_signals = {item["signal"] for item in _alerts(quiet, 0, 0)}
+    assert "降级调用占比升高" not in quiet_signals
+    assert "模型调用出现内部错误" not in quiet_signals
+    assert "计划输出被截断" not in quiet_signals
+
+
 def test_p99_is_null_without_samples_and_stays_with_p95(db):
     empty = db.monitor_facts("dist-1")
     assert empty["duration"]["p50"] is None
@@ -67,3 +105,7 @@ def test_p99_is_null_without_samples_and_stays_with_p95(db):
     assert "run_id=" not in text
     assert "session_id=" not in text
     assert "user_id=" not in text
+    assert "agent_model_route_fallback_total 0" in text
+    assert "agent_model_internal_error_total 0" in text
+    assert all(item["signal"] != "降级调用占比升高" for item in board["alerts"])
+    assert all(item["signal"] != "模型调用出现内部错误" for item in board["alerts"])

@@ -8,7 +8,12 @@ from types import SimpleNamespace
 
 from backend.llm.breaker import acquire, record_failure, record_success, release
 from backend.llm.client import DeepSeekClient, GLMClient, QwenClient
-from backend.llm.errors import parse_retry_after, provider_error_from_http, translate_provider_error
+from backend.llm.errors import (
+    ProviderError,
+    parse_retry_after,
+    provider_error_from_http,
+    translate_provider_error,
+)
 
 
 def test_parse_retry_after_seconds():
@@ -62,39 +67,51 @@ def test_timeout_exception_is_retryable():
     assert "read timed out" in (err.cause or "")
 
 
-def test_unknown_sdk_error_keeps_cause_under_network():
+def test_unknown_sdk_error_is_internal_and_not_retried():
     err = translate_provider_error(
         RuntimeError("stream closed mid-chunk"),
         provider="qwen",
         model="qwen3.7-flash",
     )
-    assert err.kind == "network"
+    assert err.kind == "internal"
+    assert err.retryable is False
+    assert err.code == "PROVIDER_INTERNAL"
     assert err.cause_type == "RuntimeError"
     assert "stream closed mid-chunk" in (err.cause or "")
 
 
-def test_async_generator_typeerror_is_bad_response_not_network():
+def test_async_generator_typeerror_is_internal_not_network():
     err = translate_provider_error(
         TypeError("'async_generator' object is not iterable"),
         provider="qwen",
         model="qwen3.7-flash",
     )
-    assert err.kind == "bad_response"
+    assert err.kind == "internal"
     assert err.retryable is False
-    assert err.code == "PROVIDER_BAD_RESPONSE"
+    assert err.code == "PROVIDER_INTERNAL"
     assert err.cause_type == "TypeError"
     assert "async_generator" in (err.cause or "")
 
 
-def test_closed_event_loop_is_bad_response_not_network():
+def test_closed_event_loop_is_internal_not_network():
     err = translate_provider_error(
         RuntimeError("Event loop is closed"),
         provider="qwen",
         model="qwen3.7-flash",
     )
-    assert err.kind == "bad_response"
+    assert err.kind == "internal"
     assert err.retryable is False
     assert err.cause_type == "RuntimeError"
+
+
+def test_kind_decides_retry_even_when_the_caller_passes_the_other_flag():
+    opened = ProviderError(
+        "qwen", "qwen3.7-flash", "circuit_open", retry_after_seconds=30, retryable=True,
+    )
+    assert opened.retryable is False
+    assert opened.code == "PROVIDER_CIRCUIT_OPEN"
+    limited = ProviderError("qwen", "qwen3.7-flash", "rate_limited", retryable=False)
+    assert limited.retryable is True
 
 
 def _sdk_timeout_seconds(client) -> float:

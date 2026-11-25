@@ -71,7 +71,7 @@ async def import_contract(
                 model=parsed.get("model") if isinstance(parsed, dict) else None,
             )
         else:
-            rec = read_and_ingest(
+            rec = await read_and_ingest(
                 db, deepseek_client(),
                 brand_id=p.brand_id, partnership_id=p.id, file_name=name, data=data, title=label,
                 user_id=user_id or None,

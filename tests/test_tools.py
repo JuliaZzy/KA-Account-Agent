@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
 
 from backend.llm import AssistantTurn, FakeLLM, ToolCall
-from tests.support.react_tools import run_tool_calls
 from backend.tools import SCHEMAS, TOOLS
 from backend.tools.exchange_rate import quote
 from backend.tools.exchange_rate import run as fx_run
@@ -17,6 +17,7 @@ from backend.tools.send_email import run as email_run
 from backend.tools.send_email import send as email_send
 from backend.tools.web_search import run as search_run
 from backend.tools.web_search import search
+from tests.support.react_tools import run_tool_calls
 
 
 class _School:
@@ -37,7 +38,7 @@ def _school(monkeypatch, text: str) -> _School:
 
 def test_translate_returns_only_the_model_text(monkeypatch):
     school = _school(monkeypatch, "ten cases of fish oil")
-    out = translate_run({"text": "10 箱鱼油", "target_language": "English"}, llm=FakeLLM())
+    out = asyncio.run(translate_run({"text": "10 箱鱼油", "target_language": "English"}, llm=FakeLLM()))
     assert out == {"ok": True, "data": {"translation": "ten cases of fish oil"}, "error": None}
     assert school.calls[0]["model"] == "qwen3.7-flash"
     assert "10 箱鱼油" in school.calls[0]["messages"][1]["content"]
@@ -45,14 +46,14 @@ def test_translate_returns_only_the_model_text(monkeypatch):
 
 def test_translate_accepts_target_as_the_language(monkeypatch):
     school = _school(monkeypatch, "Hello")
-    out = translate_run({"text": "你好", "target": "en"}, llm=FakeLLM())
+    out = asyncio.run(translate_run({"text": "你好", "target": "en"}, llm=FakeLLM()))
     assert out["ok"] is True and out["data"]["translation"] == "Hello"
     assert "目标语言：en" in school.calls[0]["messages"][1]["content"]
 
 
 def test_translate_rejects_an_empty_request():
-    assert translate_run({"text": "  "}, llm=FakeLLM())["ok"] is False
-    assert translate_run({"target_language": "English", "source": "message"}, llm=FakeLLM())["error"] == "text required when source is message"
+    assert asyncio.run(translate_run({"text": "  "}, llm=FakeLLM()))["ok"] is False
+    assert asyncio.run(translate_run({"target_language": "English", "source": "message"}, llm=FakeLLM()))["error"] == "text required when source is message"
 
 
 def test_translate_uses_the_last_assistant_turn_when_asked(monkeypatch):
@@ -61,19 +62,19 @@ def test_translate_uses_the_last_assistant_turn_when_asked(monkeypatch):
         {"role": "user", "content": "10 cases"},
         {"role": "assistant", "content": "已下单。"},
     ]}
-    out = translate_run({"target_language": "English", "source": "last_assistant"}, llm=FakeLLM(), context=ctx)
+    out = asyncio.run(translate_run({"target_language": "English", "source": "last_assistant"}, llm=FakeLLM(), context=ctx))
     assert out["ok"] and "已下单。" in school.calls[0]["messages"][1]["content"]
 
 
 def test_translate_uses_the_session_report_and_fails_if_missing(monkeypatch):
     school = _school(monkeypatch, "Sales were flat.")
-    out = translate_run(
+    out = asyncio.run(translate_run(
         {"target_language": "English", "source": "report"},
         llm=FakeLLM(),
         context={"last_report": "本月销量持平。"},
-    )
+    ))
     assert out["ok"] and "本月销量持平。" in school.calls[0]["messages"][1]["content"]
-    assert translate_run({"target_language": "English", "source": "report"}, llm=FakeLLM(), context={})["ok"] is False
+    assert asyncio.run(translate_run({"target_language": "English", "source": "report"}, llm=FakeLLM(), context={}))["ok"] is False
 
 
 def test_web_search_parses_bocha_pages(monkeypatch):

@@ -14,8 +14,11 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
 
+# Vendor failures only. `circuit_open` is not here: the cooldown gates the next
+# probe, and this request falls back or fails immediately. `internal` is a local
+# bug, so it is not retried and does not open the vendor breaker.
 RETRYABLE_KINDS = frozenset({
-    "rate_limited", "server_error", "timeout", "network", "circuit_open",
+    "rate_limited", "server_error", "timeout", "network",
 })
 BREAKER_KINDS = frozenset({"rate_limited", "server_error", "timeout", "network"})
 
@@ -28,6 +31,7 @@ _PROVIDER_CODES = {
     "authentication": "PROVIDER_AUTHENTICATION",
     "bad_response": "PROVIDER_BAD_RESPONSE",
     "circuit_open": "PROVIDER_CIRCUIT_OPEN",
+    "internal": "PROVIDER_INTERNAL",
 }
 
 _TIMEOUT_NAMES = frozenset({
@@ -67,8 +71,9 @@ class ProviderError(Exception):
     cause: str | None = None
 
     def __post_init__(self) -> None:
-        if self.kind in RETRYABLE_KINDS:
-            self.retryable = True
+        # The kind is the policy. A caller cannot mark an internal error retryable
+        # or a vendor 429 permanent by passing the other flag.
+        self.retryable = self.kind in RETRYABLE_KINDS
         Exception.__init__(self, self._message())
 
     @property
@@ -174,24 +179,13 @@ def translate_provider_error(exc: BaseException, *, provider: str, model: str) -
     if name in {"RateLimitError"}:
         return ProviderError(
             provider, model, "rate_limited",
-            status_code=429, retry_after_seconds=retry_after, request_id=request_id, retryable=True,
-            **cause,
+            status_code=429, retry_after_seconds=retry_after, request_id=request_id, **cause,
         )
-    # Local stream-assembly / event-loop bugs are not vendor outages — do not retry as network.
-    if isinstance(exc, TypeError) and "async_generator" in str(exc):
-        return ProviderError(
-            provider, model, "bad_response",
-            request_id=request_id, retryable=False, **cause,
-        )
-    if isinstance(exc, RuntimeError) and "Event loop is closed" in str(exc):
-        return ProviderError(
-            provider, model, "bad_response",
-            request_id=request_id, retryable=False, **cause,
-        )
-    # Unknown SDK errors still land on network so workers retry; cause_* keeps the real type.
+    # Anything we do not recognize is a local bug. Retrying it, counting it toward
+    # the vendor breaker, or falling back to another model hides the fault.
     return ProviderError(
-        provider, model, "network",
-        retry_after_seconds=retry_after, request_id=request_id, retryable=True, **cause,
+        provider, model, "internal",
+        request_id=request_id, **cause,
     )
 
 

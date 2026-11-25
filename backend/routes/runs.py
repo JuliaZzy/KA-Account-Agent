@@ -111,6 +111,15 @@ def list_runs(
     return run_service.list_runs(db, user.org_id, user_id=user_id, status=status, limit=limit)
 
 
+@router.get("/metrics/scrape", response_class=PlainTextResponse)
+def scrape_metrics(db: Database = Depends(get_db)) -> PlainTextResponse:
+    """All distributors, for Prometheus on the compose network. No user header."""
+    return PlainTextResponse(
+        monitor.scrape_text(db),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
+
+
 @router.get("/metrics", response_class=PlainTextResponse)
 def get_metrics(
     user: CurrentUser = Depends(get_current_user), db: Database = Depends(get_db),

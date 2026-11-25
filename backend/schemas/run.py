@@ -45,6 +45,7 @@ class RunResponse(BaseModel):
     max_tokens: int | None = None
     max_tool_calls: int | None = None
     max_duration_seconds: int | None = None
+    queue_ahead: int | None = None
 
 
 class RepairRunRequest(BaseModel):
@@ -311,9 +312,15 @@ class MonitorMetrics(BaseModel):
     stuck_runs: int
     oldest_queued_seconds: float = 0.0
     model_errors: int
+    model_internal: int = 0
+    model_internal_recent: int = 0
     route_selected: int = 0
     route_fallback: int = 0
+    route_selected_recent: int = 0
+    route_fallback_recent: int = 0
     route_quality_gate_failed: int = 0
+    plan_truncated: int = 0
+    plan_truncated_recent: int = 0
     tool_calls: int
     tool_errors: int
     duplicates: int

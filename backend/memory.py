@@ -281,8 +281,7 @@ def fold_older(
     caught: Exception | None = None
     started = time.perf_counter()
     try:
-        parsed = model_calls.school_json(
-            model_calls.SCHOOL_CHAT,
+        parsed = model_calls.qwen_json(
             system=FOLD,
             messages=messages,
             schema=fold_schema(),
@@ -320,6 +319,87 @@ def fold_older(
         latency_ms=latency_ms, error=None,
     )
     return start, kept
+
+
+async def fold_older_async(
+    db: Database, llm: Any, session: dict[str, Any],
+    history: list[dict[str, Any]], folded: int,
+    run_id: str | None,
+) -> tuple[int, str]:
+    """和 fold_older 一样，但模型调用留在当前事件循环里。"""
+    summary = str(session.get("summary") or "")
+    folded = _cursor(history, folded)
+    start = recent_start(history, folded)
+    if _prefix_tokens(history, folded) < FOLD_TOKENS:
+        return folded, summary
+    pending = _transcript(history[folded:start])
+    if not pending:
+        return start, summary
+    step_id = _open_fold_step(db, run_id)
+    messages = [{"role": "user", "content": (
+        f"=== 迄今的摘要 ===\n{summary or '（无）'}\n\n"
+        f"=== 更早的轮次 ===\n{pending}"
+    )}]
+    raw: dict[str, Any] = {}
+    caught: Exception | None = None
+    started = time.perf_counter()
+    try:
+        parsed = await model_calls.qwen_json_async(
+            system=FOLD,
+            messages=messages,
+            schema=fold_schema(),
+            temperature=0,
+            client=llm,
+            db=db,
+            run_id=run_id,
+            step_id=step_id,
+            purpose="memory.fold",
+        )
+        if isinstance(parsed, dict):
+            raw = parsed
+        else:
+            caught = ValueError("model did not return a JSON object")
+    except Exception as e:
+        caught = e
+        log.exception("could not fold older turns into the summary")
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    if caught is not None:
+        _close_fold(
+            db, run_id, step_id, cursor=folded, fold_through=folded, summary=summary,
+            latency_ms=latency_ms, error=caught,
+        )
+        return folded, summary
+    text = " ".join(str(raw.get("summary") or "").split())
+    if not text:
+        _close_fold(
+            db, run_id, step_id, cursor=folded, fold_through=folded, summary=summary,
+            latency_ms=latency_ms, error=None,
+        )
+        return folded, summary
+    kept = text[:_SUMMARY_CHARS]
+    _close_fold(
+        db, run_id, step_id, cursor=folded, fold_through=start, summary=kept,
+        latency_ms=latency_ms, error=None,
+    )
+    return start, kept
+
+
+async def fold_session_async(db: Database, llm: Any, session_id: str, run_id: str | None) -> None:
+    """Worker 已经在事件循环里时，用这个折叠更早的对话。"""
+    with _fold_lock(session_id):
+        row = db.session(session_id)
+        if not row:
+            return
+        history = list(row.get("history") or [])
+        folded = int(row.get("folded_through") or 0)
+        updated, summary = await fold_older_async(db, llm, row, history, folded, run_id)
+        fields: dict[str, Any] = {}
+        if updated != folded:
+            fields["folded_through"] = updated
+        if summary != (row.get("summary") or ""):
+            fields["summary"] = summary
+        if fields:
+            db.update_session(session_id, **fields)
 
 
 def bind_fold_scheduler(schedule: Callable[[Callable[[], None]], None]) -> Token:

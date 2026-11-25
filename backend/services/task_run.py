@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import base64
+import inspect
 import logging
 from typing import Any
 
 from ..db import Database
+from ..llm.calls import ModelBudgetExceeded
 from ..llm.errors import ModelCapacityExceeded, ProviderError
 from ..orchestrator.gather import checkpoint_state, finish_child, load_state
 from ..orchestrator.plan import PlanTask, tool_name_for
@@ -17,7 +19,7 @@ from ..services.session_tools import tools as turn_tools
 log = logging.getLogger(__name__)
 
 
-def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
+async def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
     """Run the planned tool on this child. Results go to the wave box, not history."""
     payload = run.get("input_json") if isinstance(run.get("input_json"), dict) else {}
     session_id = str(payload.get("session_id") or "")
@@ -46,9 +48,13 @@ def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
         from ..orchestrator.report import execute_report
 
         try:
-            return execute_report(db, llm, run, session)
+            return await execute_report(db, llm, run, session)
         except (ModelCapacityExceeded, ProviderError):
             raise
+        except ModelBudgetExceeded as exc:
+            result = _budget_result(payload, exc, name=name)
+            finish_child(db, run, result)
+            return result
         except Exception as exc:
             log.exception("report child failed")
             result = _failed(payload, str(exc), name=name)
@@ -89,6 +95,8 @@ def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
             "run_id": run["id"], "step_id": step_id,
             "history": session.get("history") or [],
         })
+        if inspect.isawaitable(raw):
+            raw = await raw
         if not isinstance(raw, dict):
             raw = {"ok": True, "data": raw}
         ok = raw.get("ok", True) is not False and not raw.get("error")
@@ -106,6 +114,13 @@ def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
             _record_tool(db, run, step_id, name, args, result, raw if ok else None)
     except (ModelCapacityExceeded, ProviderError):
         raise
+    except ModelBudgetExceeded as exc:
+        result = _budget_result(payload, exc, name=name)
+        if claimed_id:
+            _complete_planned_call(db, claimed_id, result, None)
+        else:
+            _record_tool(db, run, step_id, name, args, result, None)
+        return _settle(db, run, result)
     except Exception as exc:
         log.exception("child tool %s failed", name)
         result = _failed(payload, str(exc), name=name)
@@ -356,6 +371,18 @@ def _upstream_text(prior: list[dict[str, Any]]) -> str:
         elif isinstance(data, str):
             parts.append(data)
     return "\n\n".join(parts)
+
+
+def _budget_result(payload: dict[str, Any], exc: ModelBudgetExceeded, *, name: str | None = None) -> dict[str, Any]:
+    """A purpose token cap is a missing section. A run or org cap is quota.
+
+    The text handed to ANSWER never contains the internal code. The quota flag
+    is for the parent run and the desk, not for the model to repeat.
+    """
+    result = _failed(payload, "没有生成", name=name)
+    if exc.scope in ("org", "run"):
+        result["quota_exhausted"] = exc.scope
+    return result
 
 
 def _failed(payload: dict[str, Any], error: str, *, name: str | None = None) -> dict[str, Any]:

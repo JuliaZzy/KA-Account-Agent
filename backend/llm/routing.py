@@ -71,7 +71,8 @@ class RunBudget:
 # Prompt plus completion. Purpose policies cap accepted completion tokens separately.
 RUN_BUDGETS: dict[str, RunBudget] = {
     "chat": RunBudget(max_model_calls=8, max_tokens=32_000),
-    "open": RunBudget(max_model_calls=2, max_tokens=8_000),
+    # One title draft plus two JSON repairs.
+    "open": RunBudget(max_model_calls=4, max_tokens=8_000),
 }
 
 
@@ -80,20 +81,21 @@ def run_budget_for(run_type: str | None) -> RunBudget:
     return RUN_BUDGETS.get(str(run_type or ""), RunBudget())
 
 
-def _cheap_text(task: str, *, max_tokens: int = 1600) -> RoutePolicy:
+def _cheap_text(task: str, *, max_tokens: int = 1600, max_model_calls: int = 4) -> RoutePolicy:
     return RoutePolicy(
         task=task,
         primary=QWEN_FLASH,
         fallbacks=(DEEPSEEK_FLASH,),
         max_tokens=max_tokens,
-        max_model_calls=2,
+        max_model_calls=max_model_calls,
         quality_gate="response_parsed",
-        fallback_on=("provider_error", "model_capacity", "invalid_json"),
+        # Bad JSON goes back to the same model. A vendor failure still changes model.
+        fallback_on=("provider_error", "model_capacity"),
     )
 
 
 def _structured(
-    task: str, *, max_tokens: int = 1200, max_model_calls: int = 2, quality_gate: str = "response_parsed",
+    task: str, *, max_tokens: int = 1200, max_model_calls: int = 4, quality_gate: str = "response_parsed",
 ) -> RoutePolicy:
     return RoutePolicy(
         task=task,
@@ -102,7 +104,7 @@ def _structured(
         max_tokens=max_tokens,
         max_model_calls=max_model_calls,
         quality_gate=quality_gate,
-        fallback_on=("provider_error", "model_capacity", "invalid_json", "quality_gate_failed"),
+        fallback_on=("provider_error", "model_capacity"),
     )
 
 
@@ -112,9 +114,10 @@ ROUTES: dict[str, RoutePolicy] = {
         primary=QWEN_FLASH,
         fallbacks=(DEEPSEEK_FLASH,),
         max_tokens=1200,
-        max_model_calls=2,
-        quality_gate="valid_task_plan",
-        fallback_on=("provider_error", "model_capacity", "invalid_json", "quality_gate_failed"),
+        # Draft, two repairs, one shorter plan, two more repairs.
+        max_model_calls=6,
+        quality_gate="response_parsed",
+        fallback_on=("provider_error", "model_capacity"),
     ),
     "orchestrator.answer": RoutePolicy(
         task="orchestrator.answer",
@@ -129,7 +132,6 @@ ROUTES: dict[str, RoutePolicy] = {
     "translate": _cheap_text("translate"),
     "po.reply": _cheap_text("po.reply"),
     "po.resolve": _cheap_text("po.resolve"),
-    "po.claim": _cheap_text("po.claim"),
     "brand.query": _cheap_text("brand.query"),
     "brand.answer": RoutePolicy(
         task="brand.answer",
@@ -152,23 +154,25 @@ ROUTES: dict[str, RoutePolicy] = {
         quality_gate="non_empty_answer",
         fallback_on=("provider_error", "model_capacity"),
     ),
-    "po.extract": _structured("po.extract", quality_gate="valid_po_slots"),
+    "po.extract": _structured("po.extract"),
+    # Three classifiers on one run, each allowed a draft and two repairs.
+    "po.claim": _cheap_text("po.claim", max_model_calls=9),
     "contract.extract": _structured("contract.extract"),
     # Catch-all if a report call forgets a graded purpose. Graded caps are per purpose, not a
     # shared 24. Writes ~7, review ~6 for two rounds, optional (plan/charts/wizards) ~4–8.
-    "report": _structured("report", max_tokens=24_000, max_model_calls=24),
-    "report.write": _structured("report.write", max_tokens=16_000, max_model_calls=12),
+    "report": _structured("report", max_tokens=24_000, max_model_calls=26),
+    "report.write": _structured("report.write", max_tokens=16_000, max_model_calls=14),
     "report.review": RoutePolicy(
         task="report.review",
         primary=QWEN_FLASH,
         fallbacks=(DEEPSEEK_FLASH,),
         max_tokens=12_000,
-        max_model_calls=8,
+        max_model_calls=10,
         quality_gate="response_parsed",
-        fallback_on=("provider_error", "model_capacity", "invalid_json", "quality_gate_failed"),
+        fallback_on=("provider_error", "model_capacity"),
     ),
-    "report.optional": _structured("report.optional", max_tokens=12_000, max_model_calls=12),
-    "code.fix": _structured("code.fix"),
+    "report.optional": _structured("report.optional", max_tokens=12_000, max_model_calls=14),
+    "code.fix": _structured("code.fix", max_model_calls=9),
     "data.react": RoutePolicy(
         task="data.react", primary=DEEPSEEK_FLASH, fallbacks=(QWEN_FLASH,),
         max_tokens=8_000, max_model_calls=8,

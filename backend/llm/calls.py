@@ -4,9 +4,11 @@ Official `qwen3.7-flash` is the cheap short-text model (answers, titles, transla
 Official `deepseek-flash` writes strict JSON, tools, vision, and report prose, with
 thinking off. None of these calls set `max_tokens`. There is no campus gateway path.
 
-`call_model` is the only entry. It opens the vendor client from `brand` when the
-caller did not pass a test double. The wrappers keep the shapes callers already
-expect. Vendors usually send token counts on the final response. A stream, or a
+真正调模型的是 `call_model_async`。`call_model` 只给还没改成异步的代码用：
+它用 `asyncio.run` 把一次调用跑完。如果此时已经有事件循环在跑，就直接报错，
+避免两个调用抢同一个循环。
+It opens the vendor client from `brand` when the caller did not pass a test
+double. The wrappers keep the shapes callers already expect. Vendors usually send token counts on the final response. A stream, or a
 gateway that drops usage, leaves both counts at 0. Those calls are estimated and
 labeled `estimated`. OCR stays in `documents`.
 """
@@ -15,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import inspect
 import json
 import logging
@@ -32,6 +35,7 @@ from ..services.run_names import EntryErrorCode, StepEvent, StepStatus
 from . import breaker
 from .client import VENDORS, client_for
 from .errors import BREAKER_KINDS, ModelCapacityExceeded, ProviderError, translate_provider_error
+from .json_check import repair_json, repair_json_async
 from .parse import parse_json_loose
 from .routing import (
     ROUTING_POLICY_VERSION,
@@ -45,11 +49,6 @@ from .types import AssistantTurn, ToolCall
 
 log = logging.getLogger(__name__)
 
-# Legacy aliases kept so older call sites and tests keep compiling.
-SCHOOL_CHAT = "qwen3.7-flash"
-SCHOOL_REASONER = "deepseek-flash"
-SCHOOL_PLAN = "qwen3.7-flash"
-SCHOOL_VISION = "deepseek-flash"
 DEEPSEEK_FLASH = "deepseek-flash"
 QWEN_PLAN = "qwen3.7-flash"
 
@@ -61,11 +60,53 @@ _VENDOR_TOOL_NAME = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 class ModelBudgetExceeded(Exception):
-    """This run is already at its model or token cap. The vendor was not called."""
+    """A budget cap refused the vendor call.
 
-    def __init__(self) -> None:
+    `scope` is `route` for one purpose's own cap, `run` for this run's safety
+    net, or `org` for the distributor's daily quota. The closing answer is not
+    subject to these caps.
+    """
+
+    def __init__(self, scope: str = "run") -> None:
         super().__init__(EntryErrorCode.COST_BUDGET_EXCEEDED)
         self.code = EntryErrorCode.COST_BUDGET_EXCEEDED
+        self.scope = scope if scope in ("route", "run", "org") else "run"
+
+
+class ModelOutputError(ValueError):
+    """The model replied, but the text is not a usable JSON object.
+
+    `raw` is the text it wrote, fence included, so the caller can hand that
+    text back and ask for a correction.
+    """
+
+    def __init__(self, message: str, *, raw: str = "", finish_reason: str | None = None) -> None:
+        super().__init__(message)
+        self.raw = raw
+        self.finish_reason = finish_reason
+
+
+class JsonRepairExhausted(ModelOutputError):
+    """JSON 修复次数用完了，对象还是不能用。
+
+    子任务把它收成失败结果交给 answer。没有上层接住时，Worker 把这次 Run 判失败并写死信，不再排下一次业务重试。
+    `message` 是交给用户的那句。
+    """
+
+    def __init__(
+        self, message: str, *, raw: str = "", finish_reason: str | None = None,
+        code: str = "JSON_REPAIR_EXHAUSTED",
+    ) -> None:
+        super().__init__(message, raw=raw, finish_reason=finish_reason)
+        self.code = code
+
+
+_FINISH: contextvars.ContextVar[str | None] = contextvars.ContextVar("model_finish_reason", default=None)
+
+
+def last_finish_reason() -> str | None:
+    """Why the vendor stopped the call that just returned or just failed to parse."""
+    return _FINISH.get()
 
 
 @dataclass
@@ -81,6 +122,8 @@ class ModelResult:
     cache_miss_tokens: int | None = None
     cache_creation_tokens: int | None = None
     reasoning: str | None = None
+    finish_reason: str | None = None
+    budget_scope: str | None = None
 
 
 @dataclass
@@ -177,6 +220,22 @@ def _tokens(
     )
 
 
+def _finish_reason(raw: Any) -> str | None:
+    """Vendor stop reason. `length` means the output hit the model's token cap."""
+    try:
+        choice = raw["choices"][0] if isinstance(raw, dict) else raw.choices[0]
+    except (AttributeError, IndexError, KeyError, TypeError):
+        return None
+    reason = choice.get("finish_reason") if isinstance(choice, dict) else getattr(choice, "finish_reason", None)
+    return str(reason) if reason else None
+
+
+def _note_truncation(ledger: Any, purpose: str | None) -> None:
+    if ledger is None:
+        return
+    _note(ledger, StepEvent.MODEL_OUTPUT_TRUNCATED, {"purpose": purpose, "finish_reason": "length"})
+
+
 def _message_text(resp: Any) -> str:
     try:
         if isinstance(resp, dict):
@@ -210,26 +269,61 @@ def _json_format(schema: dict[str, Any] | None) -> dict[str, Any]:
     return {"format": {"type": "json_object"}}
 
 
-# Celery workers are sync. Qwen's AsyncOpenAI needs one long-lived loop so the
-# create coroutine and any async stream drain share the same loop (asyncio.run
-# closes the loop and later yields "Event loop is closed").
-_loop: asyncio.AbstractEventLoop | None = None
+# 并发名额跟这一次 enter() 新建的事件循环走。
+# 不要做成全进程共用：上一次 asyncio.run 结束时循环已经关掉，旧名额还绑在那个循环上，下一次任务用不了。
+_vendor_limits: contextvars.ContextVar[dict[str, asyncio.Semaphore] | None] = contextvars.ContextVar(
+    "vendor_limits", default=None,
+)
+_tool_slots: contextvars.ContextVar[asyncio.Semaphore | None] = contextvars.ContextVar(
+    "tool_slots", default=None,
+)
 
 
-def _background_loop() -> asyncio.AbstractEventLoop:
-    global _loop
-    if _loop is None or _loop.is_closed():
-        _loop = asyncio.new_event_loop()
-    return _loop
+def _vendor_limit(brand: str) -> asyncio.Semaphore:
+    """限制这一次任务里，同时打给同一家模型的次数。"""
+    limits = _vendor_limits.get()
+    if limits is None:
+        limits = {}
+        _vendor_limits.set(limits)
+    sem = limits.get(brand)
+    if sem is None:
+        sem = asyncio.Semaphore(8)
+        limits[brand] = sem
+    return sem
 
 
-def _await(result: Any) -> Any:
-    if inspect.iscoroutine(result):
-        return _background_loop().run_until_complete(result)
-    return result
+def tool_limit() -> asyncio.Semaphore:
+    """限制这一次任务里，同时跑的阻塞操作：查库、表格处理、代码沙箱。"""
+    sem = _tool_slots.get()
+    if sem is None:
+        sem = asyncio.Semaphore(4)
+        _tool_slots.set(sem)
+    return sem
 
 
-def _call_deepseek(
+def enter(coro: Any) -> Any:
+    """同步代码进入异步代码的唯一入口。事件循环已经在跑时，不许再开一次。"""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    raise RuntimeError(
+        "事件循环已经在跑，不能再从同步代码进来。请改成 await 对应的异步函数。",
+    )
+
+
+async def _wait(value: Any) -> Any:
+    """是协程就等它跑完；是普通返回值就原样交回去。
+
+    测试还会把 `_invoke` 和 `_call_model_once` 换成普通函数。
+    对普通函数直接等待会报错，所以先看一眼再决定等不等。
+    """
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+async def _call_deepseek(
     client: Any, *, kind: Kind, model: str, system: str, messages: list[dict[str, Any]],
     stream: bool, temperature: float | None, top_p: float | None,
     schema: dict[str, Any] | None, tools: list[dict[str, Any]] | None,
@@ -274,8 +368,8 @@ def _call_deepseek(
         return _Assembled(assembler.result()) if assembler is not None else chunks
 
     async def _run() -> Any:
-        # The OpenAI SDK is synchronous. wait_for cannot interrupt a blocking call
-        # on this loop, so the invoke itself runs in a worker thread.
+        # DeepSeek 的调用库是同步的。它卡在事件循环里时，超时等不到它结束，
+        # 所以真正发请求放到别的线程，循环才能继续干别的事。
         resp = await asyncio.to_thread(_sync_invoke)
         if inspect.isawaitable(resp):
             resp = await resp
@@ -283,9 +377,10 @@ def _call_deepseek(
             return await _consume(resp)
         return resp
 
-    # SDK timeout is also 30s (see vendor_http_timeout). This wrap is what tests
-    # can inject against, and it covers stream drain after the HTTP call returns.
-    return _await(asyncio.wait_for(_run(), timeout=deepseek_total_timeout_seconds()))
+    # 供应商自己的超时也是 30 秒。这里再包一层，测试可以改这个上限。
+    # 请求返回之后，回答还在一段一段往外吐的时间也算在里面。
+    async with _vendor_limit("deepseek"):
+        return await asyncio.wait_for(_run(), timeout=deepseek_total_timeout_seconds())
 
 
 def _call_glm(
@@ -404,7 +499,7 @@ def _is_sync_stream(resp: Any) -> bool:
     return hasattr(resp, "__iter__") and not hasattr(resp, "choices")
 
 
-def _call_qwen(
+async def _call_qwen(
     client: Any, *, kind: Kind, model: str, system: str, messages: list[dict[str, Any]],
     stream: bool, temperature: float | None, tools: list[dict[str, Any]] | None,
     tool_choice: str | None, reasoning_effort: str | None,
@@ -464,10 +559,11 @@ def _call_qwen(
     # The SDK client's own timeout is 7200s, so without this a stalled call can run for
     # over a minute (A3 saw 71s) before the fallback model gets a chance. TimeoutError
     # is classified as a retryable `timeout` ProviderError, which routing falls back on.
-    return _await(asyncio.wait_for(_run(), timeout=qwen_total_timeout_seconds()))
+    async with _vendor_limit("qwen"):
+        return await asyncio.wait_for(_run(), timeout=qwen_total_timeout_seconds())
 
 
-def _call_double(
+async def _call_double(
     client: Any, *, kind: Kind, model: str, system: str, messages: list[dict[str, Any]],
     stream: bool, temperature: float | None, top_p: float | None,
     schema: dict[str, Any] | None, tools: list[dict[str, Any]] | None,
@@ -479,11 +575,14 @@ def _call_double(
         response = getattr(client, "response", None)
         if response is None:
             raise TypeError(f"{type(client).__name__} cannot answer a Responses call")
-        return _await(response(
+        result = response(
             model=model, instructions=system, input=_flash_input(messages),
             text=_json_format(schema), reasoning_effort=reasoning_effort,
             temperature=temperature, **({} if top_p is None else {"top_p": top_p}),
-        ))
+        )
+        if inspect.isawaitable(result):
+            result = await result
+        return result
     chat = getattr(client, "chat_completion", None)
     if chat is None:
         raise TypeError(f"{type(client).__name__} cannot answer a run")
@@ -504,15 +603,17 @@ def _call_double(
             continue
         if accept_any or key in params:
             kwargs[key] = value
-    return _await(chat(**kwargs))
+    result = chat(**kwargs)
+    if inspect.isawaitable(result):
+        result = await result
+    return result
 
 
 def _iter_stream_chunks(chunks: Any) -> Iterator[Any]:
-    """Normalize vendor streams to a sync iterator.
+    """把模型一段一段返回的内容收成可以逐条读取的普通迭代。
 
-    Qwen normally buffers async streams inside `_call_qwen`. This path remains for
-    any async iterator that still reaches `_assemble_stream`, and must reuse the
-    same background loop the generator was created on.
+    Qwen 的流一般在 `_call_qwen` 里就读完了。这里只处理还漏到 `_assemble_stream` 的异步流。
+    只有当前没有事件循环时才能走这里。循环已经在跑的话，必须在协程里用 async for 自己读。
     """
     if inspect.isasyncgen(chunks) or (
         hasattr(chunks, "__aiter__") and not hasattr(chunks, "__iter__")
@@ -520,7 +621,7 @@ def _iter_stream_chunks(chunks: Any) -> Iterator[Any]:
         async def _drain() -> list[Any]:
             return [item async for item in chunks]
 
-        return iter(_background_loop().run_until_complete(_drain()))
+        return iter(enter(_drain()))
     return iter(chunks)
 
 
@@ -714,7 +815,7 @@ def _tool_namespace(slot: dict[str, str]) -> SimpleNamespace:
     )
 
 
-def _invoke(
+async def _invoke(
     *,
     brand: str,
     model_name: str,
@@ -735,7 +836,7 @@ def _invoke(
     stream = on_text is not None and kind == "chat_completion"
     alias: dict[str, str] = {}
     if not isinstance(client, VENDORS):
-        response = _call_double(
+        response = await _call_double(
             client, kind=kind, model=model_name, system=system, messages=messages,
             stream=stream, temperature=temperature, top_p=top_p, schema=schema,
             tools=tools, tool_choice=tool_choice, reasoning_effort=reasoning_effort,
@@ -744,7 +845,7 @@ def _invoke(
         tools, alias = _tools_for_vendor(tools)
         messages = _messages_for_vendor(messages, alias)
         if brand == "deepseek":
-            response = _call_deepseek(
+            response = await _call_deepseek(
                 client, kind=kind, model=model_name, system=system, messages=messages,
                 stream=stream, temperature=temperature, top_p=top_p, schema=schema,
                 tools=tools, tool_choice=tool_choice, reasoning_effort=reasoning_effort,
@@ -757,7 +858,7 @@ def _invoke(
                 tools=tools, tool_choice=tool_choice, reasoning_effort=reasoning_effort,
             )
         elif brand == "qwen":
-            response = _call_qwen(
+            response = await _call_qwen(
                 client, kind=kind, model=model_name, system=system, messages=messages,
                 stream=stream, temperature=temperature, tools=tools,
                 tool_choice=tool_choice, reasoning_effort=reasoning_effort,
@@ -819,9 +920,12 @@ def _interpret(expect: Expect, raw: Any, alias: dict[str, str] | None = None) ->
     if isinstance(raw, dict) and "choices" not in raw and not hasattr(raw, "output_text"): # 没有 `choices` 键、也没有 `output_text` 属性：说明调用方直接拿到了已解析的对象，不用再解析
         return raw, json.dumps(raw, ensure_ascii=False)
     text = str(raw.output_text or "") if hasattr(raw, "output_text") else _message_text(raw)
-    parsed = parse_json_loose(text)
+    try:
+        parsed = parse_json_loose(text)
+    except json.JSONDecodeError as err:
+        raise ModelOutputError("model did not return valid JSON", raw=text) from err
     if not isinstance(parsed, dict):
-        raise ValueError("model did not return a JSON object")
+        raise ModelOutputError("model did not return a JSON object", raw=text)
     return parsed, text
 
 
@@ -831,23 +935,31 @@ def _budget(db: Any, run_id: str | None, step_id: str | None, purpose: str | Non
     spend = db.model_budget(run_id)
     if spend is None:
         return None
+    if purpose == "orchestrator.answer":
+        return _Ledger(
+            db=db, run_id=run_id, step_id=step_id, org_id=spend["org_id"],
+            trace_id=spend["trace_id"], purpose=purpose,
+        )
     over_calls = spend["max_model_calls"] is not None and spend["model_calls"] >= spend["max_model_calls"]
     over_tokens = spend["max_tokens"] is not None and spend["total_tokens"] >= spend["max_tokens"]
     over_org = org_budget(db, spend["org_id"], run_id) == "over"
     if over_calls or over_tokens or over_org:
+        scope = "org" if over_org else "run"
         db.append_run_event(spend["org_id"], run_id, StepEvent.MODEL_FAILED, {
             "purpose": purpose,
             "trace_id": spend["trace_id"],
             "error": EntryErrorCode.COST_BUDGET_EXCEEDED,
+            "budget_scope": scope,
             "status": StepStatus.FAILED,
         })
         log.info(
-            "model budget exceeded trace_id=%s run_id=%s",
-            spend["trace_id"], run_id,
+            "model budget exceeded trace_id=%s run_id=%s scope=%s",
+            spend["trace_id"], run_id, scope,
         )
         return ModelResult(
             brand="", model="", body=None, prompt_tokens=0, completion_tokens=0,
             usage_source="estimated", error=EntryErrorCode.COST_BUDGET_EXCEEDED,
+            budget_scope=scope,
         )
     return _Ledger(
         db=db, run_id=run_id, step_id=step_id, org_id=spend["org_id"],
@@ -1029,7 +1141,7 @@ def _capacity_failed(
     _note(ledger, StepEvent.MODEL_FAILED, payload)
 
 
-def _call_model_once(
+async def _call_model_once(
     model_name: str,
     *,
     brand: Brand,
@@ -1088,10 +1200,8 @@ def _call_model_once(
     started = time.perf_counter()
     ticket = None if brand == "fake" else breaker.acquire(brand)
     if ticket is not None and not ticket.allowed:
-        closed = ProviderError(
-            brand, model_name, "circuit_open",
-            retry_after_seconds=ticket.retry_after_seconds, retryable=True,
-        )
+        # The Redis TTL decides when the next probe may run. This request does not wait it out.
+        closed = ProviderError(brand, model_name, "circuit_open")
         _capacity_failed(
             ledger, brand=brand, model_name=model_name, purpose=purpose, error=closed,
         )
@@ -1113,13 +1223,13 @@ def _call_model_once(
 
     # 调用模型
     try:
-        carried = _invoke(
+        carried = await _wait(_invoke(
             brand=brand, model_name=model_name, kind=kind, expect=expect,
             temperature=temperature, top_p=top_p, system=system, messages=messages,
             schema=schema, tools=tools, tool_choice=tool_choice,
             reasoning_effort=reasoning_effort, client=used,
             on_text=emit if on_text is not None else None,
-        )
+        ))
     except Exception as exc:
         error = _transport_error(exc, brand=brand, model_name=model_name, client=used)
         _record_breaker(brand, error)
@@ -1143,11 +1253,18 @@ def _call_model_once(
     if brand != "fake":
         breaker.record_success(brand)
 
+    finish_reason = _finish_reason(carried.response)
+    _FINISH.set(finish_reason)
+    if finish_reason == "length":
+        _note_truncation(ledger, purpose)
+
     # 解释返回值
     try:
         body, text = _interpret(expect, carried.response, getattr(carried, "tool_alias", None))
         reasoning = _extract_reasoning(carried.response)
     except Exception as exc:
+        if isinstance(exc, ModelOutputError):
+            exc.finish_reason = finish_reason
         _fail(
             ledger, brand=_ledger_brand(brand, carried.client), model_name=model_name,
             system=system, messages=messages, schema=schema, tools=tools, client=carried.client,
@@ -1208,6 +1325,7 @@ def _call_model_once(
         cache_hit_tokens=cache["cache_hit_tokens"], cache_miss_tokens=cache["cache_miss_tokens"],
         cache_creation_tokens=cache["cache_creation_tokens"],
         reasoning=reasoning,
+        finish_reason=finish_reason,
     )
 
 
@@ -1255,7 +1373,7 @@ def _route_budget_exceeded(db: Any | None, run_id: str | None, policy: Any) -> b
     return False
 
 
-def call_model(*args: Any, **kwargs: Any) -> ModelResult:
+async def call_model_async(*args: Any, **kwargs: Any) -> ModelResult:
     """Select a versioned route, record it in the trace, and fall back on transient errors."""
     from .context import fill_call_kwargs
 
@@ -1268,7 +1386,7 @@ def call_model(*args: Any, **kwargs: Any) -> ModelResult:
         requested_provider=str(kwargs.get("brand") or ""),
     )
     if policy is None:
-        return _call_model_once(*args, **kwargs)
+        return await _wait(_call_model_once(*args, **kwargs))
 
     db = kwargs.get("db")
     run_id = kwargs.get("run_id")
@@ -1284,7 +1402,7 @@ def call_model(*args: Any, **kwargs: Any) -> ModelResult:
         call_kwargs["brand"] = candidate.provider
         decision = RouteDecision.PRIMARY if index == 0 else RouteDecision.FALLBACK
         fallback_from = candidates[index - 1].model if index else None
-        if _route_budget_exceeded(db, run_id, policy):
+        if policy.task != "orchestrator.answer" and _route_budget_exceeded(db, run_id, policy):
             return ModelResult(
                 brand=candidate.provider,
                 model=candidate.model,
@@ -1293,6 +1411,7 @@ def call_model(*args: Any, **kwargs: Any) -> ModelResult:
                 completion_tokens=0,
                 usage_source="estimated",
                 error=EntryErrorCode.COST_BUDGET_EXCEEDED,
+                budget_scope="route",
             )
         _route_event(
             db, run_id,
@@ -1305,7 +1424,7 @@ def call_model(*args: Any, **kwargs: Any) -> ModelResult:
             ),
         )
         try:
-            result = _call_model_once(*call_args, **call_kwargs)
+            result = await _wait(_call_model_once(*call_args, **call_kwargs))
             if result.error is None:
                 passed, quality_reason = quality_check(policy, result.body)
                 if not passed:
@@ -1320,16 +1439,7 @@ def call_model(*args: Any, **kwargs: Any) -> ModelResult:
                     raise ValueError(f"route quality gate failed: {quality_reason}")
             return result
         except (ProviderError, ModelCapacityExceeded, ValueError) as exc:
-            if isinstance(exc, ProviderError):
-                failure_kind = "provider_error"
-            elif isinstance(exc, ModelCapacityExceeded):
-                failure_kind = "model_capacity"
-            else:
-                failure_kind = (
-                    "quality_gate_failed"
-                    if "route quality gate failed" in str(exc)
-                    else "invalid_json"
-                )
+            failure_kind = _route_failure_kind(exc)
             if index + 1 >= len(candidates) or failure_kind not in policy.fallback_on:
                 raise
             reason_map = {
@@ -1345,10 +1455,27 @@ def call_model(*args: Any, **kwargs: Any) -> ModelResult:
             continue
     raise RuntimeError(f"no model route available for {purpose or requested_model}")
 
+def call_model(*args: Any, **kwargs: Any) -> ModelResult:
+    """给同步调用方用。这是唯一的入口。事件循环已经在跑时，拒绝再进一次。"""
+    return enter(call_model_async(*args, **kwargs))
+
+
+def _route_failure_kind(exc: Exception) -> str:
+    """Which fallback allowlist entry this error is. `internal` is on none of them."""
+    if isinstance(exc, ProviderError):
+        if exc.kind == "internal":
+            return "internal"
+        return "provider_error"
+    if isinstance(exc, ModelCapacityExceeded):
+        return "model_capacity"
+    if "route quality gate failed" in str(exc):
+        return "quality_gate_failed"
+    return "invalid_json"
+
 
 def _unwrap(result: ModelResult) -> Any:
     if result.error == EntryErrorCode.COST_BUDGET_EXCEEDED:
-        raise ModelBudgetExceeded()
+        raise ModelBudgetExceeded(result.budget_scope or "run")
     return result.body
 
 
@@ -1386,37 +1513,11 @@ def _record_breaker(brand: str, error: Exception) -> None:
         breaker.release_probe(brand)
 
 
-def school_json(
-    model: str = QWEN_PLAN, *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
-    schema: dict[str, Any] | None = None, temperature: float = 0,
-    db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
-    purpose: str | None = None,
-) -> dict[str, Any]:
-    """Cheap official text JSON. Prefer ``qwen3.7-flash``; report callers may pass flash."""
-    del model
-    return _unwrap(call_model(
-        QWEN_PLAN, brand="qwen", kind="chat_completion", expect="json",
-        temperature=temperature, reasoning_effort="none",
-        system=system, messages=messages, schema=schema, client=client,
-        db=db, run_id=run_id, step_id=step_id, purpose=purpose,
-    ))
-
-
-def school_text(
-    model: str = QWEN_PLAN, *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
-    temperature: float = 0, on_text: Callable[..., None] | None = None,
-    db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
-    purpose: str | None = None,
-) -> Iterator[str]:
-    """Cheap official text. The desk still renders it as reply tokens."""
-    del model
-    text = _unwrap(call_model(
-        QWEN_PLAN, brand="qwen", kind="chat_completion", expect="text", temperature=temperature,
-        reasoning_effort="none", system=system, messages=messages, client=client, on_text=on_text,
-        db=db, run_id=run_id, step_id=step_id, purpose=purpose,
-    ))
-    if text:
-        yield text
+def _note_exhausted_call(db: Any | None, run_id: str | None, exc: JsonRepairExhausted) -> None:
+    """修复次数用完后，把最近一次模型调用标成失败。这不是死信。"""
+    if db is None or not run_id or not hasattr(db, "fail_latest_model_call"):
+        return
+    db.fail_latest_model_call(run_id, {"code": exc.code, "message": str(exc)})
 
 
 def qwen_json(
@@ -1426,34 +1527,125 @@ def qwen_json(
     purpose: str | None = None,
 ) -> dict[str, Any]:
     """Official qwen3.7-flash. Thinking off. A schema is sent when the caller has one."""
-    return _unwrap(call_model(
-        QWEN_PLAN, brand="qwen", kind="chat_completion", expect="json", temperature=temperature,
-        system=system, messages=messages, schema=schema, reasoning_effort="none", client=client,
+
+    def fetch(pending: list[dict[str, Any]]) -> Any:
+        return _unwrap(call_model(
+            QWEN_PLAN, brand="qwen", kind="chat_completion", expect="json", temperature=temperature,
+            system=system, messages=pending, schema=schema, reasoning_effort="none", client=client,
+            db=db, run_id=run_id, step_id=step_id, purpose=purpose,
+        ))
+
+    try:
+        return repair_json(fetch, messages=messages, schema=schema, purpose=purpose)
+    except JsonRepairExhausted as exc:
+        _note_exhausted_call(db, run_id, exc)
+        raise
+
+
+def qwen_text(
+    *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
+    temperature: float = 0, on_text: Callable[..., None] | None = None,
+    db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
+    purpose: str | None = None,
+) -> Iterator[str]:
+    """打 Qwen 的 qwen3.7-flash 要一段文字。桌面仍按逐段回复来显示。"""
+    text = _unwrap(call_model(
+        QWEN_PLAN, brand="qwen", kind="chat_completion", expect="text", temperature=temperature,
+        reasoning_effort="none", system=system, messages=messages, client=client, on_text=on_text,
         db=db, run_id=run_id, step_id=step_id, purpose=purpose,
     ))
+    if text:
+        yield text
 
 
-def flash_json(
+async def qwen_text_async(
+    *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
+    temperature: float = 0, on_text: Callable[..., None] | None = None,
+    db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
+    purpose: str | None = None,
+) -> str:
+    """已经在事件循环里时，向 Qwen 要一段文字。"""
+    text = _unwrap(await call_model_async(
+        QWEN_PLAN, brand="qwen", kind="chat_completion", expect="text", temperature=temperature,
+        reasoning_effort="none", system=system, messages=messages, client=client, on_text=on_text,
+        db=db, run_id=run_id, step_id=step_id, purpose=purpose,
+    ))
+    return text or ""
+
+
+def deepseek_json(
     *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
     schema: dict[str, Any] | None = None, temperature: float = 0,
     db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
     purpose: str | None = None,
 ) -> dict[str, Any]:
-    """Official deepseek-flash, thinking off. A schema is sent when the caller has one."""
-    return _unwrap(call_model(
-        DEEPSEEK_FLASH, brand="deepseek", kind="response", expect="json", temperature=temperature,
-        system=system, messages=messages, schema=schema, reasoning_effort="none", client=client,
-        db=db, run_id=run_id, step_id=step_id, purpose=purpose,
-    ))
+    """打 DeepSeek 的 deepseek-flash，关闭思考。调用方给了 schema 就按这个结构返回。"""
+
+    def fetch(pending: list[dict[str, Any]]) -> Any:
+        return _unwrap(call_model(
+            DEEPSEEK_FLASH, brand="deepseek", kind="response", expect="json", temperature=temperature,
+            system=system, messages=pending, schema=schema, reasoning_effort="none", client=client,
+            db=db, run_id=run_id, step_id=step_id, purpose=purpose,
+        ))
+
+    try:
+        return repair_json(fetch, messages=messages, schema=schema, purpose=purpose)
+    except JsonRepairExhausted as exc:
+        _note_exhausted_call(db, run_id, exc)
+        raise
 
 
-def flash_tools(
+async def qwen_json_async(
+    *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
+    schema: dict[str, Any] | None = None, temperature: float = 0,
+    db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
+    purpose: str | None = None,
+) -> dict[str, Any]:
+    """qwen_json 的协程版。已经在事件循环里时用这个，不要再走 call_model。"""
+
+    async def fetch(pending: list[dict[str, Any]]) -> Any:
+        return _unwrap(await call_model_async(
+            QWEN_PLAN, brand="qwen", kind="chat_completion", expect="json", temperature=temperature,
+            system=system, messages=pending, schema=schema, reasoning_effort="none", client=client,
+            db=db, run_id=run_id, step_id=step_id, purpose=purpose,
+        ))
+
+    try:
+        return await repair_json_async(fetch, messages=messages, schema=schema, purpose=purpose)
+    except JsonRepairExhausted as exc:
+        _note_exhausted_call(db, run_id, exc)
+        raise
+
+
+async def deepseek_json_async(
+    *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
+    schema: dict[str, Any] | None = None, temperature: float = 0,
+    db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
+    purpose: str | None = None,
+) -> dict[str, Any]:
+    """deepseek_json 的协程版。已经在事件循环里时用这个，不要再走 call_model。"""
+
+    async def fetch(pending: list[dict[str, Any]]) -> Any:
+        return _unwrap(await call_model_async(
+            DEEPSEEK_FLASH, brand="deepseek", kind="response", expect="json", temperature=temperature,
+            system=system, messages=pending, schema=schema, reasoning_effort="none", client=client,
+            db=db, run_id=run_id, step_id=step_id, purpose=purpose,
+        ))
+
+    try:
+        return await repair_json_async(fetch, messages=messages, schema=schema, purpose=purpose)
+    except JsonRepairExhausted as exc:
+        _note_exhausted_call(db, run_id, exc)
+        raise
+
+
+def deepseek_tools(
     *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
     tools: list[dict[str, Any]], on_text: Callable[..., None] | None = None,
     db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
     purpose: str | None = None,
 ) -> AssistantTurn:
-    """Official deepseek-flash function calls. Thinking stays off."""
+    """打 DeepSeek 的 deepseek-flash 做工具调用，关闭思考。"""
     return _unwrap(call_model(
         DEEPSEEK_FLASH, brand="deepseek", kind="chat_completion", expect="tools", temperature=0,
         system=system, messages=messages, tools=tools, tool_choice="auto",

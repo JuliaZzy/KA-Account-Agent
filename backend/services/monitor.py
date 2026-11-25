@@ -1,9 +1,9 @@
 """The monitor reads the ledger. It does not keep a second metrics store.
 
-`/metrics` is the Prometheus text for the fifteen names in the run roadmap.
-`/monitor` is the same snapshot, plus the SLO checks and the five runbooks.
-Queue depth is the Celery list that workers have not taken. The SSE gauge is
-the number of open event streams in this process group.
+`/metrics` is one distributor's Prometheus text, for the signed-in user.
+`/metrics/scrape` is the same families for every distributor, which Prometheus
+pulls. Queue depth and the SSE gauge are process-wide, so they are not labeled
+by distributor. `/monitor` is the signed-in snapshot plus the SLO checks.
 """
 
 from __future__ import annotations
@@ -30,6 +30,10 @@ _METRIC_HELP = (
     ("agent_worker_active_runs", "gauge", "Running runs whose lease has not expired"),
     ("agent_model_call_latency_seconds", "histogram", "Model call latency"),
     ("agent_model_error_total", "counter", "Model calls stored as failed"),
+    ("agent_model_internal_error_total", "counter", "Model calls that failed inside our code"),
+    ("agent_plan_truncated_total", "counter", "Planner outputs cut off by the model length limit"),
+    ("agent_model_route_selected_total", "counter", "Times a route picked its primary model"),
+    ("agent_model_route_fallback_total", "counter", "Times a route left the primary model"),
     ("agent_tool_call_total", "counter", "Tool calls stored for this org"),
     ("agent_tool_error_total", "counter", "Tool calls that failed or lost the response"),
     ("agent_side_effect_duplicate_prevented_total", "counter", "Side effects blocked by an idempotency key"),
@@ -119,6 +123,39 @@ def metrics_text(db: Database, org_id: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def scrape_text(db: Database) -> str:
+    """Prometheus text for every distributor. Each scrape recounts the ledger.
+
+    Queue depth and the open event streams are one Redis list and one process
+    counter. They are not repeated per distributor, or a sum across orgs would
+    count the same jobs many times.
+    """
+    org_facts = []
+    for org_id in db.distributor_ids():
+        facts = db.monitor_facts(org_id)
+        facts["pending_jobs"] = 0
+        facts["sse_connections"] = 0
+        org_facts.append((org_id, facts))
+    lines: list[str] = []
+    for name, kind, help_text in _METRIC_HELP:
+        lines.append(f"# HELP {name} {help_text}")
+        lines.append(f"# TYPE {name} {kind}")
+        if name == "agent_queue_pending_jobs":
+            lines.append(f"{name} {_num(_pending_jobs())}")
+            continue
+        if name == "agent_sse_connection_count":
+            lines.append(f"{name} {_num(_sse_connections())}")
+            continue
+        for org_id, facts in org_facts:
+            labels = _org_labels(org_id)
+            value = _series(facts)[name]
+            if kind == "histogram":
+                lines.extend(_histogram_lines(name, value, labels))
+            else:
+                lines.append(f"{name}{labels} {_num(value)}")
+    return "\n".join(lines) + "\n"
+
+
 def monitor(db: Database, org_id: str) -> dict[str, Any]:
     facts = snapshot(db, org_id)
     cap = limits()
@@ -156,9 +193,15 @@ def monitor(db: Database, org_id: str) -> dict[str, Any]:
             "stuck_runs": facts["stuck_runs"],
             "oldest_queued_seconds": facts["oldest_queued_seconds"],
             "model_errors": facts["model_errors"],
+            "model_internal": facts["model_internal"],
+            "model_internal_recent": facts["model_internal_recent"],
             "route_selected": facts["route_selected"],
             "route_fallback": facts["route_fallback"],
+            "route_selected_recent": facts["route_selected_recent"],
+            "route_fallback_recent": facts["route_fallback_recent"],
             "route_quality_gate_failed": facts["route_quality_gate_failed"],
+            "plan_truncated": facts["plan_truncated"],
+            "plan_truncated_recent": facts["plan_truncated_recent"],
             "tool_calls": facts["tool_calls"],
             "tool_errors": facts["tool_errors"],
             "duplicates": facts["duplicates"],
@@ -202,6 +245,10 @@ def _series(facts: dict[str, Any]) -> dict[str, Any]:
         "agent_worker_active_runs": facts["active_runs"],
         "agent_model_call_latency_seconds": facts["model_latency"],
         "agent_model_error_total": facts["model_errors"],
+        "agent_model_internal_error_total": facts["model_internal"],
+        "agent_plan_truncated_total": facts["plan_truncated"],
+        "agent_model_route_selected_total": facts["route_selected"],
+        "agent_model_route_fallback_total": facts["route_fallback"],
         "agent_tool_call_total": facts["tool_calls"],
         "agent_tool_error_total": facts["tool_errors"],
         "agent_side_effect_duplicate_prevented_total": facts["duplicates"],
@@ -212,14 +259,25 @@ def _series(facts: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _histogram_lines(name: str, hist: dict[str, Any]) -> list[str]:
+def _org_labels(org_id: str) -> str:
+    escaped = org_id.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+    return f'{{org_id="{escaped}"}}'
+
+
+def _bucket_labels(labels: str, edge: str) -> str:
+    if not labels:
+        return f'{{le="{edge}"}}'
+    return labels[:-1] + f',le="{edge}"}}'
+
+
+def _histogram_lines(name: str, hist: dict[str, Any], labels: str = "") -> list[str]:
     lines = [
-        f'{name}_bucket{{le="{_edge(edge)}"}} {count}'
+        f"{name}_bucket{_bucket_labels(labels, _edge(edge))} {count}"
         for edge, count in zip(hist["edges"], hist["buckets"], strict=True)
     ]
-    lines.append(f'{name}_bucket{{le="+Inf"}} {hist["count"]}')
-    lines.append(f"{name}_sum {_num(hist['sum'])}")
-    lines.append(f"{name}_count {hist['count']}")
+    lines.append(f"{name}_bucket{_bucket_labels(labels, '+Inf')} {hist['count']}")
+    lines.append(f"{name}_sum{labels} {_num(hist['sum'])}")
+    lines.append(f"{name}_count{labels} {hist['count']}")
     return lines
 
 
@@ -272,6 +330,29 @@ def _alerts(facts: dict[str, Any], daily_tokens: int, daily_cost: int) -> list[d
         found.append({"signal": "MCP 错误变多", "action": "暂停 MCP，转人工。", "runbook": "side_effect"})
     if facts["model_rate_limited"] > 0:
         found.append({"signal": "模型 429 变多", "action": "降该 provider 的并发，延迟再试。", "runbook": "model"})
+    selected = int(facts.get("route_selected_recent") or 0)
+    fallback = int(facts.get("route_fallback_recent") or 0)
+    if selected >= 5 and fallback / selected > 0.1:
+        found.append({
+            "signal": "降级调用占比升高",
+            "action": (
+                f"近 5 分钟 {fallback}/{selected} 次路由离开了首选模型。"
+                "先看是厂商故障，还是内部错误被当成了可降级。"
+            ),
+            "runbook": "model",
+        })
+    if int(facts.get("plan_truncated_recent") or 0) > 0:
+        found.append({
+            "signal": "计划输出被截断",
+            "action": "模型输出撞上了长度上限。看 plan 步骤和 model.output_truncated，让计划变短。",
+            "runbook": "model",
+        })
+    if int(facts.get("model_internal_recent") or 0) > 0:
+        found.append({
+            "signal": "模型调用出现内部错误",
+            "action": "这是代码错误，不重试、不计入供应商熔断。看 model.failed 的 cause_type。",
+            "runbook": "model",
+        })
     if facts["tool_timeouts"] > 0:
         found.append({
             "signal": "工具超时变多",

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import contextlib
 import hashlib
 import json
@@ -275,20 +276,20 @@ def _model_step(db: Database | None, run_id: str | None, purpose: str):
     db.finish_step(step["id"], StepStatus.SUCCEEDED)
 
 
-def _school_json(
+async def _qwen_json(
     llm: Any, *, system: str, user: str,
     db: Database | None = None, run_id: str | None = None, purpose: str = "contract.select",
 ) -> dict[str, Any]:
     """Cheap official Qwen JSON. The selection is the message text."""
     with _model_step(db, run_id, purpose) as step_id:
-        return model_calls.school_json(
-            client=llm, system=system,
+        return await model_calls.qwen_json_async(
+            client=llm, system=system, schema=SELECT_SCHEMA,
             messages=[{"role": "user", "content": user}], temperature=0,
             db=db, run_id=run_id, step_id=step_id, purpose=purpose,
         )
 
 
-def _select_chunks(
+async def _select_chunks(
     llm: Any, index: dict[str, dict],
     *, db: Database | None = None, run_id: str | None = None,
 ) -> list[dict]:
@@ -296,7 +297,7 @@ def _select_chunks(
     readable = {cid: node for cid, node in index.items() if (node.get("body") or "").strip()}
     if len(index) <= 1:
         return list(readable.values())
-    raw = _school_json(
+    raw = await _qwen_json(
         llm,
         system=SELECT_SYSTEM,
         user=json.dumps({"outline": _outline(index)}, ensure_ascii=False),
@@ -305,12 +306,12 @@ def _select_chunks(
     return _chosen_chunks(raw, readable)
 
 
-def _reflect_chunks(
+async def _reflect_chunks(
     llm: Any, missing: list[str], unread: dict[str, dict],
     *, db: Database | None = None, run_id: str | None = None,
 ) -> list[dict]:
     """Second and third pass: only chunks not yet read, aimed at fields still empty."""
-    raw = _school_json(
+    raw = await _qwen_json(
         llm,
         system=REFLECT_SYSTEM,
         user=json.dumps(
@@ -363,7 +364,7 @@ def _merge(parts: list[dict[str, Any]]) -> dict[str, Any]:
     return out
 
 
-def read_agreement(
+async def read_agreement(
     llm: DeepSeekClient | Any, file_name: str, data: bytes,
     *, db: Database | None = None, run_id: str | None = None,
 ) -> tuple[dict[str, Any], list[dict]]:
@@ -382,7 +383,7 @@ def read_agreement(
     unread = {cid: node for cid, node in index.items() if (node.get("body") or "").strip()}
     parts: list[dict[str, Any]] = []
 
-    def take(chunks: list[dict]) -> None:
+    async def take(chunks: list[dict]) -> None:
         for chunk in chunks:
             unread.pop(chunk["id"], None)
             content = _chunk_extract_content(file_name, chunk, images=images)
@@ -391,7 +392,7 @@ def read_agreement(
             else:
                 messages = [{"role": "user", "content": content}]
             with _model_step(db, run_id, "contract.extract") as step_id:
-                raw = model_calls.flash_json(
+                raw = await model_calls.deepseek_json_async(
                     client=llm, system=EXTRACT_SYSTEM, messages=messages,
                     schema=EXTRACT_SCHEMA, temperature=0,
                     db=db, run_id=run_id, step_id=step_id, purpose="contract.extract",
@@ -400,27 +401,27 @@ def read_agreement(
                 raise ValueError(f"Extraction for {chunk['id']} was not a JSON object.")
             parts.append(sanitize_extraction(raw, pages, image_pages))
 
-    first = _select_chunks(llm, index, db=db, run_id=run_id)
+    first = await _select_chunks(llm, index, db=db, run_id=run_id)
     if not first:
         raise ValueError(f"No agreement sections selected for reading in {file_name!r}.")
-    take(first)
+    await take(first)
     for _ in range(MAX_READ_PASSES - 1):
         extraction = _merge(parts) if len(parts) > 1 else parts[0]
         missing = _missing_fields(extraction)
         score = _latest_confidence(parts)
         if not missing or not unread or (score is not None and score >= CONFIDENCE_STOP):
             break
-        more = _reflect_chunks(llm, missing, unread, db=db, run_id=run_id)
+        more = await _reflect_chunks(llm, missing, unread, db=db, run_id=run_id)
         if not more:
             break
-        take(more)
+        await take(more)
     extraction = _merge(parts) if len(parts) > 1 else parts[0]
     if not _has_terms(extraction):
         raise ValueError(f"No enforceable terms found in {file_name!r}.")
     return extraction, tree
 
 
-def read_and_ingest(
+async def read_and_ingest(
     db: Database,
     llm: DeepSeekClient | Any,
     *,
@@ -437,7 +438,7 @@ def read_and_ingest(
         raise ValueError("Partnership does not match the brand.")
     run = db.create_inline_contract_run(partnership.distributor_id, user_id or "system", file_name)
     try:
-        extraction, tree = read_agreement(llm, file_name, data, db=db, run_id=run["id"])
+        extraction, tree = await read_agreement(llm, file_name, data, db=db, run_id=run["id"])
         rec = record_from_extraction(
             extraction, brand_id=brand_id, partnership_id=partnership_id,
             title=title or file_name, file_name=file_name, file_sha256=hashlib.sha256(data).hexdigest(),
@@ -492,12 +493,12 @@ def main(argv: list[str] | None = None) -> int:
     data = Path(args.file).read_bytes()
     llm = deepseek_client()
     if args.apply:
-        rec = read_and_ingest(
+        rec = asyncio.run(read_and_ingest(
             Database(), llm, brand_id=args.brand, partnership_id=args.partnership,
             file_name=Path(args.file).name, data=data, title=args.title,
-        )
+        ))
     else:
-        extraction, tree = read_agreement(llm, Path(args.file).name, data)
+        extraction, tree = asyncio.run(read_agreement(llm, Path(args.file).name, data))
         rec = record_from_extraction(
             extraction, brand_id=args.brand, partnership_id=args.partnership, title=args.title,
             file_name=Path(args.file).name, chunks=_chunk_models(tree),

@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any
 
 from ..db import Database
+from ..llm.calls import ModelBudgetExceeded
 from ..llm.routing import run_budget_for
 from ..repositories.run_repository import (
     RunStatus,
@@ -25,7 +26,9 @@ from ..repositories.run_repository import (
     latest_checkpoint,
 )
 from .dispatcher import dispatch_pending
+from .entry_guard import admit_backlog, admit_create, org_budget
 from .run_names import RunType, ToolCallStatus
+from .run_service import AppError
 from .run_worker import PermanentRunError, sweep_expired_leases, work_once
 from .session_title import apply_provisional_title
 
@@ -61,6 +64,10 @@ def enqueue_chat_run(
     ]
     attachments = [name for name in (attachments or []) if isinstance(name, str)]
     apply_provisional_title(db, session, message, attachments)
+    admit_create(partnership.distributor_id, user_id)
+    admit_backlog(db, partnership.distributor_id, user_id, RunType.CHAT)
+    if org_budget(db, partnership.distributor_id, "", warn=False) == "over":
+        raise AppError(429, "QUOTA_EXCEEDED", "今天的额度已经用完，请明天再试。")
 
     # 创建 run
     chat_budget = run_budget_for(RunType.CHAT)
@@ -171,16 +178,16 @@ def execute_chat(db: Database, llm: Any | None = None) -> Callable[[dict[str, An
     from ..turn_lock import hold_session
     from .task_run import execute_task
 
-    def execute(run: dict[str, Any]) -> dict[str, Any]:
+    async def execute(run: dict[str, Any]) -> dict[str, Any]:
         # 如果有 open 类型：写 session 标题，打 tag
         if run.get("run_type") == RunType.OPEN:
             from ..orchestrator.turn import execute_open
 
-            return execute_open(db, llm, run)
+            return await execute_open(db, llm, run)
 
         # 有子任务，执行 execute_task
         if run.get("run_type") != RunType.CHAT or run.get("owner_run_id"):
-            return execute_task(db, llm, run)
+            return await execute_task(db, llm, run)
 
         payload = run.get("input_json") if isinstance(run.get("input_json"), dict) else {}
 
@@ -195,9 +202,11 @@ def execute_chat(db: Database, llm: Any | None = None) -> Callable[[dict[str, An
         from ..orchestrator.plan import InvalidPlan
 
         try:
-            output = execute_parent(db, llm, run, session)
+            output = await execute_parent(db, llm, run, session)
         except InvalidPlan as exc:
-            raise PermanentRunError(str(exc)) from exc
+            raise PermanentRunError(str(exc), code=exc.code) from exc
+        except ModelBudgetExceeded as exc:
+            output = await _close_over_quota(db, llm, run, session, text, exc)
 
         ## 判断是否需要写回复
         row = find_agent_run_by_id(db, run["id"]) # 重查数据库状态，而不是直接使用 output 的 status
@@ -215,14 +224,73 @@ def execute_chat(db: Database, llm: Any | None = None) -> Callable[[dict[str, An
         extra, fields, _side = desk_from_results(results)
         ### 取出 Answer 回复的内容
         reply = str((output or {}).get("text") or "").strip() or "How can I help?"
+        quota = _quota_scope(results) or (output or {}).get("quota_exhausted")
 
         ## 持锁写回复
         with hold_session(session_id):
             session = db.session(session_id) or session
-            save_reply(db, session, text, reply, extra, llm=llm, session_fields=fields, run_id=run["id"])
-        return {**output, "text": reply}
+            await save_reply(db, session, text, reply, extra, llm=llm, session_fields=fields, run_id=run["id"])
+        closed = {**output, "text": reply}
+        failed_subtasks = sum(
+            1 for item in results if isinstance(item, dict) and item.get("ok") is False
+        )
+        if failed_subtasks:
+            closed["failed_subtasks"] = failed_subtasks
+        if quota in ("org", "run"):
+            closed["quota_exhausted"] = quota
+        return closed
 
     return execute
+
+
+def _quota_scope(results: list[Any]) -> str | None:
+    """Org outranks a single run. A purpose token cap is not a quota."""
+    scopes = {
+        item.get("quota_exhausted")
+        for item in results
+        if isinstance(item, dict) and item.get("quota_exhausted") in ("org", "run")
+    }
+    if "org" in scopes:
+        return "org"
+    if "run" in scopes:
+        return "run"
+    return None
+
+
+async def _close_over_quota(
+    db: Database, llm: Any, run: dict[str, Any], session: dict[str, Any], text: str, exc: ModelBudgetExceeded,
+) -> dict[str, Any]:
+    """Answer from finished children, or stop the run when there is nothing to say.
+
+    The closing answer is exempt from the cap. The quota sentence is not part of
+    that answer; the desk reads `quota_exhausted`.
+    """
+    from ..orchestrator.gather import checkpoint_state, load_state
+    from ..orchestrator.parent import compose_answer
+    from ..orchestrator.speak import save_reply
+    from ..turn_lock import hold_session
+    from .run_worker import PermanentRunError
+
+    state = load_state(latest_checkpoint(db, run["id"]))
+    raw = (state or {}).get("results") or {}
+    results = list(raw.values()) if isinstance(raw, dict) else []
+    scope = exc.scope if exc.scope in ("org", "run") else "run"
+    if not results:
+        raise PermanentRunError(
+            "今天的额度已经用完，请明天再试。", code="QUOTA_EXCEEDED", scope=scope,
+        ) from exc
+    reply = await compose_answer(
+        db, llm, session, text, results, run_id=run["id"],
+        checkpoint_for=lambda answer: checkpoint_state(
+            [], [], {str(item.get("id")): item for item in results if isinstance(item, dict) and item.get("id")},
+            extra={"phase": "answer_done", "answer": answer},
+        ),
+    )
+    extra, fields, _side = desk_from_results(results)
+    with hold_session(str(session["id"])):
+        current = db.session(str(session["id"])) or session
+        await save_reply(db, current, text, reply, extra, llm=llm, session_fields=fields, run_id=run["id"])
+    return {"text": reply, "quota_exhausted": scope}
 
 
 def desk_from_tools(

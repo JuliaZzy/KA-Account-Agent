@@ -82,26 +82,17 @@ def test_unclaimed_dispatches_filters_runs_before_limit(db):
     } == {1}
 
 
-def test_republish_unclaimed_is_bounded_and_exhaustion_is_dead_lettered(db):
+def test_republish_keeps_going_past_three_and_leaves_the_run_queued(db):
     run_id = _create_dispatched_run(db, "bounded-redispatch")
     stale = utcnow() - timedelta(minutes=2)
     _age_run_and_outbox(db, run_id, stale)
 
-    for count in range(1, 4):
+    for count in range(1, 5):
         assert republish_unclaimed(db, older_than_seconds=0, limit=1) == 1
         row = db.find_agent_run_by_id(run_id)
+        assert row["status"] == RunStatus.QUEUED
         assert row["redispatch_count"] == count
-        if count < 3:
-            _age_run_and_outbox(db, run_id, stale)
-
-    _age_run_and_outbox(db, run_id, stale)
-    assert db.fail_unclaimed_exhausted(stale + timedelta(seconds=1), limit=1) == 1
-    row = db.find_agent_run_by_id(run_id)
-    assert row["status"] == RunStatus.FAILED
-    assert row["error_json"]["code"] == "STUCK_REDISPATCH_EXHAUSTED"
-    trace = db.run_trace("dist-1", run_id)
-    assert trace["dead_letters"]
-    assert trace["outbox"][0]["status"] == "failed"
+        _age_run_and_outbox(db, run_id, stale)
 
 
 def test_dispatched_outbox_cleanup_keeps_queued_runs(db):
@@ -142,22 +133,18 @@ def test_publish_failure_does_not_spend_batch_budget(db, monkeypatch):
     assert all(db.find_agent_run_by_id(run_id)["redispatch_count"] == 0 for run_id in ids)
 
 
-def test_runs_silent_for_two_hours_are_failed_not_rerun(db, broker):
-    """A run orphaned for hours is closed by the normal sweep, with no model call and no manual SQL."""
+def test_a_long_silence_is_republished_instead_of_expired(db, broker):
+    """Lost messages are retried from this run's own age. Queue depth and a two-hour cap do not stop it."""
     old = utcnow() - timedelta(hours=5)
     run_id = _create_dispatched_run(db, "legacy-orphan")
     fresh_id = _create_dispatched_run(db, "fresh-orphan")
     _age_run_and_outbox(db, run_id, old)
     _age_run_and_outbox(db, fresh_id, utcnow() - timedelta(minutes=5))
-    broker.published.clear()  # drop the first-time publishes made while creating the runs
+    broker.published.clear()
 
-    assert republish_unclaimed(db) == 1  # only the 5-minute-old run is worth sending again
-    assert [payload["run_id"] for payload in broker.published] == [fresh_id]
-
-    legacy = db.find_agent_run_by_id(run_id)
-    assert legacy["status"] == RunStatus.FAILED
-    assert legacy["error_json"]["code"] == "STUCK_QUEUE_EXPIRED"
-    assert db.run_trace("dist-1", run_id)["dead_letters"]
+    assert republish_unclaimed(db) == 2
+    assert [payload["run_id"] for payload in broker.published] == [run_id, fresh_id]
+    assert db.find_agent_run_by_id(run_id)["status"] == RunStatus.QUEUED
     assert db.find_agent_run_by_id(fresh_id)["status"] == RunStatus.QUEUED
 
 
@@ -208,8 +195,8 @@ def test_a_stale_heartbeat_does_not_protect_a_run_forever(db, broker):
 
     _age_run_and_outbox(db, run_id, old)
     _set_heartbeat(db, run_id, utcnow() - timedelta(hours=3))  # silent for 3 hours
-    republish_unclaimed(db)
-    assert db.find_agent_run_by_id(run_id)["error_json"]["code"] == "STUCK_QUEUE_EXPIRED"
+    assert republish_unclaimed(db) == 1
+    assert db.find_agent_run_by_id(run_id)["status"] == RunStatus.QUEUED
 
 
 def test_heartbeat_only_touches_queued_runs(db):
@@ -246,27 +233,22 @@ def _create_open_run(db, key: str) -> str:
     return str(run["id"])
 
 
-def test_runs_behind_a_deep_queue_are_neither_duplicated_nor_failed(db, broker):
-    """A3 r2: a 4-minute title backlog made the sweeper resend and then fail healthy runs."""
+def test_a_busy_queue_still_republishes_a_quiet_run(db, broker):
+    """A duplicate delivery is dropped at claim, so a non-empty queue is not a reason to wait."""
     from backend.services.session_title import TITLE_QUEUE
 
     run_id = _create_open_run(db, "deep-title-queue")
-    # Already used up every redispatch, and is old enough to be called exhausted.
     with db.engine.begin() as conn:
         conn.execute(text("UPDATE agent_runs SET redispatch_count = 3 WHERE id = :id"), {"id": run_id})
     _age_run_and_outbox(db, run_id, utcnow() - timedelta(minutes=5))
     broker.published.clear()
-    broker.depth[TITLE_QUEUE] = 7  # messages are still waiting for a title worker
+    broker.depth[TITLE_QUEUE] = 7
 
-    assert republish_unclaimed(db) == 0
-    assert broker.published == []
+    assert republish_unclaimed(db) == 1
+    assert [payload["run_id"] for payload in broker.published] == [run_id]
     row = db.find_agent_run_by_id(run_id)
     assert row["status"] == RunStatus.QUEUED
-    assert row["redispatch_count"] == 3
-
-    broker.depth[TITLE_QUEUE] = 0  # queue drained, run still queued: now it really is lost
-    republish_unclaimed(db)
-    assert db.find_agent_run_by_id(run_id)["status"] == RunStatus.FAILED
+    assert row["redispatch_count"] == 4
 
 
 def test_each_queue_is_judged_on_its_own_depth(db, broker):
@@ -278,11 +260,12 @@ def test_each_queue_is_judged_on_its_own_depth(db, broker):
     _age_run_and_outbox(db, chat_id, stale)
     _age_run_and_outbox(db, open_id, stale)
     broker.published.clear()
-    broker.depth[DEFAULT_QUEUE] = 50  # chat queue is busy, title queue is empty
+    broker.depth[DEFAULT_QUEUE] = 50  # depth is not the gate anymore
+    broker.depth[TITLE_QUEUE] = 4
 
-    assert republish_unclaimed(db) == 1
-    assert [payload["run_id"] for payload in broker.published] == [open_id]
-    assert db.find_agent_run_by_id(chat_id)["redispatch_count"] == 0
+    assert republish_unclaimed(db) == 2
+    assert {payload["run_id"] for payload in broker.published} == {chat_id, open_id}
+    assert db.find_agent_run_by_id(chat_id)["redispatch_count"] == 1
     assert db.find_agent_run_by_id(open_id)["redispatch_count"] == 1
     assert TITLE_QUEUE != DEFAULT_QUEUE
 
@@ -295,12 +278,10 @@ def test_unknown_queue_depth_skips_redispatch_but_still_expires_old_runs(db, bro
     _age_run_and_outbox(db, recent, utcnow() - timedelta(minutes=5))
     _age_run_and_outbox(db, ancient, utcnow() - timedelta(hours=5))
     broker.published.clear()
-    broker.depth[DEFAULT_QUEUE] = None  # Redis unreadable
+    broker.depth[DEFAULT_QUEUE] = None  # Redis unreadable, and that no longer blocks redispatch
     broker.depth[TITLE_QUEUE] = None
 
-    assert republish_unclaimed(db) == 0
-    assert broker.published == []
-    assert db.find_agent_run_by_id(recent)["redispatch_count"] == 0
+    assert republish_unclaimed(db) == 2
+    assert {payload["run_id"] for payload in broker.published} == {recent, ancient}
     assert db.find_agent_run_by_id(recent)["status"] == RunStatus.QUEUED
-    # Expiry does not need Redis: an unreachable broker cannot keep an orphan alive.
-    assert db.find_agent_run_by_id(ancient)["error_json"]["code"] == "STUCK_QUEUE_EXPIRED"
+    assert db.find_agent_run_by_id(ancient)["status"] == RunStatus.QUEUED

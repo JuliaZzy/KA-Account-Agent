@@ -378,8 +378,10 @@ def upload_agreement_inproc(db, ps: str) -> dict[str, Any]:
         brand_id = c.execute(text("select brand_id from partnerships where id=:p"), {"p": ps}).scalar_one()
     t0 = time.monotonic()
     try:
-        rec = read_and_ingest(db, deepseek_client(), brand_id=brand_id, partnership_id=ps,
-                              file_name=path.name, data=path.read_bytes(), title=path.stem)
+        rec = asyncio.run(read_and_ingest(
+            db, deepseek_client(), brand_id=brand_id, partnership_id=ps,
+            file_name=path.name, data=path.read_bytes(), title=path.stem,
+        ))
     except Exception as exc:
         return {"upload_mode": "inproc", "upload_seconds": round(time.monotonic() - t0, 2),
                 "error": f"{type(exc).__name__}: {exc}"[:300]}

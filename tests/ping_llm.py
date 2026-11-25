@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from backend.llm.calls import school_json
+from backend.llm.calls import qwen_json
 
 
 def main() -> int:
-    raw = school_json(
+    raw = qwen_json(
         system="Reply with a tiny JSON object.",
         messages=[{"role": "user", "content": "return {\"ok\": true}"}],
         purpose="ping",

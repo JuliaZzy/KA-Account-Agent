@@ -1,20 +1,32 @@
-export class ApiError extends Error {}
+export class ApiError extends Error {
+  code: string | null;
 
-async function readError(res: Response): Promise<string> {
+  constructor(message: string, code: string | null = null) {
+    super(message);
+    this.name = "ApiError";
+    this.code = code;
+  }
+}
+
+async function readError(res: Response): Promise<{ message: string; code: string | null }> {
   const text = await res.text();
   try {
-    const body = JSON.parse(text) as { detail?: unknown; error?: { message?: unknown } };
-    if (typeof body.detail === "string") return body.detail;
-    if (typeof body.error?.message === "string") return body.error.message;
+    const body = JSON.parse(text) as { detail?: unknown; error?: { message?: unknown; code?: unknown } };
+    const code = typeof body.error?.code === "string" ? body.error.code : null;
+    if (typeof body.detail === "string") return { message: body.detail, code };
+    if (typeof body.error?.message === "string") return { message: body.error.message, code };
   } catch {
     /* not JSON */
   }
-  return text || res.statusText;
+  return { message: text || res.statusText, code: null };
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
-  if (!res.ok) throw new ApiError(await readError(res));
+  if (!res.ok) {
+    const parsed = await readError(res);
+    throw new ApiError(parsed.message, parsed.code);
+  }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
@@ -67,8 +79,9 @@ export function cancelRun(runId: string, orgId: string, userId: string): Promise
 export type AgentRun = {
   id: string;
   status: string;
-  output_json?: { text?: string; generation_id?: string } | null;
-  error_json?: { message?: string; kind?: string } | null;
+  queue_ahead?: number | null;
+  output_json?: { text?: string; generation_id?: string; quota_exhausted?: string } | null;
+  error_json?: { message?: string; kind?: string; code?: string; scope?: string } | null;
 };
 
 export function getRun(runId: string, orgId: string, userId: string): Promise<AgentRun> {

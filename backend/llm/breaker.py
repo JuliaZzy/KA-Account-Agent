@@ -1,8 +1,11 @@
 """Per-provider circuit breaker in Redis.
 
 Counts vendor `rate_limited` / `server_error` / `timeout` / `network` only.
-A full local `acquire_model` seat is not a vendor failure and must not open
-this circuit. Redis errors fail open so a broken breaker does not block calls.
+A full local seat, an `internal` bug, and `circuit_open` itself are not vendor
+failures and must not open this circuit. While open, every request is refused
+immediately. After the cooldown, one probe may call the vendor; every other
+request is still refused. Redis errors fail open so a broken breaker does not
+block calls.
 """
 
 from __future__ import annotations

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from backend.llm import FakeLLM
 from backend.po.claims import (
     handle_post_submit,
@@ -74,7 +76,7 @@ def _po_in_db(db):
 def test_received_ok_marks_received_and_states_balance(db):
     p = _po_in_db(db)
     llm = FakeLLM(json_replies=[{"verdict": "received_ok", "confidence": 0.95}])
-    out = handle_post_submit(db, llm, p, "goods arrived, all good")
+    out = asyncio.run(handle_post_submit(db, llm, p, "goods arrived, all good"))
     assert out.kind == "received" and "500.00 is still due" in out.message
     assert db.po(p.id).status == "awaiting_payment"
 
@@ -82,20 +84,20 @@ def test_received_ok_marks_received_and_states_balance(db):
 def test_low_confidence_receipt_is_left_for_a_human(db):
     p = _po_in_db(db)
     llm = FakeLLM(json_replies=[{"verdict": "received_ok", "confidence": 0.5}, {"paid": False, "confidence": 0.9}])
-    out = handle_post_submit(db, llm, p, "hmm arrived maybe")
+    out = asyncio.run(handle_post_submit(db, llm, p, "hmm arrived maybe"))
     assert out.kind == "none" and db.po(p.id).status == "shipped"
 
 
 def test_payment_claim_records_without_verifying(db):
     p = _po_in_db(db)
     llm = FakeLLM(json_replies=[{"verdict": "none", "confidence": 0.9}, {"paid": True, "confidence": 0.9}])
-    out = handle_post_submit(db, llm, p, "wired the balance this morning")
+    out = asyncio.run(handle_post_submit(db, llm, p, "wired the balance this morning"))
     assert out.kind == "payment" and db.po(p.id).status == "payment_claimed"
 
 
 def test_damage_claim_opens_with_matched_lines(db):
     p = _po_in_db(db)
     llm = FakeLLM(json_replies=[{"verdict": "issues", "confidence": 0.9}, {"lines": [{"reference": "fish oil", "qty": 2, "issue_type": "damaged", "description": "crushed"}], "resolution": "credit", "confidence": 0.9}])
-    out = handle_post_submit(db, llm, p, "2 cases of the fish oil arrived crushed")
+    out = asyncio.run(handle_post_submit(db, llm, p, "2 cases of the fish oil arrived crushed"))
     assert out.kind == "claim" and out.data["lines"][0]["amount"] == 200.0
     assert db.po(p.id).status == "claim_filed" and db.po_events(p.id)[-1]["kind"] == "claim_filed"

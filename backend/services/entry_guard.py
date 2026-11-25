@@ -127,6 +127,10 @@ class Limits:
     model: int
     daily_tokens: int
     daily_cost_cents: int
+    queue_user: int
+    queue_report: int
+    chat_wait_seconds: int
+    report_wait_seconds: int
 
 
 def limits() -> Limits:
@@ -143,7 +147,19 @@ def limits() -> Limits:
         model=_int("KA_ACCOUNT_GATE_MODEL", 32),
         daily_tokens=_int("KA_ACCOUNT_ORG_DAILY_TOKENS", 0),
         daily_cost_cents=_int("KA_ACCOUNT_ORG_DAILY_COST_CENTS", 0),
+        queue_user=_int("KA_ACCOUNT_QUEUE_USER", 12),
+        queue_report=_int("KA_ACCOUNT_QUEUE_REPORT", 5),
+        chat_wait_seconds=_int("KA_ACCOUNT_CHAT_WAIT_SECONDS", 120),
+        report_wait_seconds=_int("KA_ACCOUNT_REPORT_WAIT_SECONDS", 900),
     )
+
+
+# Monthly-report work waits longer than a chat turn and has its own backlog cap.
+BACKGROUND_RUN_TYPES = frozenset({"report", "review", "revise"})
+
+
+def is_background(run_type: str) -> bool:
+    return run_type in BACKGROUND_RUN_TYPES
 
 
 def send_email_enabled() -> bool:
@@ -168,13 +184,29 @@ def tool_switch_off(name: str, *, side_effect: bool, idempotency_required: bool)
 
 
 def admit_create(org_id: str, user_id: str) -> None:
-    """Refuse a new run when this minute's window or the running gates are full."""
+    """Refuse a new run when this minute's create window is full.
+
+    How many runs may sit queued is `admit_backlog`. A full running seat does not
+    reject the create; the dispatcher holds the row until a seat is free.
+    """
     cap = limits()
     minute = _minute()
     _hit(f"rate_limit:{org_id}:runs.create:{minute}", cap.create_org)
     _hit(f"rate_limit:{org_id}:{user_id}:runs.create:{minute}", cap.create_user)
-    if not _room(org_id, user_id, cap):
-        raise AppError(429, EntryErrorCode.RATE_LIMITED, "Too many runs are already going")
+
+
+def admit_backlog(db, org_id: str, user_id: str, run_type: str) -> None:
+    """Refuse when this user already has too many open runs of this kind."""
+    cap = limits()
+    background = is_background(run_type)
+    limit = cap.queue_report if background else cap.queue_user
+    if limit <= 0:
+        return
+    outstanding = db.count_outstanding_runs(
+        org_id, user_id, background=background, background_types=tuple(BACKGROUND_RUN_TYPES),
+    )
+    if outstanding >= limit:
+        raise AppError(429, EntryErrorCode.RATE_LIMITED, "Too many runs are already waiting")
 
 
 def admit_read(org_id: str, user_id: str) -> None:
@@ -218,10 +250,11 @@ def acquire_model(brand: str) -> Lease | None:
     return _acquire([(f"gate:model:{brand or 'unknown'}", limits().model)])
 
 
-def org_budget(db, org_id: str, run_id: str) -> str | None:
+def org_budget(db, org_id: str, run_id: str, *, warn: bool = True) -> str | None:
     """`over` blocks the vendor call. `near` records one internal event per day.
 
-    A limit of 0 is not a cap.
+    A limit of 0 is not a cap. `warn=False` is the door check before a run
+    exists, so a near-cap day does not try to attach an event to a missing run.
     """
     cap = limits()
     if cap.daily_tokens <= 0 and cap.daily_cost_cents <= 0:
@@ -235,7 +268,7 @@ def org_budget(db, org_id: str, run_id: str) -> str | None:
         return "over"
     near_tokens = cap.daily_tokens > 0 and tokens * 5 >= cap.daily_tokens * 4
     near_cost = cap.daily_cost_cents > 0 and cost * 5 >= cap.daily_cost_cents * 4
-    if near_tokens or near_cost:
+    if warn and run_id and (near_tokens or near_cost):
         _warn_once(db, org_id, run_id)
     return None
 

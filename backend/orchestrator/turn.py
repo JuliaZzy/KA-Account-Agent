@@ -12,6 +12,7 @@ from typing import Any
 
 from ..db import Database
 from ..llm import calls as model_calls
+from ..llm.calls import JsonRepairExhausted
 from ..llm.errors import ModelCapacityExceeded, ProviderError
 from ..services.chat_run import enqueue_chat_run
 from ..services.run_names import StepStatus, StepType, step_name
@@ -40,7 +41,7 @@ def session_open_schema() -> dict[str, Any]:
         },
     }
 
-def open_session(llm: Any, *, message: str, attachments: list[str], 
+async def open_session(llm: Any, *, message: str, attachments: list[str], 
     db: Database | None = None, run_id: str | None = None
 ) -> SessionOpen:
     """First-turn only: tags + title. No history — the session does not have one yet."""
@@ -56,15 +57,17 @@ def open_session(llm: Any, *, message: str, attachments: list[str],
     raw: dict[str, Any] = {}
     caught: Exception | None = None
     try:
-        parsed = model_calls.school_json(
-            model_calls.SCHOOL_CHAT, system=OPEN, messages=messages,
-            schema=session_open_schema(), temperature=0, client=llm,
+        # 未知标签由下面的代码丢掉。这里不把整段回答打回去重写。
+        parsed = model_calls._unwrap(await model_calls.call_model_async(
+            model_calls.QWEN_PLAN, brand="qwen", kind="chat_completion", expect="json",
+            temperature=0, reasoning_effort="none", system=OPEN, messages=messages,
+            schema=session_open_schema(), client=llm,
             db=db, run_id=run_id, step_id=step_id, purpose="session.title",
-        )
+        ))
         if isinstance(parsed, dict):
             raw = parsed
         else:
-            caught = ValueError("Campus model did not return a JSON object")
+            caught = ValueError("Qwen did not return a JSON object")
     except Exception as err:
         caught = err
 
@@ -82,12 +85,7 @@ def open_session(llm: Any, *, message: str, attachments: list[str],
     title = str(raw.get("title") or "").strip() or (attachments[0] if attachments else "New chat")
     return SessionOpen(title=title[:80], tags=tags)
 
-def name_new_chat(db: Database, llm:Any, session: dict[str, Any], run: dict[str, Any]) -> None:
-    """Name a chat that has no title yet. A model failure leaves the title empty."""
-    execute_open(db, llm, run)
-
-
-def execute_open(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
+async def execute_open(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
     """Background OPEN: refine tags and title. No wave box, no events on the chat run.
 
     The sidebar already shows a provisional title from the first message. If that
@@ -112,10 +110,10 @@ def execute_open(db: Database, llm: Any, run: dict[str, Any]) -> dict[str, Any]:
     message = str(payload.get("message") or "")
     attachments = [name for name in (payload.get("attachments") or []) if isinstance(name, str)]
     try:
-        opened = open_session(
+        opened = await open_session(
             llm, message=message, attachments=attachments, db=db, run_id=str(run["id"]),
         )
-    except (ModelCapacityExceeded, ProviderError):
+    except (ModelCapacityExceeded, ProviderError, JsonRepairExhausted):
         raise
     except Exception as exc:
         log.exception("Failed to name new chat")

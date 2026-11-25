@@ -108,6 +108,59 @@ RECEIPT_PROMPT = RECEIPT
 PAYMENT_PROMPT = PAYMENT
 CLAIM_PROMPT = CLAIM
 
+RECEIPT_SCHEMA: dict[str, Any] = {
+    "name": "po_receipt",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "verdict": {
+                "type": "string",
+                "enum": ["none", "received_ok", "received_ok_paid", "issues"],
+            },
+            "confidence": {"type": "number"},
+        },
+        "required": ["verdict", "confidence"],
+    },
+}
+PAYMENT_SCHEMA: dict[str, Any] = {
+    "name": "po_payment",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "paid": {"type": "boolean"},
+            "confidence": {"type": "number"},
+        },
+        "required": ["paid", "confidence"],
+    },
+}
+CLAIM_SCHEMA: dict[str, Any] = {
+    "name": "po_claim_lines",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "lines": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "reference": {"type": "string"},
+                        "qty": {"type": "number"},
+                        "issue_type": {
+                            "type": "string",
+                            "enum": ["damaged", "shortage", "wrong_item", "quality"],
+                        },
+                        "description": {"type": "string"},
+                    },
+                    "required": ["reference", "qty", "issue_type", "description"],
+                },
+            },
+            "resolution": {"type": ["string", "null"]},
+            "confidence": {"type": "number"},
+        },
+        "required": ["lines", "resolution", "confidence"],
+    },
+}
+
 
 def _conf(raw: dict[str, Any]) -> float:
     try:
@@ -116,40 +169,41 @@ def _conf(raw: dict[str, Any]) -> float:
         return 0.0
     return c if 0 <= c <= 1 else 0.0
 
-def _school_llm(
+async def _qwen_llm(
     llm: Any,
     system: str,
     message: str,
+    schema: dict[str, Any],
     *,
     db: Database | None,
     run_id: str | None,
     step_id: str | None,
 ) -> dict[str, Any]:
     msg = [{"role": "user", "content": message[:4000]}]
-    return model_calls.school_json(
-        model_calls.SCHOOL_CHAT, system=system, messages=msg, temperature=0, client=llm,
+    return await model_calls.qwen_json_async(
+        system=system, messages=msg, schema=schema, temperature=0, client=llm,
         db=db, run_id=run_id, step_id=step_id, purpose="po.claim",
     )
 
-def classify_receipt(llm: Any, message: str, *, 
+async def classify_receipt(llm: Any, message: str, *, 
     db: Database | None = None, run_id: str | None = None, step_id: str | None = None
 ) -> tuple[str, float]:
-    raw = _school_llm(llm, RECEIPT_PROMPT, message, db=db, run_id=run_id, step_id=step_id)
+    raw = await _qwen_llm(llm, RECEIPT_PROMPT, message, RECEIPT_SCHEMA, db=db, run_id=run_id, step_id=step_id)
     v = raw.get("verdict")
     return (v if v in ("none", "received_ok", "received_ok_paid", "issues") else "none"), _conf(raw)
 
 
-def classify_payment(llm: Any, message: str, *,
+async def classify_payment(llm: Any, message: str, *,
     db: Database | None = None, run_id: str | None = None, step_id: str | None = None
 ) -> tuple[bool, float]:
-    raw = _school_llm(llm, PAYMENT_PROMPT, message, db=db, run_id=run_id, step_id=step_id)
+    raw = await _qwen_llm(llm, PAYMENT_PROMPT, message, PAYMENT_SCHEMA, db=db, run_id=run_id, step_id=step_id)
     return raw.get("paid") is True, _conf(raw)
 
 
-def extract_claim(llm: Any, message: str, *,
+async def extract_claim(llm: Any, message: str, *,
     db: Database | None = None, run_id: str | None = None, step_id: str | None = None
 ) -> dict[str, Any]:
-    raw = _school_llm(llm, CLAIM_PROMPT, message, db=db, run_id=run_id, step_id=step_id)
+    raw = await _qwen_llm(llm, CLAIM_PROMPT, message, CLAIM_SCHEMA, db=db, run_id=run_id, step_id=step_id)
     return {"lines": raw.get("lines") or [], "resolution": raw.get("resolution"), "confidence": _conf(raw)}
 
 
@@ -162,16 +216,16 @@ class ClaimOutcome:
     po_number: str | None = None
     data: dict[str, Any] | None = None
 
-def handle_post_submit(
+async def handle_post_submit(
     db: Database, llm: Any, po: PurchaseOrder, message: str,
     run_id: str | None = None, step_id: str | None = None,
 ) -> ClaimOutcome:
     """Run the classifiers that make sense for the order's state and apply the first
     confident verdict. Anything below MIN_CONFIDENCE is left for a human."""
     recorded = {"db": db, "run_id": run_id, "step_id": step_id}
-    verdict, conf = classify_receipt(llm, message, **recorded)
+    verdict, conf = await classify_receipt(llm, message, **recorded)
     if verdict == "issues" and conf >= MIN_CONFIDENCE:
-        claim = extract_claim(llm, message, **recorded)
+        claim = await extract_claim(llm, message, **recorded)
         lines = match_claim_lines(db.po_items(po.id), claim["lines"])
         if lines and claim["confidence"] >= MIN_CONFIDENCE:
             db.update_po(po.id, status="claim_filed")
@@ -192,7 +246,7 @@ def handle_post_submit(
             return ClaimOutcome("received", f"Marked {po.po_number} as received. You're owed a refund of {po.currency} {outcome.refund_amount:.2f}; the brand will process it.", po.po_number)
         due = f" within {outcome.payment_due_days} days" if outcome.payment_due_days else ""
         return ClaimOutcome("received", f"Marked {po.po_number} as received and all OK. {po.currency} {outcome.remaining:.2f} is still due{due}.", po.po_number)
-    paid, pconf = classify_payment(llm, message, **recorded)
+    paid, pconf = await classify_payment(llm, message, **recorded)
     if paid and pconf >= MIN_CONFIDENCE:
         due = prepayment_due_now(terms_key(po.payment_terms), po.total_amount) if po.status == "submitted" else round(po.total_amount - po.prepaid_amount, 2)
         db.update_po(po.id, status="payment_claimed")

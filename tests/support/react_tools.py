@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 from typing import Any
 
@@ -39,6 +41,8 @@ def _run_one_tool(
     else:
         try:
             result = fn(call.arguments, llm=llm, context=context)
+            if inspect.isawaitable(result):
+                result = asyncio.run(result)
         except (ModelCapacityExceeded, ProviderError):
             raise
         except Exception as err:
@@ -68,7 +72,7 @@ def run_tool_calls(
     used = False
     last: AssistantTurn | None = None
     for _ in range(MAX_TOOL_ROUNDS):
-        last = model_calls.flash_tools(
+        last = model_calls.deepseek_tools(
             client=llm, system=attach(REACT, memory or ""), messages=messages, tools=schemas,
             purpose="session.tools",
         )

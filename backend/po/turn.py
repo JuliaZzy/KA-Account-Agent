@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from typing import Any
 
 from ..contract import contract_discount_for_next_order
 from ..db import Database
+from ..llm.calls import JsonRepairExhausted
 from ..llm.errors import ModelCapacityExceeded, ProviderError
 from ..memory import prompt_context, recall, record_history, summary_block, with_memory
 from ..orchestrator.status import status
@@ -56,14 +58,22 @@ def load_bundle(db: Database, partnership_id: str, user_id: str | None = None) -
     return Bundle(partnership=p, settings=settings, catalog=Catalog(db.products(p.brand_id)), rules=db.rules(p.brand_id))
 
 
-def _check(
+async def _check(
     bundle: Bundle, slots: PoSlots, llm: Any | None, *, resolve_names: bool = True, user_text: str = "",
 ) -> CheckResult:
     # Confirm passes resolve_names=False. The conversation already settled the slots.
-    resolve = (
-        (lambda refs: resolve_references(llm, refs, bundle.catalog.resolver_rows()))
-        if resolve_names else None
-    )
+    # Names are resolved before the price check, so the check itself stays synchronous.
+    resolve = None
+    if resolve_names:
+        from .check import _resolve_lines
+
+        named = _resolve_lines(slots, bundle.catalog, user_text)
+        refs = list({line.reference for line in named if line.unresolved and line.reference})
+        mapping = await resolve_references(llm, refs, bundle.catalog.resolver_rows()) if refs else {}
+
+        def resolve(refs: list[str], found: dict[str, list[str]] = mapping) -> dict[str, list[str]]:
+            del refs
+            return found
     check = run_code_check(
         slots=slots, catalog=bundle.catalog, rules=bundle.rules,
         partnership_id=bundle.partnership.id, ship_to_country=bundle.partnership.ship_to_country, resolve=resolve,
@@ -112,7 +122,7 @@ def _gap_detail(check: CheckResult) -> list[dict[str, Any]]:
     ]
 
 
-def prepare_order(
+async def prepare_order(
     db: Database, llm: Any, bundle: Bundle, session: dict[str, Any], message: str, images: list[str] | None = None,
     run_id: str | None = None, step_id: str | None = None,
 ) -> PoPrepared:
@@ -140,14 +150,14 @@ def prepare_order(
     folded = int(session.get("folded_through") or 0)
     context = prompt_context(bundle.settings.operating_context, summary_block(session.get("summary"))) or None
     try:
-        ex = extract_turn(
+        ex = await extract_turn(
             llm, manifest=bundle.catalog.manifest(), current=current, history=history, message=message,
             images=images, operating_context=context, contract_discount=applied, folded_through=folded,
             db=db, run_id=run_id, step_id=step_id,
         )
         slots, language = merge_slots(current, ex.slots), ex.reply_language
         events.append(status("po-extract", "抽取", "订单字段已填上", state="done"))
-    except (ModelCapacityExceeded, ProviderError):
+    except (ModelCapacityExceeded, ProviderError, JsonRepairExhausted):
         raise
     except Exception as err:
         events.append({"type": "warning", "message": f"extraction failed: {err}"})
@@ -156,7 +166,7 @@ def prepare_order(
 
     events.append(status("po-check", "核对", "正在算价格、起订量和规则", state="running"))
     said = "\n".join([message, *(str(m.get("content") or "") for m in history if m.get("role") == "user")])
-    check = _check(bundle, slots, llm, user_text=said)
+    check = await _check(bundle, slots, llm, user_text=said)
     stage = "confirm" if check.ready else "gathering"
     events.append(status("po-check", "核对", "可以确认" if stage == "confirm" else "还有缺项", state="done"))
     draft = build_draft(slots, check, bundle.partnership.currency, bundle.settings)
@@ -198,7 +208,7 @@ def order_result(prepared: PoPrepared, bundle: Bundle, *, clear_po: bool = False
 def run_po_turn(
     db: Database, llm: Any, bundle: Bundle, session: dict[str, Any], message: str, images: list[str] | None = None,
 ) -> Iterator[dict[str, Any]]:
-    prepared = prepare_order(db, llm, bundle, session, message, images)
+    prepared = asyncio.run(prepare_order(db, llm, bundle, session, message, images))
     yield from prepared.events
     slots, check, stage = prepared.slots, prepared.check, prepared.stage
     draft, language, images = prepared.draft, prepared.language, images or []
@@ -219,7 +229,7 @@ def run_po_turn(
             reply_text += tok
             yield {"type": "token", "text": tok}
         yield status("po-reply", "回复", "回复已写完", state="done")
-    except (ModelCapacityExceeded, ProviderError):
+    except (ModelCapacityExceeded, ProviderError, JsonRepairExhausted):
         raise
     except Exception as err:
         yield {"type": "warning", "message": f"reply failed: {err}"}
@@ -259,7 +269,7 @@ def confirm_order(db: Database, bundle: Bundle, session: dict[str, Any], token: 
     # conversation, and re-extracting at click time would let the model re-decide an
     # order the user has already read.
     slots = PoSlots(**session["slots"])
-    check = _check(bundle, slots, None, resolve_names=False)
+    check = asyncio.run(_check(bundle, slots, None, resolve_names=False))
     draft = build_draft(slots, check, bundle.partnership.currency, bundle.settings)
     if not draft or not check.ready or hash_draft(draft) != session.get("confirm_hash"):
         db.update_session(session["id"], stage="gathering", confirm_token=None, confirm_hash=None, confirm_expires_at=None)

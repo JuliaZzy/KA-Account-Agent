@@ -21,7 +21,7 @@ from .ingest import record_from_extraction
 from .read import read_agreement
 
 
-def file_contract(
+async def file_contract(
     db: Database, session: dict[str, Any], documents: list[tuple[str, bytes]], 
     *, run_id: str | None = None,
 ) -> dict[str, Any]:
@@ -36,7 +36,7 @@ def file_contract(
         return {"status": "need_file", "contract_id": None, "table": None, "pending": None, "error": None}
     name, data = readable[0]
     try:
-        extraction, tree = read_agreement(
+        extraction, tree = await read_agreement(
             deepseek_client(), name, data,
             db=db, run_id=run_id,
         )

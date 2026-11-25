@@ -7,7 +7,7 @@ write thte chat transcript. `send_email` and every MCP tool wait for approval.
 
 from __future__ import annotations
 
-import uuid
+import asyncio
 from typing import Any
 
 from ..brand_knowledge.answer import _search_query, _with_sources
@@ -18,11 +18,13 @@ from ..mcp.runtime import get_hub, make_mcp_tool_fn, mcp_enabled
 from ..memory import prompt_context, standing_block, summary_block
 from ..po.agent import collect_order
 from ..po.turn import load_bundle
-from ..report.turn import ReportDraft, chart_for_query, iter_draft
+from ..report.turn import chart_for_query
 from ..text2sql.impl import answer_question_impl
+from ..text2sql.text2sql import answer_question as _modern_answer
+from ..text2sql.text2sql import answer_question_async
 from ..tools import exchange_rate, lang_translate, send_email, web_search
-from .tool_registry import Tool, ToolRegistry
 from .run_names import TOOL_STARTED_DISPLAY, StepType, ToolErrorCode, step_name
+from .tool_registry import Tool, ToolRegistry
 
 # Read tools may be retried by the executor. Side effects are not.
 _RETRY_FAST = frozenset({ToolErrorCode.TIMEOUT, ToolErrorCode.RATE_LIMITED, ToolErrorCode.UPSTREAM})
@@ -110,7 +112,7 @@ def tools(
         Tool(
             name="report.draft",
             description="Draft a performance report. Numbers come from queries, not the model.",
-            fn=_report_draft(db, llm, session, text, bundle),
+            fn=_report_draft,
             parameters=_QUESTION,
             timeout_seconds=300,
             display=TOOL_STARTED_DISPLAY["report.draft"],
@@ -142,22 +144,22 @@ def _asked(args: dict[str, Any], fallback: str) -> str:
     return asked or fallback 
 
 def _po_draft(db, llm, session, text, images, bundle):
-    def run(args: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def run(args: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
         ctx = context or {}
         run_id = ctx.get("run_id") if isinstance(ctx.get("run_id"), str) else None
         step_id = ctx.get("step_id") if isinstance(ctx.get("step_id"), str) else None
-        return collect_order(
+        return await collect_order(
             db, llm, session, _asked(args, text), images, bundle, 
             emit=lambda _event:None, run_id=run_id, step_id=step_id
         )
     return run
 
 def _contract_read(db, session, documents):
-    def run(args: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def run(args: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
         del args
         ctx = context or {}
         run_id = ctx.get("run_id") if isinstance(ctx.get("run_id"), str) else None
-        filed = file_contract(db, session, documents, run_id=run_id)
+        filed = await file_contract(db, session, documents, run_id=run_id)
         return{
             "status": filed.get("status"),
             "contract_id": filed.get("contract_id"),
@@ -166,39 +168,10 @@ def _contract_read(db, session, documents):
         }
     return run
 
-def _report_draft(db, llm, session, text, bundle):
-    def run(args: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
-        ctx = context or {}
-        run_id = ctx.get("run_id") if isinstance(ctx.get("run_id"), str) else None
-        step_id = ctx.get("step_id") if isinstance(ctx.get("step_id"), str) else None
-        partnership = bundle.partnership
-        draft: ReportDraft | None = None
-        for item in iter_draft(
-            db, llm, message=_asked(args, text), 
-            history=list(session.get("history", [])),
-            partnership_id=partnership.id, brand_id=partnership.brand_id,
-            distributor_id=partnership.distributor_id, session_id=session["id"],
-            folded_through=int(session.get("folded_through") or 0),
-            summary=str(session.get("summary") or ""),
-            run_id=run_id, step_id=step_id,
-        ):
-            if isinstance(item, ReportDraft):
-                draft = item 
-        if draft is None:
-            return {"ok": False, "error": "No draft found"}
-        return {
-            "ok": True,
-            "text": draft.text,
-            "title": draft.title,
-            "charts": draft.charts,
-            "chart_status": draft.chart_status,
-            "named_period": draft.named_period,
-            "named_period_empty": draft.named_period_empty,
-            "web_notes": draft.web_notes,
-            "warnings": draft.warnings,
-            "report_pending_id": f"rp_{uuid.uuid4().hex[:12]}",
-        }
-    return run
+def _report_draft(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+    """Catalog entry only. The worker runs this tool through execute_report."""
+    raise RuntimeError("report.draft is executed by execute_report")
+
 
 def _scope(db, partnership, text: str) -> dict[str, Any]:
     """Whose numbers a query returns, plus any other party the user named.
@@ -224,21 +197,34 @@ def _scope(db, partnership, text: str) -> dict[str, Any]:
 
 
 def _data_query(db, llm, session, text, bundle):
-    def run(args: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def run(args: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
         ctx = context or {}
         run_id = ctx.get("run_id") if isinstance(ctx.get("run_id"), str) else None
         step_id = ctx.get("step_id") if isinstance(ctx.get("step_id"), str) else None
         partnership = bundle.partnership
-        result = answer_question_impl()(
-            db, question=str(args.get("question") or "").strip() or _asked(args, text),
-            required_columns=_required_columns(args),
-            run_id=run_id, step_id=step_id, 
-            partnership_id=partnership.id, brand_id=partnership.brand_id,
-            distributor_id=partnership.distributor_id, session_id=session["id"],
-            history=list(session.get("history") or []),
-            folded_through=int(session.get("folded_through") or 0),
-            summary=str(session.get("summary") or ""),
-        )
+        impl = answer_question_impl()
+        if impl is _modern_answer:
+            result = await answer_question_async(
+                db, question=str(args.get("question") or "").strip() or _asked(args, text),
+                required_columns=_required_columns(args),
+                run_id=run_id, step_id=step_id,
+                partnership_id=partnership.id, brand_id=partnership.brand_id,
+                distributor_id=partnership.distributor_id, session_id=session["id"],
+                history=list(session.get("history") or []),
+                folded_through=int(session.get("folded_through") or 0),
+                summary=str(session.get("summary") or ""),
+            )
+        else:
+            result = await asyncio.to_thread(
+                impl, db, question=str(args.get("question") or "").strip() or _asked(args, text),
+                required_columns=_required_columns(args),
+                run_id=run_id, step_id=step_id,
+                partnership_id=partnership.id, brand_id=partnership.brand_id,
+                distributor_id=partnership.distributor_id, session_id=session["id"],
+                history=list(session.get("history") or []),
+                folded_through=int(session.get("folded_through") or 0),
+                summary=str(session.get("summary") or ""),
+            )
         contract_error = (
             "query result is missing required columns: " + ", ".join(result.missing_columns)
             if result.missing_columns else result.error
@@ -248,7 +234,7 @@ def _data_query(db, llm, session, text, bundle):
         chart_error: str | None = None
         if asked_chart and result.ok and result.rows:
             try:
-                charts, failures = chart_for_query(
+                charts, failures = await chart_for_query(
                     db, llm, text, str(args.get("question") or "").strip() or _asked(args, text),
                     result, partnership_id=partnership.id, brand_id=partnership.brand_id,
                     distributor_id=partnership.distributor_id, session_id=session["id"],
@@ -294,7 +280,7 @@ def _required_columns(args: dict[str, Any]) -> list[str]:
 
 
 def _brand_search(db, llm, session, text, bundle):
-    def run(args: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def run(args: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
         del context 
         asked = _asked(args, text)
         folded = int(session.get("folded_through") or 0)
@@ -302,7 +288,7 @@ def _brand_search(db, llm, session, text, bundle):
             standing_block(db, session["partnership_id"], session.get("user_id")),
             summary_block(session.get("summary")),
         )
-        query = _search_query(llm, asked, list(session.get("history") or []), remembered, folded)
+        query = await _search_query(llm, asked, list(session.get("history") or []), remembered, folded)
         try:
             hits = retrieve(query, bundle.partnership.brand_id)
         except RagUnavailable as e:

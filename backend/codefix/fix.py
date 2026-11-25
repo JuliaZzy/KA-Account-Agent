@@ -5,10 +5,11 @@ The last failed artifact and its error are what a person sees.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ..llm import calls as model_calls
+from ..llm.calls import JsonRepairExhausted
 from .prompt import CODE_FIX_PROMPT
 
 MAX_ATTEMPTS = 3
@@ -56,6 +57,35 @@ def with_reflection(
     return None, attempts
 
 
+async def with_reflection_async(
+    llm: Any, *, kind: str, first: str,
+    run: Callable[[str], Awaitable[tuple[bool, Any, str | None, str]]],
+    trace: Any | None = None,
+) -> tuple[Any, list[dict[str, str]]]:
+    """with_reflection 的协程版。run 和修代码的模型调用都在当前事件循环里等。"""
+    current = first
+    attempts: list[dict[str, str]] = []
+    for index in range(MAX_ATTEMPTS):
+        ok, value, error, output = await run(current)
+        attempts.append({
+            "kind": kind,
+            "artifact": current,
+            "error": error or "",
+            "output": output or "",
+        })
+        if ok:
+            return value, []
+        if index == MAX_ATTEMPTS - 1:
+            break
+        revised = await _revise_async(
+            llm, kind=kind, artifact=current, error=error or "", output=output or "", trace=trace,
+        )
+        if not revised:
+            break
+        current = revised
+    return None, attempts
+
+
 def format_failures(attempts: list[dict[str, str]]) -> str:
     """The last failed artifact and its error, for a person to take over."""
     if not attempts:
@@ -89,7 +119,7 @@ def _revise(
     )
     messages = [{"role": "user", "content": "按错误信息修复这一次失败的内容。"}]
     try:
-        parsed = model_calls.flash_json(
+        parsed = model_calls.deepseek_json(
             system=system,
             messages=messages,
             schema=fix_schema(),
@@ -97,6 +127,37 @@ def _revise(
             client=llm,
             **_ledger(trace),
         )
+    except JsonRepairExhausted:
+        raise
+    except Exception:
+        return ""
+    if not isinstance(parsed, dict):
+        return ""
+    return str(parsed.get("fixed_code") or "").strip()
+
+
+async def _revise_async(
+    llm: Any, *, kind: str, artifact: str, error: str, output: str, trace: Any | None = None,
+) -> str:
+    """修一次失败的内容。在已经跑着的事件循环里调用，不再另开循环。"""
+    system = CODE_FIX_PROMPT.format(
+        kind=kind,
+        code=(artifact or "（无）")[:6000],
+        error=(error or "（无）")[:1500],
+        stdout=(output or "（无）")[:1500],
+    )
+    messages = [{"role": "user", "content": "按错误信息修复这一次失败的内容。"}]
+    try:
+        parsed = await model_calls.deepseek_json_async(
+            system=system,
+            messages=messages,
+            schema=fix_schema(),
+            temperature=0,
+            client=llm,
+            **_ledger(trace),
+        )
+    except JsonRepairExhausted:
+        raise
     except Exception:
         return ""
     if not isinstance(parsed, dict):

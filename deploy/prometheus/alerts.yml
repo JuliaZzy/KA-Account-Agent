@@ -1,0 +1,30 @@
+groups:
+  - name: ka-account-model
+    rules:
+      # Five minutes and at least five primary decisions, so one legitimate 429
+      # does not page. The S3 bug moved almost every chat call off Qwen.
+      - alert: ModelRouteFallbackRatioHigh
+        expr: |
+          (
+            sum(increase(agent_model_route_fallback_total[5m]))
+            /
+            clamp_min(sum(increase(agent_model_route_selected_total[5m])), 1)
+          ) > 0.1
+          and
+          sum(increase(agent_model_route_selected_total[5m])) >= 5
+        labels:
+          severity: warning
+        annotations:
+          summary: More than 10% of model routes left the primary model in 5 minutes
+      - alert: ModelInternalError
+        expr: sum(increase(agent_model_internal_error_total[5m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: A model call failed inside our code
+      - alert: PlanOutputTruncated
+        expr: sum(increase(agent_plan_truncated_total[5m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: A planner reply was cut off by the model length limit

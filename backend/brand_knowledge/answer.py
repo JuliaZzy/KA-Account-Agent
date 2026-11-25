@@ -1,21 +1,17 @@
-"""根据已经检索到的段落回答一个品牌问题。这不是代理。
+"""把追问改写成一条可以单独检索的查询，并给检索结果补上来源名。
 
-后一轮会先改写成一条可以单独检索的查询。存下来的消息和回答提示词仍用用户的原话。
+回答由编排器写。这里不调用模型回复，也不自己开事件循环。
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from typing import Any
 
 from ..db import Database
 from ..llm import calls as model_calls
-from ..memory import attach, prompt_context, prompt_turns, standing_block, summary_block
+from ..memory import attach, prompt_turns
 from ..orchestrator.prompt import FOLLOWUP
-from ..orchestrator.speak import answer_directly, one_shot
-from ..orchestrator.status import status
-from .prompt.brand import ANSWER
-from .rag import RagUnavailable, evidence_prompt, retrieve, source_label
+from .rag import source_label
 
 _SKIP_HISTORY = {"(message)", "(confirm)"}
 
@@ -41,7 +37,7 @@ def _prior_turns(history: list[dict[str, Any]], folded_through: int = 0) -> list
     return turns
 
 
-def _search_query(
+async def _search_query(
     llm: Any, text: str, history: list[dict[str, Any]], remembered: str = "", folded_through: int = 0,
 ) -> str:
     """Standalone query for retrieval. The first turn is searched as typed.
@@ -54,8 +50,7 @@ def _search_query(
         return text
     recent = "\n".join(f"{turn['role']}: {turn['content']}" for turn in prior)
     try:
-        raw = model_calls.school_json(
-            model_calls.SCHOOL_CHAT,
+        raw = await model_calls.qwen_json_async(
             client=llm,
             system=attach(FOLLOWUP, remembered),
             messages=[{"role": "user", "content": (
@@ -86,39 +81,3 @@ def _with_sources(db: Database, hits: list[dict[str, Any]]) -> list[dict[str, An
             "source": source_label(title, hit.get("page"), doc=doc_id or None),
         })
     return named
-
-
-def answer_in_chat(
-    db: Database, llm: Any, session: dict[str, Any], text: str, history: list[dict[str, Any]], brand_id: str,
-) -> Iterator[dict[str, Any]]:
-    db.update_session(session["id"], specialist="brand")
-    yield status("brand-search", "检索", "正在查找品牌资料", state="running")
-    folded = int(session.get("folded_through") or 0)
-    remembered = prompt_context(
-        standing_block(db, session["partnership_id"], session.get("user_id")), summary_block(session.get("summary")),
-    )
-    query = _search_query(llm, text, history, remembered, folded)
-    try:
-        hits = retrieve(query, brand_id)
-    except RagUnavailable as err:
-        yield status("brand-search", "检索", "检索不可用", state="done")
-        yield from one_shot(db, session, str(err), llm=llm)
-        return
-    named = _with_sources(db, hits)
-    yield status("brand-search", "检索", f"找到 {len(named)} 段", state="done")
-    yield status("brand-reply", "回答", "正在根据这些段落作答", state="running")
-    done = yield from answer_directly(
-        db, llm, session, text,
-        prompt_text=evidence_prompt(text, named),
-        system=ANSWER,
-        purpose="brand.answer",
-        extra={"brand_hits": [
-            {
-                "n": h["n"], "cid": h.get("cid"), "doc": h.get("doc"), "page": h.get("page"),
-                "file_name": h.get("file_name"), "source": h["source"],
-            }
-            for h in named
-        ]},
-        done_step=("brand-reply", "回答", "回复已写完"),
-    )
-    yield done

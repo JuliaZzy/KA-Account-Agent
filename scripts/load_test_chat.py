@@ -186,6 +186,15 @@ def _ledger_usage(session_ids: list[str], *, requests: int, db: Any | None = Non
     return summarize_usage_rows(rows, requests=requests)
 
 
+def fallback_gate(route_fallback: int | None, *, allow_fallback: bool) -> int:
+    """Healthy smokes must stay on the primary model. Fault runs opt out."""
+    if allow_fallback:
+        return 0
+    if route_fallback is None or route_fallback > 0:
+        return 1
+    return 0
+
+
 def _seconds(value: float | None, *, tail: bool = False) -> str:
     if value is None:
         return f"未报（不足 {P99_MIN_SAMPLES} 条）" if tail else "没有样本"
@@ -432,6 +441,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     done = _latency(completed_durations)
     settle: dict[str, Any]
     usage = None
+    routes = None
     db = None
     try:
         from backend.db import Database
@@ -440,13 +450,16 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         settle = await _settle_runs(
             db, results, timeout_seconds=args.settle_timeout, interval_seconds=args.settle_interval,
         )
+        session_ids = [str(row.get("session_id") or "") for row in results]
         usage = await asyncio.to_thread(
             _ledger_usage,
-            [str(row.get("session_id") or "") for row in results],
+            session_ids,
             requests=sum(row.get("outcome") != "generator_dropped" for row in results), db=db,
         )
+        routes = await asyncio.to_thread(db.session_route_counts, session_ids)
     except Exception as exc:
         settle = {"scope": "experiment_sessions", "error": type(exc).__name__}
+        routes = None
     finally:
         if db is not None:
             db.engine.dispose()
@@ -493,6 +506,12 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             settle.get("error") or settle.get("unfinished_count") or settle.get("missing_run_ids")
         )
         summary["usage"] = usage
+    if routes is not None:
+        selected = int(routes["route_selected"])
+        fallback = int(routes["route_fallback"])
+        summary["route_selected"] = selected
+        summary["route_fallback"] = fallback
+        summary["fallback_rate"] = round(fallback / selected, 4) if selected else None
     return {
         "workload": {
             "base_url": base_url,
@@ -542,6 +561,11 @@ def main() -> int:
     )
     parser.add_argument("--settle-interval", type=float, default=2, help="seconds between ledger snapshots")
     parser.add_argument(
+        "--allow-fallback",
+        action="store_true",
+        help="do not fail when this run left the primary model (fault-injection experiments)",
+    )
+    parser.add_argument(
         "--message-template",
         default="你好，这是第 {i} 条合成压测消息，请回复一句确认。",
     )
@@ -584,9 +608,13 @@ def main() -> int:
         f"P95 {_seconds(summary['completed_p95_seconds'])}，"
         f"P99 {_seconds(summary['completed_p99_seconds'], tail=True)}；"
         f"{cost_part}"
+        f"降级 {summary.get('route_fallback', '未读到')} 次；"
         f"结果已写入 {args.output}"
     )
-    return 0
+    code = fallback_gate(summary.get("route_fallback"), allow_fallback=args.allow_fallback)
+    if code:
+        print("压测未通过：健康路径的降级次数必须为 0。故障注入请加 --allow-fallback。")
+    return code
 
 
 if __name__ == "__main__":

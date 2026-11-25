@@ -1,14 +1,19 @@
 """The exercise Run API stores rows in PostgreSQL, not in process memory."""
 from __future__ import annotations
+
+import asyncio
 import time
 from datetime import timedelta
 from typing import ClassVar
+
 import pytest
 from fastapi.testclient import TestClient
+
 from backend.db import InvalidRunTransition, utcnow
 from backend.main import create_app
 from backend.schemas import Partnership
 from backend.services.run_names import RunStatus, ToolCallStatus
+
 HEADERS = {"X-Org-Id": "org-1", "X-User-Id": "user-1"}
 def _db(make_db, name: str):
     db = make_db(name)
@@ -142,6 +147,104 @@ def test_permanent_error_fails_the_run_without_a_retry(make_db):
     assert events[-1]["event_type"] == "run.failed"
     assert events[-1]["payload_json"]["reason"] == "permanent"
     assert db.find_pending_outbox_jobs() == []
+
+
+def test_exhausted_json_repair_fails_once_and_dead_letters(make_db):
+    from backend.llm.calls import JsonRepairExhausted
+    from backend.llm.json_check import JSON_FAILURE_MESSAGE
+    from backend.services.dispatcher import dispatch_pending
+    from backend.services.run_worker import work_once
+
+    db = _db(make_db, "json-repair")
+    client = TestClient(create_app(db))
+    run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
+    dispatch_pending(db)
+
+    def execute(_run):
+        raise JsonRepairExhausted(JSON_FAILURE_MESSAGE)
+
+    assert work_once(db, "worker-a", execute, run_id=run_id) is True
+    body = client.get(f"/runs/{run_id}", headers=HEADERS).json()
+    assert body["status"] == "failed"
+    assert body["error_json"]["code"] == "JSON_REPAIR_EXHAUSTED"
+    assert body["error_json"]["message"] == JSON_FAILURE_MESSAGE
+    trace = client.get(f"/runs/{run_id}/trace", headers=HEADERS).json()
+    assert trace["events"][-1]["event_type"] == "run.failed"
+    assert trace["dead_letters"][0]["error_json"]["code"] == "JSON_REPAIR_EXHAUSTED"
+    assert db.find_pending_outbox_jobs() == []
+
+
+def test_json_repair_failure_on_a_child_is_a_result_for_the_answer(make_db, monkeypatch):
+    from datetime import timedelta
+
+    from backend.llm.calls import JsonRepairExhausted
+    from backend.llm.json_check import JSON_FAILURE_MESSAGE
+    from backend.services.task_run import execute_task
+    from backend.services.tool_registry import Tool, ToolRegistry
+
+    db = _db(make_db, "json-repair-child")
+    db.upsert_partnership(Partnership(
+        id="ps-1", brand_id="brand-1", distributor_id="org-1", ship_to_country="US",
+        currency="USD", brand_name="Brand", distributor_name="Org 1",
+    ))
+    db.upsert_user("u-1", "org-1", "User")
+    session = db.create_session("json-repair-session", "ps-1", "u-1")
+    parent, _ = db.create_agent_run(
+        "org-1", "u-1", "chat", "chat:json-repair:parent",
+        {"session_id": session["id"], "message": "两箱"},
+    )
+    parent_id = parent["id"]
+    assert db.claim_chat_turn(parent_id, "worker-a", utcnow() + timedelta(minutes=5)) is not None
+    assert db.mark_waiting_for_tasks(parent_id)["status"] == "waiting_for_tasks"
+    payload = {
+        "session_id": session["id"], "owner_run_id": parent_id, "task_id": "order-1",
+        "kind": "tool", "name": "order", "tool_name": "order", "input": {},
+        "wave_id": "wave-1",
+    }
+    child, _ = db.create_agent_run(
+        "org-1", "u-1", "tool", "chat:json-repair:child", payload, owner_run_id=parent_id,
+    )
+    assert db.claim_chat_turn(child["id"], "worker-b", utcnow() + timedelta(minutes=5)) is not None
+
+    def broken(_args, **_kwargs):
+        raise JsonRepairExhausted(JSON_FAILURE_MESSAGE)
+
+    monkeypatch.setattr(
+        "backend.services.task_run.turn_tools",
+        lambda *args, **kwargs: ToolRegistry([Tool(name="order", description="Order", fn=broken)]),
+    )
+    result = asyncio.run(execute_task(db, None, child))
+    assert result["ok"] is False
+    assert result["error"] == JSON_FAILURE_MESSAGE
+    assert db.find_agent_run_by_id(parent_id)["status"] != "failed"
+    assert db.run_trace("org-1", parent_id)["dead_letters"] == []
+    failed = next(
+        event for event in db.list_run_events("org-1", parent_id) if event["event_type"] == "tool.failed"
+    )
+    assert failed["payload_json"]["display"] == JSON_FAILURE_MESSAGE
+
+
+def test_a_model_budget_failure_does_not_retry(make_db):
+    from backend.llm.calls import ModelBudgetExceeded
+    from backend.services.dispatcher import dispatch_pending
+    from backend.services.run_worker import work_once
+
+    db = _db(make_db, "budget-stop")
+    client = TestClient(create_app(db))
+    run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
+    dispatch_pending(db)
+
+    def execute(_run):
+        raise ModelBudgetExceeded("org")
+
+    assert work_once(db, "worker-a", execute, run_id=run_id) is True
+    body = client.get(f"/runs/{run_id}", headers=HEADERS).json()
+    assert body["status"] == "failed"
+    assert body["error_json"]["code"] == "QUOTA_EXCEEDED"
+    assert body["error_json"]["scope"] == "org"
+    assert db.find_pending_outbox_jobs() == []
+
+
 def test_transient_error_retries_then_dead_letters(make_db):
     from datetime import timedelta
 
@@ -268,6 +371,31 @@ def test_provider_timeout_requeues_without_spending_an_attempt(make_db, monkeypa
     assert pending[0]["last_error_json"]["infrastructure_attempts"] == 1
     wait = (pending[0]["next_attempt_at"] - before).total_seconds()
     assert 0.9 <= wait <= 1.2
+def test_circuit_open_fails_the_run_instead_of_waiting_out_the_cooldown(make_db):
+    from backend.llm.errors import ProviderError
+    from backend.services.dispatcher import dispatch_pending
+    from backend.services.run_worker import work_once
+
+    db = _db(make_db, "circuit-open-fail-fast")
+    client = TestClient(create_app(db))
+    run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
+    dispatch_pending(db)
+
+    def execute(_run):
+        raise ProviderError(
+            "qwen", "qwen3.7-flash", "circuit_open",
+            retry_after_seconds=30, retryable=True,
+        )
+
+    assert work_once(db, "worker-a", execute, run_id=run_id) is True
+    failed = client.get(f"/runs/{run_id}", headers=HEADERS).json()
+    assert failed["status"] == "failed"
+    assert failed["error_json"]["code"] == "PROVIDER_CIRCUIT_OPEN"
+    pending = [
+        item for item in db.run_trace("org-1", run_id)["outbox"]
+        if item["job_type"] == "execute_run" and item["status"] == "pending"
+    ]
+    assert pending == []
 def test_provider_authentication_fails_the_run(make_db):
     from backend.llm.errors import ProviderError
     from backend.services.dispatcher import dispatch_pending
@@ -410,6 +538,179 @@ def test_an_expired_lease_is_swept_without_spending_a_retry(make_db):
     assert client.get(f"/runs/{acked_id}", headers=HEADERS).json()["status"] == "queued"
     assert dispatch_pending(db) == 1
     assert db.claim_chat_turn(acked_id, "worker-b", utcnow() + timedelta(minutes=5)) is not None
+
+
+def test_renew_extends_only_the_live_owner(make_db):
+    from sqlalchemy import text
+
+    from backend.services.dispatcher import dispatch_pending
+
+    db = _db(make_db, "lease-renew")
+    client = TestClient(create_app(db))
+    run_id = client.post(
+        "/runs", json={**BODY, "idempotency_key": "lease:renew"}, headers=HEADERS,
+    ).json()["id"]
+    dispatch_pending(db)
+    assert db.claim_chat_turn(run_id, "worker-a", utcnow() + timedelta(minutes=5)) is not None
+    before = db.find_agent_run_by_id(run_id)["lease_expires_at"]
+
+    later = utcnow() + timedelta(minutes=30)
+    assert db.renew_run_lease(run_id, "worker-a", later) == "renewed"
+    renewed = db.find_agent_run_by_id(run_id)
+    assert renewed["lease_owner"] == "worker-a"
+    assert renewed["status"] == "running"
+    assert renewed["lease_expires_at"] > before
+
+    frozen = renewed["lease_expires_at"]
+    assert db.renew_run_lease(run_id, "worker-b", utcnow() + timedelta(hours=1)) == "lost"
+    assert db.find_agent_run_by_id(run_id)["lease_expires_at"] == frozen
+    assert db.find_agent_run_by_id(run_id)["lease_owner"] == "worker-a"
+
+    with db.engine.begin() as conn:
+        conn.execute(text(
+            "UPDATE agent_runs SET lease_expires_at = now() - interval '1 minute' WHERE id = :id"
+        ), {"id": run_id})
+    assert db.renew_run_lease(run_id, "worker-a", utcnow() + timedelta(minutes=5)) == "lost"
+    expired = db.find_agent_run_by_id(run_id)
+    assert expired["status"] == "running"
+    assert expired["lease_expires_at"] < utcnow()
+
+
+def test_renew_stops_quietly_once_the_run_is_parked(make_db):
+    from backend.services.dispatcher import dispatch_pending
+
+    db = _db(make_db, "lease-settled")
+    client = TestClient(create_app(db))
+    run_id = client.post(
+        "/runs", json={**BODY, "idempotency_key": "lease:settled"}, headers=HEADERS,
+    ).json()["id"]
+    dispatch_pending(db)
+    assert db.claim_chat_turn(run_id, "worker-a", utcnow() + timedelta(minutes=5)) is not None
+    assert db.mark_waiting_for_tasks(run_id)["status"] == "waiting_for_tasks"
+    assert db.renew_run_lease(run_id, "worker-a", utcnow() + timedelta(minutes=5)) == "settled"
+    parked = db.find_agent_run_by_id(run_id)
+    assert parked["lease_owner"] is None
+    assert parked["lease_expires_at"] is None
+
+
+def test_a_live_worker_keeps_renewing_until_the_lease_is_stolen(make_db):
+    from sqlalchemy import text
+
+    from backend.services.dispatcher import dispatch_pending
+    from backend.services.run_worker import RunLease
+
+    db = _db(make_db, "lease-beat")
+    client = TestClient(create_app(db))
+    run_id = client.post(
+        "/runs", json={**BODY, "idempotency_key": "lease:beat"}, headers=HEADERS,
+    ).json()["id"]
+    dispatch_pending(db)
+    assert db.claim_chat_turn(run_id, "worker-a", utcnow() + timedelta(seconds=30)) is not None
+    before = db.find_agent_run_by_id(run_id)["lease_expires_at"]
+    hold = RunLease(db, run_id, "worker-a", beat=0.05)
+    try:
+        deadline = time.time() + 2
+        while time.time() < deadline:
+            row = db.find_agent_run_by_id(run_id)
+            if row["lease_expires_at"] > before and row["lease_owner"] == "worker-a":
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("lease was not renewed")
+        assert hold.lost is False
+        with db.engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE agent_runs SET lease_owner = 'worker-b', "
+                "lease_expires_at = now() + interval '5 minutes' WHERE id = :id"
+            ), {"id": run_id})
+        deadline = time.time() + 2
+        while time.time() < deadline and not hold.lost:
+            time.sleep(0.05)
+        assert hold.lost is True
+    finally:
+        hold.stop()
+    stolen = db.find_agent_run_by_id(run_id)
+    assert stolen["lease_owner"] == "worker-b"
+    assert stolen["status"] == "running"
+
+
+def test_a_worker_that_lost_its_lease_does_not_finish_the_run(make_db):
+    from sqlalchemy import text
+
+    from backend.services.dispatcher import dispatch_pending
+    from backend.services.run_worker import work_once
+
+    db = _db(make_db, "lease-lost-finish")
+    client = TestClient(create_app(db))
+    run_id = client.post(
+        "/runs", json={**BODY, "idempotency_key": "lease:lost-finish"}, headers=HEADERS,
+    ).json()["id"]
+    dispatch_pending(db)
+
+    def execute(run):
+        with db.engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE agent_runs SET lease_owner = 'worker-b' WHERE id = :id"
+            ), {"id": run["id"]})
+        return {"text": "should not land"}
+
+    assert work_once(db, "worker-a", execute, run_id=run_id) is True
+    body = client.get(f"/runs/{run_id}", headers=HEADERS).json()
+    assert body["status"] == "running"
+    assert body["lease_owner"] == "worker-b"
+    assert body["output_json"] is None
+
+
+def test_an_expired_lease_is_not_extended_when_the_worker_returns(make_db):
+    from sqlalchemy import text
+
+    from backend.services.dispatcher import dispatch_pending
+    from backend.services.run_worker import work_once
+
+    db = _db(make_db, "lease-expired-finish")
+    client = TestClient(create_app(db))
+    run_id = client.post(
+        "/runs", json={**BODY, "idempotency_key": "lease:expired-finish"}, headers=HEADERS,
+    ).json()["id"]
+    dispatch_pending(db)
+
+    def execute(run):
+        with db.engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE agent_runs SET lease_expires_at = now() - interval '1 minute' WHERE id = :id"
+            ), {"id": run["id"]})
+        return {"text": "too late"}
+
+    assert work_once(db, "worker-a", execute, run_id=run_id) is True
+    body = client.get(f"/runs/{run_id}", headers=HEADERS).json()
+    assert body["status"] == "running"
+    assert body["lease_owner"] == "worker-a"
+    assert body["output_json"] is None
+    assert db.find_agent_run_by_id(run_id)["lease_expires_at"] < utcnow()
+
+
+def test_parking_for_tasks_still_releases_the_lease(make_db):
+    from backend.services.dispatcher import dispatch_pending
+    from backend.services.run_worker import work_once
+
+    db = _db(make_db, "lease-park")
+    client = TestClient(create_app(db))
+    run_id = client.post(
+        "/runs", json={**BODY, "idempotency_key": "lease:park"}, headers=HEADERS,
+    ).json()["id"]
+    dispatch_pending(db)
+
+    def execute(run):
+        assert db.mark_waiting_for_tasks(run["id"])["status"] == "waiting_for_tasks"
+        return {"text": "parked"}
+
+    assert work_once(db, "worker-a", execute, run_id=run_id) is True
+    body = client.get(f"/runs/{run_id}", headers=HEADERS).json()
+    assert body["status"] == "waiting_for_tasks"
+    assert body["lease_owner"] is None
+    assert body["lease_expires_at"] is None
+
+
 def test_an_expired_lease_cancels_a_run_that_already_asked(make_db):
     from backend.services.dispatcher import dispatch_pending
     from backend.services.run_worker import sweep_expired_leases
@@ -693,8 +994,8 @@ def _leased_run(db, client, key: str):
     assert run is not None
     return run
 def test_planned_side_effect_is_claimed_before_the_handler_and_reused(make_db, monkeypatch):
-    from backend.services.tool_registry import Tool, ToolRegistry
     from backend.services.task_run import execute_task
+    from backend.services.tool_registry import Tool, ToolRegistry
 
     db = _db(make_db, "planned-side-effect")
     db.upsert_partnership(Partnership(
@@ -736,14 +1037,14 @@ def test_planned_side_effect_is_claimed_before_the_handler_and_reused(make_db, m
     )
     assert db.claim_chat_turn(run["id"], "test-worker", utcnow() + timedelta(minutes=5)) is not None
 
-    first = execute_task(db, None, run)
-    second = execute_task(db, None, run)
+    first = asyncio.run(execute_task(db, None, run))
+    second = asyncio.run(execute_task(db, None, run))
     replay, _ = db.create_agent_run(
         "org-1", "u-1", "tool", f"chat:planned-side-session:{parent_id}:mail-1:replay", payload,
         owner_run_id=parent_id,
     )
     assert db.claim_chat_turn(replay["id"], "test-worker", utcnow() + timedelta(minutes=5)) is not None
-    third = execute_task(db, None, replay)
+    third = asyncio.run(execute_task(db, None, replay))
 
     assert first["ok"] is True
     assert second["ok"] is True
@@ -754,8 +1055,8 @@ def test_planned_side_effect_is_claimed_before_the_handler_and_reused(make_db, m
     assert rows[0]["status"] == ToolCallStatus.SUCCEEDED
     assert rows[0]["idempotency_key"] == f"send_email:{parent_id}:mail-1"
 def test_planned_side_effect_with_lost_response_is_not_retried(make_db, monkeypatch):
-    from backend.services.tool_registry import Tool, ToolRegistry
     from backend.services.task_run import execute_task
+    from backend.services.tool_registry import Tool, ToolRegistry
 
     db = _db(make_db, "planned-lost-response")
     db.upsert_partnership(Partnership(
@@ -798,8 +1099,8 @@ def test_planned_side_effect_with_lost_response_is_not_retried(make_db, monkeypa
     assert db.claim_chat_turn(run["id"], "test-worker", utcnow() + timedelta(minutes=5)) is not None
 
     with pytest.raises(KeyboardInterrupt):
-        execute_task(db, None, run)
-    result = execute_task(db, None, run)
+        asyncio.run(execute_task(db, None, run))
+    result = asyncio.run(execute_task(db, None, run))
 
     assert result["ok"] is False
     assert "manual review" in result["error"]
@@ -867,10 +1168,8 @@ def test_the_queue_switch_does_not_claim(make_db, monkeypatch):
     with pytest.raises(QueueDisabled):
         work_once(db, "worker-a", execute, run_id=run_id)
     assert client.get(f"/runs/{run_id}", headers=HEADERS).json()["status"] == "queued"
-def test_a_full_run_gate_raises_soft_busy(make_db, monkeypatch):
-    import pytest
-
-    from backend.services.run_worker import GateFull, work_once
+def test_a_full_run_gate_returns_the_run_to_postgres(make_db, monkeypatch):
+    from backend.services.run_worker import work_once
 
     monkeypatch.setattr(
         "backend.services.run_worker.acquire_run",
@@ -883,9 +1182,13 @@ def test_a_full_run_gate_raises_soft_busy(make_db, monkeypatch):
     db = _db(make_db, "gate-full")
     client = TestClient(create_app(db))
     run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
-    with pytest.raises(GateFull):
-        work_once(db, "worker-a", execute, run_id=run_id)
-    assert client.get(f"/runs/{run_id}", headers=HEADERS).json()["status"] == "queued"
+    assert work_once(db, "worker-a", execute, run_id=run_id) is True
+    saved = client.get(f"/runs/{run_id}", headers=HEADERS).json()
+    assert saved["status"] == "queued"
+    assert saved["lease_owner"] is None
+    assert db.find_agent_run_by_id(run_id)["capacity_wait_since"] is not None
+    pending = [row for row in db.run_trace("org-1", run_id)["outbox"] if row["status"] == "pending"]
+    assert pending
 def test_create_rate_limit_uses_the_user_not_the_header(make_db, monkeypatch):
     monkeypatch.setenv("KA_ACCOUNT_RATE_CREATE_ORG", "1")
     db = _db(make_db, "rate")
@@ -956,6 +1259,9 @@ _METRIC_NAMES = (
     "agent_worker_active_runs",
     "agent_model_call_latency_seconds",
     "agent_model_error_total",
+    "agent_model_internal_error_total",
+    "agent_model_route_selected_total",
+    "agent_model_route_fallback_total",
     "agent_tool_call_total",
     "agent_tool_error_total",
     "agent_side_effect_duplicate_prevented_total",
@@ -992,6 +1298,13 @@ def test_the_monitor_lists_one_org_and_reads_the_ledger(make_db):
     for name in _METRIC_NAMES:
         assert f"# TYPE {name} " in text.text
     assert "agent_run_created_total 1" in text.text
+
+    scrape = client.get("/metrics/scrape")
+    assert scrape.status_code == 200
+    assert 'agent_run_created_total{org_id="org-1"} 1' in scrape.text
+    assert 'agent_run_created_total{org_id="org-2"} 0' in scrape.text
+    assert "agent_queue_pending_jobs{" not in scrape.text
+    assert "\nagent_queue_pending_jobs " in scrape.text
 
     board = client.get("/monitor", headers=HEADERS)
     assert board.status_code == 200

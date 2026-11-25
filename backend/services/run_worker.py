@@ -1,18 +1,20 @@
-"""Claim one run by id and finish it.
+"""按 id 领一条 Run，跑完再收尾。
 
-Celery delivers `run_id`. The lease and `run.started` commit before `execute`.
-The task returns only after the run is terminal, `waiting_for_user`, or the next
-outbox row is scheduled. That return is the ack.
+Celery 送来 `run_id`。租约和 `run.started` 在 `execute` 之前提交。
+Run 进入终态、`waiting_for_user`，或已经排上下一条 outbox 之后，任务才返回。这次返回就是 ack。
 
-`PermanentRunError` fails the run. Any other exception is retried until the
-execution budget, then moved to `dead_letter_jobs`. An infrastructure error
-puts the run back without spending that budget.
+`PermanentRunError`、`ModelBudgetExceeded`、`JsonRepairExhausted` 直接判失败并写入
+`dead_letter_jobs`。其余异常先按执行次数重试，次数用完再进 `dead_letter_jobs`。
+基础设施错误把 Run 放回队列，不扣这次执行次数。
 """
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 import random
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -23,6 +25,7 @@ from sqlalchemy.exc import OperationalError
 
 from ..db import Database, utcnow
 from ..db.database import ChatTurnBusy
+from ..llm.calls import JsonRepairExhausted, ModelBudgetExceeded
 from ..llm.errors import ModelCapacityExceeded, ProviderError
 from ..repositories.run_repository import (
     RUN_TERMINAL_STATUSES,
@@ -33,6 +36,7 @@ from ..repositories.run_repository import (
     fail_run,
     find_agent_run_by_id,
     note_running_reply,
+    renew_run_lease,
     schedule_retry,
 )
 from ..repositories.run_repository import (
@@ -43,7 +47,12 @@ from ..repositories.run_repository import (
 )
 from .entry_guard import acquire_run, queue_enabled
 
-LEASE_FOR = timedelta(minutes=10)
+# How long a silent worker is treated as dead. A live worker renews inside this
+# window; the sweeper only reclaims a run that has not been renewed for the whole
+# interval. The beat is one fifth of the lease, so a few failed writes still leave
+# a deadline in the future. Two missed beats are not a crash.
+LEASE_FOR = timedelta(minutes=5)
+LEASE_BEAT = LEASE_FOR / 5
 RETRY_AFTER = timedelta(minutes=1), timedelta(minutes=5), timedelta(minutes=15)
 INFRASTRUCTURE_AFTER = (timedelta(seconds=5),)
 PROVIDER_AFTER = (timedelta(seconds=1),)
@@ -54,6 +63,11 @@ log = logging.getLogger(__name__)
 
 class PermanentRunError(Exception):
     """The input or the permission will not succeed on another try."""
+
+    def __init__(self, message: str = "", *, code: str | None = None, scope: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.scope = scope
 
 
 class InfrastructureError(Exception):
@@ -114,8 +128,10 @@ def _finish_claimed(
     execute: Callable[[dict[str, Any]], dict[str, Any]],
     retry_after: tuple[timedelta, ...],
     run_lease: Any | None = None,
+    pg_lease: RunLease | None = None,
 ) -> bool:
     run_id = str(run["id"])
+    worker_id = str(run.get("lease_owner") or "")
     if _over_duration(run):
         fail_run(db, run_id, {
             "kind": "permanent",
@@ -126,9 +142,13 @@ def _finish_claimed(
         return True
     try:
         output = execute(run)
-        if run_lease is not None and run_lease.lost:
-            raise LeaseLost("running gate lease was lost")
+        if inspect.isawaitable(output):
+            output = asyncio.run(output)
+        if not _still_held(db, run_id, worker_id, run_lease, pg_lease):
+            return True
     except ModelCapacityExceeded as exc:
+        if not _still_held(db, run_id, worker_id, run_lease, pg_lease):
+            return True
         _abandon_running_reply(db, run_id)
         schedule_retry(
             db, run_id, {
@@ -140,8 +160,11 @@ def _finish_claimed(
             },
             INFRASTRUCTURE_AFTER, spend_attempt=False,
         )
+        db.note_capacity_wait(run_id)
         return True
     except ProviderError as exc:
+        if not _still_held(db, run_id, worker_id, run_lease, pg_lease):
+            return True
         if not exc.retryable:
             return _settle(db, run_id, exc, permanent=True, retry_after=retry_after)
         _abandon_running_reply(db, run_id)
@@ -161,16 +184,42 @@ def _finish_claimed(
         )
         return True
     except (InfrastructureError, OperationalError) as exc:
+        if not _still_held(db, run_id, worker_id, run_lease, pg_lease):
+            return True
         schedule_retry(
             db, run_id, {"kind": "infrastructure", "message": str(exc)},
             INFRASTRUCTURE_AFTER, spend_attempt=False,
         )
         return True
     except PermanentRunError as exc:
+        if not _still_held(db, run_id, worker_id, run_lease, pg_lease):
+            return True
         return _settle(db, run_id, exc, permanent=True, retry_after=retry_after)
+    except JsonRepairExhausted as exc:
+        # JSON 修复次数已经用完。
+        if not _still_held(db, run_id, worker_id, run_lease, pg_lease):
+            return True
+        return _settle(
+            db, run_id,
+            PermanentRunError(str(exc), code=exc.code),
+            permanent=True, retry_after=retry_after,
+        )
+    except ModelBudgetExceeded as exc:
+        # The cap is already spent. Another attempt calls the vendor the same way.
+        if not _still_held(db, run_id, worker_id, run_lease, pg_lease):
+            return True
+        return _settle(
+            db, run_id,
+            PermanentRunError(
+                "今天的额度已经用完，请明天再试。", code="QUOTA_EXCEEDED", scope=exc.scope,
+            ),
+            permanent=True, retry_after=retry_after,
+        )
     except LeaseLost:
         return True
     except Exception as exc:
+        if not _still_held(db, run_id, worker_id, run_lease, pg_lease):
+            return True
         return _settle(db, run_id, exc, permanent=False, retry_after=retry_after)
     row = find_agent_run_by_id(db, run_id)
     if row is None or row["status"] in RUN_TERMINAL_STATUSES or row["status"] in (
@@ -196,23 +245,24 @@ def work_once(
 ) -> bool:
     """Run one claimed id. False when no `run_id` was given.
 
-    A terminal run is skipped. Queue off or a full running gate raises SoftBusy so
-    Celery can retry without ack. Title OPEN runs pass ``take_run_gate=False``.
+    Anything that is not `queued` is acked and left alone, including a second
+    delivery of a run that is already `running`. The claim is the queued-to-running
+    write. The running seat is taken after that. A full seat puts the run back in
+    Postgres instead of retrying inside the worker. Title OPEN runs pass
+    ``take_run_gate=False``.
     """
     if not run_id:
         return False
     existing = find_agent_run_by_id(db, run_id)
     if existing is None:
         return False
-    if existing["status"] in RUN_TERMINAL_STATUSES:
+    if existing["status"] != RunStatus.QUEUED:
         return True
     if not queue_enabled():
         raise QueueDisabled()
     org_id = str(existing.get("org_id") or "")
     user_id = str(existing.get("user_id") or "")
-    lease = acquire_run(org_id, user_id) if take_run_gate else None
-    if take_run_gate and lease is None:
-        raise GateFull()
+    lease = None
     try:
         try:
             run = claim_chat_turn(db, run_id, worker_id, _lease_deadline())
@@ -220,7 +270,15 @@ def work_once(
             raise SessionBusy(exc.run_id) from exc
         if run is None:
             return find_agent_run_by_id(db, run_id) is not None
-        return _finish_claimed(db, run, execute, retry_after, run_lease=lease)
+        lease = acquire_run(org_id, user_id) if take_run_gate else None
+        if take_run_gate and lease is None:
+            db.park_for_capacity(run_id)
+            return True
+        hold = RunLease(db, str(run["id"]), worker_id)
+        try:
+            return _finish_claimed(db, run, execute, retry_after, run_lease=lease, pg_lease=hold)
+        finally:
+            hold.stop()
     finally:
         if lease is not None:
             lease.release()
@@ -252,6 +310,9 @@ def _settle(
     code = getattr(exc, "code", None)
     if code is not None:
         error["code"] = str(code)
+    scope = getattr(exc, "scope", None)
+    if scope:
+        error["scope"] = str(scope)
     if not run_id:
         return True
     outcome = (
@@ -267,6 +328,87 @@ def _settle(
 
 def _lease_deadline() -> datetime:
     return utcnow() + LEASE_FOR
+
+
+class RunLease:
+    """Keep one worker's Postgres lease alive until `stop`, or until the row is gone.
+
+    The thread renews every `LEASE_BEAT`. A renew that loses the fence sets `lost`,
+    and the worker then skips complete / fail / retry. Parking the run
+    (`waiting_for_tasks`, `waiting_for_user`, or a terminal status) stops the
+    thread without setting `lost`: that worker released the row on purpose.
+    """
+
+    def __init__(
+        self, db: Database, run_id: str, worker_id: str, *, beat: float | None = None,
+    ) -> None:
+        self._db = db
+        self._run_id = run_id
+        self._worker_id = worker_id
+        self._beat = LEASE_BEAT.total_seconds() if beat is None else beat
+        self._stopped = threading.Event()
+        self._lost = threading.Event()
+        self._thread = threading.Thread(
+            target=self._pump, name=f"run-lease-{run_id[:8]}", daemon=True,
+        )
+        self._thread.start()
+
+    def _pump(self) -> None:
+        last_ok = time.monotonic()
+        while not self._stopped.wait(self._beat):
+            try:
+                state = renew_run_lease(self._db, self._run_id, self._worker_id, _lease_deadline())
+            except Exception:
+                log.warning("run lease renew failed run_id=%s", self._run_id, exc_info=True)
+                if time.monotonic() - last_ok >= LEASE_FOR.total_seconds():
+                    self._lost.set()
+                    return
+                continue
+            if state == "lost":
+                log.info("run lease lost run_id=%s worker_id=%s", self._run_id, self._worker_id)
+                self._lost.set()
+                return
+            if state == "settled":
+                return
+            last_ok = time.monotonic()
+
+    @property
+    def lost(self) -> bool:
+        """Whether this worker no longer holds a live lease."""
+        return self._lost.is_set()
+
+    def stop(self) -> None:
+        self._stopped.set()
+        if self._thread is not threading.current_thread():
+            self._thread.join(timeout=2)
+
+
+def _still_held(
+    db: Database,
+    run_id: str,
+    worker_id: str,
+    run_lease: Any | None,
+    pg_lease: RunLease | None,
+) -> bool:
+    """Renew when we still own the row. False means do not write a new status.
+
+    A Redis gate loss or a failed fence check both stop the worker. The run stays
+    where it is so the sweeper, not this worker, decides the next attempt.
+    """
+    if run_lease is not None and run_lease.lost:
+        log.info("running gate lease lost run_id=%s", run_id)
+        return False
+    if pg_lease is not None and pg_lease.lost:
+        return False
+    try:
+        state = renew_run_lease(db, run_id, worker_id, _lease_deadline())
+    except Exception:
+        log.warning("run lease renew failed run_id=%s", run_id, exc_info=True)
+        return False
+    if state == "lost":
+        log.info("run lease lost run_id=%s worker_id=%s", run_id, worker_id)
+        return False
+    return True
 
 
 def _provider_delay(exc: ProviderError) -> timedelta | None:

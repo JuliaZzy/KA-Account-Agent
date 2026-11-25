@@ -10,6 +10,7 @@ stand-in only proves the code works on the stand-in.
 
 from __future__ import annotations
 
+import json
 import sys
 import uuid
 from typing import Any
@@ -141,7 +142,17 @@ def _scripted_models(monkeypatch):
         if callable(getattr(client, "complete_json", None)):
             if kwargs.get("on_text") is not None:
                 return real(**kwargs)
-            return calls._Transport(response=_scripted(client, expect, kwargs), client=client)
+            response = _scripted(client, expect, kwargs)
+            reason = getattr(client, "finish_reason", None)
+            if reason and expect == "json" and isinstance(response, dict):
+                response = {
+                    "choices": [{
+                        "finish_reason": reason,
+                        "message": {"content": json.dumps(response, ensure_ascii=False)},
+                    }],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                }
+            return calls._Transport(response=response, client=client)
         # A real vendor client built at the call site. Tests still answer from the FakeLLM.
         if isinstance(client, (DeepSeekClient, QwenClient)):
             method = {"text": "stream_text", "tools": "complete"}.get(expect, "complete_json")

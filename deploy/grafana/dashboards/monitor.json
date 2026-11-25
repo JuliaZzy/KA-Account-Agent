@@ -1,0 +1,154 @@
+{
+  "uid": "ka-monitor",
+  "title": "监控",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "org_id",
+        "label": "经销商",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(agent_run_created_total, org_id)",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "每小时新建与失败",
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 15 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "increase(agent_run_created_total{org_id=\"$org_id\"}[1h])",
+          "legendFormat": "新建"
+        },
+        {
+          "refId": "B",
+          "expr": "increase(agent_run_failed_total{org_id=\"$org_id\"}[1h])",
+          "legendFormat": "失败"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "卡住",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 10 }] } }, "overrides": [] },
+      "options": { "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "refId": "A", "expr": "agent_stuck_runs{org_id=\"$org_id\"}" }]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "正在跑",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": { "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "refId": "A", "expr": "agent_worker_active_runs{org_id=\"$org_id\"}" }]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "待领",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": { "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "refId": "A", "expr": "agent_queue_pending_jobs" }]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "SSE 连接",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": { "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "refId": "A", "expr": "agent_sse_connection_count" }]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "完成时间",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum by (le) (rate(agent_run_duration_seconds_bucket{org_id=\"$org_id\"}[5m])))", "legendFormat": "P50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(agent_run_duration_seconds_bucket{org_id=\"$org_id\"}[5m])))", "legendFormat": "P95" },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum by (le) (rate(agent_run_duration_seconds_bucket{org_id=\"$org_id\"}[5m])))", "legendFormat": "P99" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "排队时长",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum by (le) (rate(agent_queue_lag_seconds_bucket{org_id=\"$org_id\"}[5m])))", "legendFormat": "P50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(agent_queue_lag_seconds_bucket{org_id=\"$org_id\"}[5m])))", "legendFormat": "P95" },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum by (le) (rate(agent_queue_lag_seconds_bucket{org_id=\"$org_id\"}[5m])))", "legendFormat": "P99" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "模型耗时",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum by (le) (rate(agent_model_call_latency_seconds_bucket{org_id=\"$org_id\"}[5m])))", "legendFormat": "P50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(agent_model_call_latency_seconds_bucket{org_id=\"$org_id\"}[5m])))", "legendFormat": "P95" }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "费用与工具错误",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "increase(agent_estimated_cost_cents_total{org_id=\"$org_id\"}[1h])", "legendFormat": "费用（分 / 小时）" },
+        { "refId": "B", "expr": "increase(agent_tool_error_total{org_id=\"$org_id\"}[1h])", "legendFormat": "工具错误 / 小时" },
+        { "refId": "C", "expr": "increase(agent_model_error_total{org_id=\"$org_id\"}[1h])", "legendFormat": "模型错误 / 小时" }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "降级占比与内部错误",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(agent_model_route_fallback_total{org_id=\"$org_id\"}[5m])) / clamp_min(sum(increase(agent_model_route_selected_total{org_id=\"$org_id\"}[5m])), 1)",
+          "legendFormat": "近 5 分钟降级占比"
+        },
+        {
+          "refId": "B",
+          "expr": "increase(agent_model_internal_error_total{org_id=\"$org_id\"}[5m])",
+          "legendFormat": "内部错误 / 5 分钟"
+        }
+      ]
+    }
+  ]
+}

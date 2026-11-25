@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from sqlalchemy import text
 
 from backend.llm import FakeLLM
@@ -164,20 +166,27 @@ def test_an_unknown_agent_is_counted_when_the_plan_still_succeeds(db):
 
     run, _created = db.create_agent_run("dist-1", "u-a", "chat", "plan-drop", {"message": "hi"})
     assert db.claim_chat_turn(run["id"], "worker", utcnow() + timedelta(minutes=5)) is not None
-    llm = FakeLLM(json_replies=[{"tasks": [
+    bad = {"tasks": [
         {"id": "nope", "kind": "agent", "name": "missing", "input": {}, "depends_on": []},
         {"id": "p", "kind": "agent", "name": "po", "input": {}, "depends_on": []},
-    ]}])
-    tasks = make_plan(
+    ]}
+    llm = FakeLLM(json_replies=[bad, bad, bad, bad, bad, bad])
+    draft = asyncio.run(make_plan(
         llm, message="hi", attachments=[], history=[], open_po=False, db=db, run_id=run["id"],
-    )
-    assert [task.name for task in tasks] == ["po"]
+    ))
+    assert [task.name for task in draft.tasks] == ["po"]
+    assert draft.rejected[0]["error"] == "工具或代理不存在"
+    assert len(llm.calls) == 6
+    repair = llm.calls[1]["messages"][-1]["content"]
+    assert "missing" in repair and "上一次输出" in repair
+    assert "降级" in llm.calls[3]["messages"][-1]["content"]
     step = next(
         item for item in db.run_trace("dist-1", run["id"])["steps"]
         if (item.get("input_json") or {}).get("purpose") == "orchestrator.plan"
     )
     assert step["status"] == "succeeded"
     assert step["output_json"]["dropped"]["unknown_agent"] == 1
+    assert step["output_json"]["repairs"] == 5
     quality = db.monitor_facts("dist-1")["plan"]
     assert quality["calls"] == 1
     assert quality["failed"] == 0
@@ -185,26 +194,31 @@ def test_an_unknown_agent_is_counted_when_the_plan_still_succeeds(db):
     assert quality["unknown_agent_dropped"] == 1
 
 
-def test_a_cycle_fails_the_run_without_children(db):
+def test_a_cycle_answers_without_dispatching_children(db):
     db.upsert_user("u-a", "dist-1", "Ada")
     sid = new_session(db, "ps-1", "u-a")["id"]
     db.update_session(sid, title="Hello", tags=[])
-    llm = FakeLLM(json_replies=[{"tasks": [
+    cycle = {"tasks": [
         {"id": "a", "kind": "tool", "name": "translate", "input": {}, "depends_on": ["b"]},
         {"id": "b", "kind": "tool", "name": "translate", "input": {}, "depends_on": ["a"]},
-    ]}], text_reply="should not answer")
+    ]}
+    llm = FakeLLM(json_replies=[cycle, cycle, cycle, cycle, cycle, cycle], text_reply="should not answer")
     run_id = next(iter(handle_message(db, llm, sid, "translate this")))["run_id"]
     assert work_chat(db, llm, run_id) is True
     run = db.find_agent_run("dist-1", run_id)
-    assert run["status"] == "failed"
-    assert "cycle" in run["error_json"]["message"]
+    assert run["status"] == "succeeded"
+    trace = db.run_trace("dist-1", run_id)
+    assert trace["dead_letters"] == []
+    plan_event = next(event for event in trace["events"] if event["event_type"] == "plan.unusable")
+    assert plan_event["payload_json"]["code"] == "plan_cycle"
     plan_step = next(
-        step for step in db.run_trace("dist-1", run_id)["steps"]
+        step for step in trace["steps"]
         if (step.get("input_json") or {}).get("purpose") == "orchestrator.plan"
     )
+    assert plan_step["status"] == "failed"
     assert plan_step["error_json"]["code"] == "plan_cycle"
     assert db.find_runs_by_owner(run_id) == []
-    assert latest_checkpoint(db, run_id) is None
+    assert _saw(llm, "计划没有生成，不要声称已经查过或已经起草。")
 
 
 def test_a_second_result_keeps_the_first_and_a_lost_checkpoint_does_not_replan(db):
@@ -212,7 +226,7 @@ def test_a_second_result_keeps_the_first_and_a_lost_checkpoint_does_not_replan(d
     sid = new_session(db, "ps-1", "u-a")["id"]
     db.update_session(sid, title="Hello", tags=[])
     llm = FakeLLM(json_replies=[{"tasks": [
-        {"id": "x", "kind": "tool", "name": "not_a_tool", "input": {}, "depends_on": []},
+        {"id": "x", "kind": "tool", "name": "translate", "input": {}, "depends_on": []},
     ]}], text_reply="answered from the child")
     run_id = next(iter(handle_message(db, llm, sid, "do the thing")))["run_id"]
     execute = execute_chat(db, llm)
@@ -260,6 +274,113 @@ def test_a_second_result_keeps_the_first_and_a_lost_checkpoint_does_not_replan(d
     answered = load_state(latest_checkpoint(db, run_id))
     assert answered["phase"] == "answer_done"
     assert answered["results"]["x"]["id"] == "x"
+
+
+def test_inspect_plan_reports_every_problem_together():
+    from backend.orchestrator.plan import executable_tasks, inspect_plan
+
+    raw = {"tasks": [
+        "nope",
+        {"id": "a", "name": "translate", "input": {}, "depends_on": ["b"]},
+        {"id": "b", "name": "translate", "input": {}, "depends_on": ["a"]},
+        {"id": "g", "name": "ghost_tool", "input": {}},
+        {"id": "p", "name": "po", "input": {}, "depends_on": ["gone"]},
+    ]}
+    codes = {issue.code for issue in inspect_plan(raw)}
+    assert codes == {"incomplete", "plan_cycle", "unknown_name", "missing_depends_on", "unknown_dependency"}
+
+    kept, dropped, rejected = executable_tasks({
+        "tasks": [
+            {"id": "x", "name": "pricing_agent", "input": {}, "depends_on": []},
+            {"id": "p", "name": "po", "input": {}, "depends_on": ["x"]},
+            {"id": "b", "name": "brand", "input": {}, "depends_on": []},
+            {"id": "t", "name": "not_a_tool", "input": {}, "depends_on": []},
+        ],
+    })
+    assert [task.name for task in kept] == ["brand"]
+    assert dropped["unknown_agent"] == 1
+    assert dropped["unknown_tool"] == 1
+    assert dropped["dangling"] == 1
+    by_id = {item["id"]: item for item in rejected}
+    assert by_id["x"]["error"] == "工具或代理不存在"
+    assert by_id["t"]["error"] == "工具或代理不存在"
+    assert by_id["p"]["error"] == "依赖的任务没能执行"
+    assert by_id["p"]["ok"] is False and by_id["p"]["status"] == "failed"
+
+
+def test_a_corrected_plan_is_accepted_on_the_next_reply(db):
+    from datetime import timedelta
+
+    from backend.db import utcnow
+    from backend.orchestrator.plan import make_plan
+
+    run, _created = db.create_agent_run("dist-1", "u-a", "chat", "plan-repair", {"message": "hi"})
+    assert db.claim_chat_turn(run["id"], "worker", utcnow() + timedelta(minutes=5)) is not None
+    bad = {"tasks": [{"id": "g", "name": "ghost_tool", "input": {}, "depends_on": []}]}
+    good = {"tasks": [{"id": "p", "name": "po", "input": {}, "depends_on": []}]}
+    llm = FakeLLM(json_replies=[bad, good])
+    draft = asyncio.run(make_plan(
+        llm, message="hi", attachments=[], history=[], open_po=False, db=db, run_id=run["id"],
+    ))
+    assert [task.name for task in draft.tasks] == ["po"]
+    assert len(llm.calls) == 2
+    assert "ghost_tool" in llm.calls[1]["messages"][-1]["content"]
+
+
+def test_only_rejected_tasks_still_reach_the_answer(db):
+    db.upsert_user("u-a", "dist-1", "Ada")
+    sid = new_session(db, "ps-1", "u-a")["id"]
+    db.update_session(sid, title="Hello", tags=[])
+    ghost = {"tasks": [{"id": "g", "name": "ghost_tool", "input": {}, "depends_on": []}]}
+    llm = FakeLLM(json_replies=[ghost, ghost, ghost, ghost, ghost, ghost], text_reply="could not run it")
+    run_id = next(iter(handle_message(db, llm, sid, "use the missing tool")))["run_id"]
+    assert work_chat(db, llm, run_id) is True
+    run = db.find_agent_run("dist-1", run_id)
+    assert run["status"] == "succeeded"
+    assert db.find_runs_by_owner(run_id) == []
+    assert _saw(llm, "工具或代理不存在")
+    assert _saw(llm, "=== 这一轮结果 ===")
+
+
+def test_a_cut_off_reply_is_counted_and_asks_for_a_shorter_plan(db):
+    from datetime import timedelta
+
+    from backend.db import utcnow
+    from backend.orchestrator.plan import make_plan
+    from backend.services.monitor import metrics_text
+
+    class Cut:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        def chat_completion(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "choices": [{"finish_reason": "length", "message": {"content": "{"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            }
+
+    run, _created = db.create_agent_run("dist-1", "u-a", "chat", "plan-cut", {"message": "hi"})
+    assert db.claim_chat_turn(run["id"], "worker", utcnow() + timedelta(minutes=5)) is not None
+    llm = Cut()
+    draft = asyncio.run(make_plan(
+        llm, message="hi", attachments=[], history=[], open_po=False, db=db, run_id=run["id"],
+    ))
+    assert draft.unusable is True
+    assert draft.tasks == []
+    assert "请精简" in llm.calls[1]["messages"][-1]["content"]
+    assert db.monitor_facts("dist-1")["plan_truncated"] == 6
+    assert "agent_plan_truncated_total 6" in metrics_text(db, "dist-1")
+    events = db.list_run_events("dist-1", run["id"])
+    assert any(event["event_type"] == "model.output_truncated" for event in events)
+
+
+def _saw(llm: FakeLLM, needle: str) -> bool:
+    for call in llm.calls:
+        for message in call.get("messages") or []:
+            if isinstance(message, dict) and needle in str(message.get("content") or ""):
+                return True
+    return False
 
 
 def test_scope_flags_another_party_the_user_named():

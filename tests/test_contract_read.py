@@ -5,6 +5,7 @@ the contract. A chat attachment that is only a name does not pretend to have the
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -93,10 +94,10 @@ def test_sanitize_keeps_only_quotes_that_are_in_the_document():
 
 def test_read_and_file_an_agreement(db):
     readers = _Readers([dict(EXTRACTION)])
-    rec = read_and_ingest(
+    rec = asyncio.run(read_and_ingest(
         db, readers, brand_id="brand-1", partnership_id="ps-1",
         file_name="agreement.txt", data=AGREEMENT.encode(), title="Nordic 2026",
-    )
+    ))
     assert rec.contract.title == "Nordic 2026" and rec.terms.discount_rules[0].tiers[0].discount_percent == 3
     assert len(rec.terms.evidence) == 1
     stored = db.active_contract("ps-1")
@@ -120,7 +121,7 @@ _EMPTY = {
 def test_the_model_picks_chunks_from_the_full_outline():
     text = "第一条 定义\n术语以本合同为准。\n第二条 订货\n最低订单金额为 USD 500。\n"
     readers = _Readers([{"selected_ids": ["c2"]}, dict(EXTRACTION), {"selected_ids": []}])
-    read_agreement(readers, "agreement.txt", text.encode())
+    asyncio.run(read_agreement(readers, "agreement.txt", text.encode()))
     select, extract, reflect = readers.calls
     assert select["model"] == "qwen3.7-flash"
     outline = _user(select)
@@ -136,7 +137,7 @@ def test_high_confidence_skips_another_pass():
     text = "第一条 定义\n术语以本合同为准。\n第二条 订货\n最低订单金额为 USD 500。\n"
     high = {**EXTRACTION, "confidence_score": 0.9}
     readers = _Readers([{"selected_ids": ["c2"]}, high, {"selected_ids": ["c1"]}])
-    extraction, _tree = read_agreement(readers, "agreement.txt", text.encode())
+    extraction, _tree = asyncio.run(read_agreement(readers, "agreement.txt", text.encode()))
     assert extraction["confidence_score"] == 0.9
     assert len(readers.calls) == 2
     assert readers.replies == [{"selected_ids": ["c1"]}]
@@ -145,7 +146,7 @@ def test_high_confidence_skips_another_pass():
 def test_a_blank_field_is_read_from_an_unread_chunk():
     text = "第一条 定义\n术语以本合同为准。\n第二条 订货\n最低订单金额为 USD 500。\n"
     readers = _Readers([{"selected_ids": ["c1"]}, dict(_EMPTY), {"selected_ids": ["c2"]}, dict(EXTRACTION)])
-    extraction, _tree = read_agreement(readers, "agreement.txt", text.encode())
+    extraction, _tree = asyncio.run(read_agreement(readers, "agreement.txt", text.encode()))
     assert extraction["minimum_order_quantities"][0]["quantity"] == 500
     assert extraction["territory_text"] == "Sweden."
     reflect = _user(readers.calls[2])
@@ -162,7 +163,7 @@ def test_reflection_stops_after_three_passes():
         {"selected_ids": ["c4"]}, dict(EXTRACTION),
     ])
     with pytest.raises(ValueError, match="No enforceable terms"):
-        read_agreement(readers, "agreement.txt", text.encode())
+        asyncio.run(read_agreement(readers, "agreement.txt", text.encode()))
     extracts = [call for call in readers.calls if call["kind"] == "extract"]
     assert len(readers.calls) == 6 and len(extracts) == 3
     assert all("最低订单金额" not in call["input"] for call in extracts)
@@ -172,7 +173,7 @@ def test_reflection_stops_after_three_passes():
 def test_outline_shows_a_heading_sentence_when_there_is_no_short_title():
     text = '1.1 "Container" means one shipping container.\n第二条 订货\n最低订单金额为 USD 500。\n'
     readers = _Readers([{"selected_ids": ["c2"]}, dict(EXTRACTION), {"selected_ids": []}])
-    read_agreement(readers, "agreement.txt", text.encode())
+    asyncio.run(read_agreement(readers, "agreement.txt", text.encode()))
     outline = _user(readers.calls[0])
     assert "Container" in outline and "订货" in outline and "USD 500" not in outline
 
@@ -183,7 +184,7 @@ def test_a_file_with_no_terms_is_not_written(db):
         "allowed_countries": [], "excluded_countries": [], "field_evidence": {},
     }])
     with pytest.raises(ValueError, match="No enforceable terms"):
-        read_agreement(readers, "empty.txt", b"Hello, this message has no commercial terms at all, just a greeting.")
+        asyncio.run(read_agreement(readers, "empty.txt", b"Hello, this message has no commercial terms at all, just a greeting."))
     assert db.active_contract("ps-1") is None
 
 
@@ -251,9 +252,9 @@ def test_contract_read_hands_the_run_to_ocr(db, monkeypatch):
     from backend.services.session_tools import _contract_read
 
     run, _created = db.create_agent_run("dist-1", "u-a", "chat", "ocr-handoff", {"message": "file"})
-    filed = _contract_read(db, {"id": "s", "partnership_id": "ps-1"}, [("agreement.pdf", b"%PDF")])(
+    filed = asyncio.run(_contract_read(db, {"id": "s", "partnership_id": "ps-1"}, [("agreement.pdf", b"%PDF")])(
         {}, context={"run_id": run["id"]},
-    )
+    ))
     assert filed["status"] == "failed"
     assert seen["file_name"] == "agreement.pdf"
     assert seen["run_id"] == run["id"]
@@ -276,7 +277,7 @@ def test_chat_contract_read_records_ocr_and_extraction(db, monkeypatch):
     monkeypatch.setattr("backend.contract.turn.deepseek_client", lambda: fake)
     run, _ = db.create_agent_run("dist-1", "u-a", "chat", "contract-ocr-ledger", {"message": "read"})
     assert db.claim_chat_turn(run["id"], "worker-test", utcnow() + timedelta(minutes=5))
-    filed = file_contract(db, {"partnership_id": "ps-1"}, [("agreement.pdf", b"%PDF")], run_id=run["id"])
+    filed = asyncio.run(file_contract(db, {"partnership_id": "ps-1"}, [("agreement.pdf", b"%PDF")], run_id=run["id"]))
     assert filed["status"] == "ready"
     trace = db.run_trace("dist-1", run["id"])
     assert {row["model"] for row in trace["model_calls"]} == {"glm-ocr", "deepseek-flash"}
