@@ -8,11 +8,11 @@ the database's isolated reader role. Attempts are logged for review.
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
@@ -88,17 +88,6 @@ def _ledger(trace: _RunTrace | None, purpose: str) -> dict[str, Any]:
 
 def _ds_client():
     return deepseek_client()
-
-
-def _ask_ds(
-    *, system: str, user: str, schema: dict[str, Any], trace: _RunTrace | None = None,
-    purpose: str = "data.react",
-) -> dict[str, Any]:
-    """One JSON object from deepseek-flash, thinking off."""
-    return model_calls.deepseek_json(
-        system=system, messages=[{"role": "user", "content": user}], schema=schema,
-        temperature=0, client=_ds_client(), **_ledger(trace, purpose),
-    )
 
 
 def action_schema() -> dict[str, Any]:
@@ -243,27 +232,6 @@ def _question_text(question: str, history: list[dict[str, Any]] | None, folded_t
     return f"=== 最近对话 ===\n{recent}\n\n=== 问题 ===\n{question}"
 
 
-def _next_action(
-    *, question: str, context: str, history: list[dict[str, Any]] | None,
-    folded_through: int, observations: list[dict[str, Any]], trace: _RunTrace,
-    remaining: dict[str, int], required_columns: list[str] | None = None,
-) -> dict[str, Any]:
-    """Choose one tool action from the original question and bounded observations."""
-    system = attach(REACT, context)
-    user = json.dumps({
-        "original_question": _question_text(question, history, folded_through),
-        "catalog": catalog_text(),
-        "remaining": remaining,
-        "required_columns": required_columns or [],
-        "observations": observations,
-    }, ensure_ascii=False)
-    return _ask_ds(system=system, user=user, schema=action_schema(), trace=trace,
-                   purpose="data.react")
-
-
-_ORIGINAL_NEXT_ACTION = _next_action
-
-
 async def _ask_ds_async(
     *, system: str, user: str, schema: dict[str, Any], trace: _RunTrace | None = None,
     purpose: str = "data.react",
@@ -279,8 +247,17 @@ async def _next_action_async(
     *, question: str, context: str, history: list[dict[str, Any]] | None,
     folded_through: int, observations: list[dict[str, Any]], trace: _RunTrace,
     remaining: dict[str, int], required_columns: list[str] | None = None,
+    decide: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
-    """和 _next_action 一样选下一步。在已经跑着的事件循环里等模型。"""
+    """Pick the next schema inspection, SQL statement, or finish. Await the model on this loop."""
+    if decide is not None:
+        chosen = decide(
+            question=question, context=context, history=history, folded_through=folded_through,
+            observations=observations, trace=trace, remaining=remaining, required_columns=required_columns,
+        )
+        if asyncio.iscoroutine(chosen):
+            return await chosen
+        return chosen
     system = attach(REACT, context)
     user = json.dumps({
         "original_question": _question_text(question, history, folded_through),
@@ -289,15 +266,6 @@ async def _next_action_async(
         "required_columns": required_columns or [],
         "observations": observations,
     }, ensure_ascii=False)
-    # 测试会换掉 _next_action。换过就用测试给的结果，否则在当前循环里等模型。
-    if _next_action is not _ORIGINAL_NEXT_ACTION:
-        chosen = _next_action(
-            question=question, context=context, history=history, folded_through=folded_through,
-            observations=observations, trace=trace, remaining=remaining, required_columns=required_columns,
-        )
-        if inspect.isawaitable(chosen):
-            return await chosen
-        return chosen
     return await _ask_ds_async(
         system=system, user=user, schema=action_schema(), trace=trace, purpose="data.react",
     )
@@ -333,7 +301,7 @@ def _model_failure(err: Exception) -> str:
     """output: unusable JSON, feed the error back. fatal: not the model's doing, stop.
 
     Vendor timeouts and network faults never get here: the transport turns them into
-    `ProviderError`, which is re-raised for the worker's retry policy. `call_model` has
+    `ProviderError`, which is re-raised for the worker's retry policy. `call_model_async` has
     already tried the fallback routes by then, so a second attempt here would only repeat it.
     """
     return "output" if isinstance(err, ValueError) else "fatal"  # JSONDecodeError is a ValueError
@@ -365,27 +333,6 @@ def _run(db: Database, sql: str, params: dict[str, str]) -> _RunOutcome:
     return True, None, clean, rows
 
 
-def answer_question(
-    db: Database, *, question: str,
-    partnership_id: str, brand_id: str, distributor_id: str, session_id: str | None = None,
-    reflect: bool = True, history: list[dict[str, Any]] | None = None,
-    folded_through: int = 0, summary: str = "",
-    run_id: str | None = None, step_id: str | None = None,
-    required_columns: list[str] | None = None,
-) -> QueryResult:
-    """Inspect schema, run scoped SELECTs, and observe outcomes within fixed limits.
-
-    A successful query is retained if a later attempt fails. `reflect=False` returns
-    after the first successful query for callers that do not need semantic review.
-    """
-    return model_calls.enter(answer_question_async(
-        db, question=question, partnership_id=partnership_id, brand_id=brand_id,
-        distributor_id=distributor_id, session_id=session_id, reflect=reflect, history=history,
-        folded_through=folded_through, summary=summary, run_id=run_id, step_id=step_id,
-        required_columns=required_columns,
-    ))
-
-
 async def answer_question_async(
     db: Database, *, question: str,
     partnership_id: str, brand_id: str, distributor_id: str, session_id: str | None = None,
@@ -393,8 +340,14 @@ async def answer_question_async(
     folded_through: int = 0, summary: str = "",
     run_id: str | None = None, step_id: str | None = None,
     required_columns: list[str] | None = None,
+    decide: Callable[..., Any] | None = None,
 ) -> QueryResult:
-    """answer_question 的协程版。SQL 在线程里跑，模型调用在当前事件循环里等。"""
+    """Inspect schema, run scoped SELECTs, and observe outcomes within fixed limits.
+
+    SQL runs on a worker thread. Model calls stay on the caller's event loop.
+    A successful query is retained if a later attempt fails. `reflect=False` returns
+    after the first successful query for callers that do not need semantic review.
+    """
     original = (question or "").strip()[:_MAX_QUESTION]
     required = [str(column).strip() for column in (required_columns or []) if str(column).strip()]
     if not original:
@@ -428,6 +381,7 @@ async def answer_question_async(
                     "inspections": _MAX_INSPECTIONS - inspections,
                 },
                 required_columns=required,
+                decide=decide,
             )
         except (ModelCapacityExceeded, ProviderError, model_calls.ModelBudgetExceeded):
             raise

@@ -9,6 +9,57 @@ from ..memory import record_history
 from ..services.run_names import StepStatus, StepType, step_name
 
 
+def failed_turn_text(error: dict[str, Any] | None) -> str:
+    """What the thread keeps when a chat run ends failed. The desk reads this back."""
+    body = error if isinstance(error, dict) else {}
+    if body.get("code") == "QUOTA_EXCEEDED":
+        return "今天的额度已经用完，请明天再试。"
+    message = " ".join(str(body.get("message") or "").split())
+    if not message or "Traceback" in message:
+        return "这次没有完成。"
+    if message.startswith("这次没有完成"):
+        return message[:500]
+    return f"这次没有完成。{message}"[:500]
+
+
+def remember_failed_turn(db: Database, run: dict[str, Any], error: dict[str, Any] | None) -> None:
+    """Keep a failed chat turn in the session. A reload otherwise shows only the greeting.
+
+    The live page holds the question in memory until `save_reply`. A run that fails
+    before that, or whose tab is already closed, never reached `save_reply`. The
+    same `run_id` written twice does not add a second copy.
+    """
+    if run.get("owner_run_id") or run.get("run_type") != "chat":
+        return
+    payload = run.get("input_json") if isinstance(run.get("input_json"), dict) else {}
+    session_id = str(payload.get("session_id") or "")
+    if not session_id:
+        return
+    session = db.session(session_id)
+    if not session:
+        return
+    run_id = str(run.get("id") or "")
+    history = list(session.get("history") or [])
+    if run_id and any(
+        isinstance(item, dict) and item.get("role") == "assistant" and item.get("run_id") == run_id
+        for item in history
+    ):
+        return
+    text = " ".join(str(payload.get("message") or "").split())
+    assistant: dict[str, Any] = {"role": "assistant", "content": failed_turn_text(error)}
+    if run_id:
+        assistant["run_id"] = run_id
+    assistant["failed"] = True
+    added: list[dict[str, Any]] = []
+    if text:
+        added.append({"role": "user", "content": text})
+    added.append(assistant)
+    fields: dict[str, Any] = {}
+    if text and not str(session.get("title") or "").strip():
+        fields["title"] = text[:80]
+    record_history(db, session, [*history, *added], **fields)
+
+
 async def save_reply(
     db: Database, session: dict[str, Any], text: str, reply: str, extra: dict[str, Any] | None,
     llm: Any | None = None, session_fields: dict[str, Any] | None = None, run_id: str | None = None,

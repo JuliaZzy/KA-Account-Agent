@@ -118,6 +118,7 @@ flowchart TD
 | `bad_request` | 400 / 422 | ❌ | ❌ |
 | `bad_response` | 200 但响应不是对象 | ❌ | ❌ |
 | `internal` | 不认识的异常，含本地 bug | ❌ Run 失败，不降级 | ❌ |
+| `event_loop` | 已经在跑的事件循环里又调用了 `asyncio.run`（`EVENT_LOOP_REENTERED`） | ❌ Run 失败，不降级、不换模型 | ❌ |
 
 `ValueError`（模型输出 JSON 解析失败）不算厂商故障，走业务重试，见 §5。
 
@@ -210,7 +211,8 @@ flowchart TD
     D1 -->|"用完"| D2["抛出，由 sweeper 补投兜底"]
     T -->|"ModelCapacityExceeded"| I1["Run 回队列再排期<br/>随机等 0–5s 起，每次等待时间的上限 + 10 秒，封顶 60s"]
     T -->|"ProviderError 可重试"| I2["Run 回队列再排期<br/>有 Retry-After 按厂商；否则 0–1s 起，每次等待时间的上限 + 2s 封顶 60s"]
-    T -->|"ProviderError 不可重试<br/>authentication / bad_request / bad_response / internal / circuit_open"| F["Run failed"]
+    T -->|"ProviderError 不可重试<br/>authentication / bad_request / bad_response / internal / event_loop / circuit_open"| F["Run failed"]
+    F -->|"子 run"| F2["finish_child 把 ok:false 写入父 checkpoint<br/>父 run 进 ANSWER，而不是停在 waiting_for_tasks"]
     T -->|"ValueError / 普通 Exception"| B1["业务重试：扣 attempt，默认 3 次"]
     B1 -->|"超次数"| DL["dead_letter_jobs，Run failed"]
     I1 --> Q["schedule_retry(spend_attempt=False)<br/>Run 回 queued，写 next_attempt_at"]
@@ -222,6 +224,9 @@ flowchart TD
 
 - `OperationalError` 如果不在任务内重试，消息会被 ack，Run 却停在 `queued`，所以要先重试，再交给 sweeper。
 - 采购、合同、报表、查数、子任务里**对 `ModelCapacityExceeded` 的放行同样适用于 `ProviderError`**，避免厂商 503 被收成工具 `ok: false`。
+- 子 run 一旦进入终态（不可重试，或业务重试耗尽进死信），worker 在 `fail_run` 之后调用 `finish_child`。这条和 handler 自己收成 `{ok: false}` 的那条出口汇合：父 checkpoint 记下失败，ANSWER 能说出来。`finish_child` 对同一个 task 只保留第一次结果。
+- 顶层 chat run 自己失败时，问题和一句「这次没有完成」写入 `sessions.history`（带 `run_id`）。页面重开从这里读，失败的那一轮还在。可重试的失败先不写，等这轮真正结束。同一个 `run_id` 不写第二次。
+- `event_loop`（`EVENT_LOOP_REENTERED`）是本地又开了一层事件循环，不是厂商故障。不重试、不进熔断、不换模型。流式响应要在当前循环里 `await` 读完，不能落到 `_assemble_stream` 的 `asyncio.run`。
 - **`ModelBudgetExceeded`**：本条 Run 的 `max_model_calls` / `max_tokens` 已用尽，**不调厂商**，记 `model.failed` / `COST_BUDGET_EXCEEDED`。这是 Run 级预算，不是本地槽满，**不走** `schedule_retry` 基础设施排队；与 org 日预算（`org_budget`）是另一层闸门。
 - 基础设施路径在 `run_worker._finish_claimed` 里 `schedule_retry` 后 **`return True` → Celery ack**；下次执行靠 §3.2.1 的 outbox 通道，不是 broker 里挂着同一条任务。
 
@@ -245,7 +250,7 @@ flowchart TD
 |---|---|---|
 | `sweep_expired_leases` | `running` 且 `lease_expires_at < now` | 已请求取消 → `cancelled`；`attempts ≥ 3` → `failed`；否则回 `queued` + 新 `execute_run` outbox，事件 `run.requeued_by_sweeper`（**不**花执行 outbox attempts） |
 | Redis `acquire_run` 座位 | `execute` 期间后台 renew | 座位丢 → `LeaseLost` → worker ack，不 `fail_run`；靠租约清扫回收 |
-| `sweep_waiting_for_tasks` | 子女都终态、父仍 `waiting_for_tasks` 超 15 分钟 | 父回 `queued` + outbox（见 `run.md` 清扫表） |
+| `sweep_waiting_for_tasks` | 子女都终态、父仍 `waiting_for_tasks` 超 15 分钟 | 先把「已终态但 checkpoint 没有结果」的子 run 用 `finish_child` 补上，再把父回 `queued` + outbox。同一批未完成任务连续 3 次没有新结果，就写一条失败材料，让父 run 进 ANSWER，避免空转再派发 |
 
 ### 3.7 重复执行：checkpoint 与工具幂等（概要）
 

@@ -32,6 +32,8 @@ _PROVIDER_CODES = {
     "bad_response": "PROVIDER_BAD_RESPONSE",
     "circuit_open": "PROVIDER_CIRCUIT_OPEN",
     "internal": "PROVIDER_INTERNAL",
+    # Local asyncio misuse. Not a vendor failure, so it stays out of the breaker.
+    "event_loop": "EVENT_LOOP_REENTERED",
 }
 
 _TIMEOUT_NAMES = frozenset({
@@ -181,6 +183,9 @@ def translate_provider_error(exc: BaseException, *, provider: str, model: str) -
             provider, model, "rate_limited",
             status_code=429, retry_after_seconds=retry_after, request_id=request_id, **cause,
         )
+    # `asyncio.run` on a thread that already has a loop. A local bug, not the vendor.
+    if isinstance(exc, RuntimeError) and "already running" in str(exc).lower():
+        return ProviderError(provider, model, "event_loop", request_id=request_id, **cause)
     # Anything we do not recognize is a local bug. Retrying it, counting it toward
     # the vendor breaker, or falling back to another model hides the fault.
     return ProviderError(

@@ -131,7 +131,7 @@ def _scripted(llm: Any, expect: str, kwargs: dict[str, Any]) -> Any:
 
 @pytest.fixture(autouse=True)
 def _scripted_models(monkeypatch):
-    """Send the vendor call at the FakeLLM on the stack. The ledger in `call_model` still runs."""
+    """Send the vendor call at the FakeLLM on the stack. The ledger in `call_model_async` still runs."""
     import backend.llm.calls as calls
 
     real = calls._invoke

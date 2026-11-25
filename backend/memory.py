@@ -15,8 +15,6 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Callable
-from contextvars import ContextVar, Token
 from typing import Any
 
 from .db import Database
@@ -26,9 +24,6 @@ from .services.run_names import StepStatus, StepType, ToolCallStatus, ToolErrorC
 
 log = logging.getLogger(__name__)
 
-# The chat route points this at FastAPI BackgroundTasks so the reply is sent first.
-# Callers with no scheduler (tests, confirm) fold before record_history returns.
-_fold_scheduler: ContextVar[Callable[[Callable[[], None]], None] | None] = ContextVar("fold_scheduler", default=None)
 _fold_locks: dict[str, threading.Lock] = {}
 _fold_locks_guard = threading.Lock()
 
@@ -253,80 +248,12 @@ def _close_fold(
         failure,
     )
 
-def fold_older(
-    db: Database, llm: Any, session: dict[str, Any], 
-    history: list[dict[str, Any]], folded: int,
-    run_id: str | None,
-) -> tuple[int, str]:
-    """Merge the unsummarised prefix into the rolling summary once it is about 2000 tokens.
-
-    Returns the new cursor and summary. A model failure leaves both where they were so the
-    next turn tries again; the chat itself still saves. The summary is a column on the
-    session, not a partnership memory, so `db` is not written here.
-    """
-    summary = str(session.get("summary") or "")
-    folded = _cursor(history, folded)
-    start = recent_start(history, folded)
-    if _prefix_tokens(history, folded) < FOLD_TOKENS:
-        return folded, summary
-    pending = _transcript(history[folded:start])
-    if not pending:
-        return start, summary
-    step_id = _open_fold_step(db, run_id)
-    messages = [{"role": "user", "content": (
-        f"=== 迄今的摘要 ===\n{summary or '（无）'}\n\n"
-        f"=== 更早的轮次 ===\n{pending}"
-    )}]
-    raw: dict[str, Any] = {}
-    caught: Exception | None = None
-    started = time.perf_counter()
-    try:
-        parsed = model_calls.qwen_json(
-            system=FOLD,
-            messages=messages,
-            schema=fold_schema(),
-            temperature=0,
-            client=llm,
-            db=db,
-            run_id=run_id,
-            step_id=step_id,
-            purpose="memory.fold",
-        )
-        if isinstance(parsed, dict):
-            raw = parsed
-        else:
-            caught = ValueError("model did not return a JSON object")
-    except Exception as e:
-        caught = e
-        log.exception("could not fold older turns into the summary")
-    latency_ms = int((time.perf_counter() - started) * 1000)
-    if caught is not None:
-        _close_fold(
-            db, run_id, step_id, cursor=folded, fold_through=folded, summary=summary,
-            latency_ms=latency_ms, error=caught,
-        )
-        return folded, summary
-    text = " ".join(str(raw.get("summary") or "").split())
-    if not text:
-        _close_fold(
-            db, run_id, step_id, cursor=folded, fold_through=folded, summary=summary,
-            latency_ms=latency_ms, error=None,
-        )
-        return folded, summary
-    kept = text[:_SUMMARY_CHARS]
-    _close_fold(
-        db, run_id, step_id, cursor=folded, fold_through=start, summary=kept,
-        latency_ms=latency_ms, error=None,
-    )
-    return start, kept
-
-
 async def fold_older_async(
     db: Database, llm: Any, session: dict[str, Any],
     history: list[dict[str, Any]], folded: int,
     run_id: str | None,
 ) -> tuple[int, str]:
-    """和 fold_older 一样，但模型调用留在当前事件循环里。"""
+    """Merge the unsummarised prefix into the rolling summary once it is about 2000 tokens."""
     summary = str(session.get("summary") or "")
     folded = _cursor(history, folded)
     start = recent_start(history, folded)
@@ -402,15 +329,6 @@ async def fold_session_async(db: Database, llm: Any, session_id: str, run_id: st
             db.update_session(session_id, **fields)
 
 
-def bind_fold_scheduler(schedule: Callable[[Callable[[], None]], None]) -> Token:
-    """Run folds via `schedule` instead of before the caller returns. Used by the chat route."""
-    return _fold_scheduler.set(schedule)
-
-
-def reset_fold_scheduler(token: Token) -> None:
-    _fold_scheduler.reset(token)
-
-
 def _fold_lock(session_id: str) -> threading.Lock:
     with _fold_locks_guard:
         lock = _fold_locks.get(session_id)
@@ -420,51 +338,13 @@ def _fold_lock(session_id: str) -> threading.Lock:
         return lock
 
 
-def fold_session(db: Database, llm: Any, session_id: str, run_id: str | None) -> None:
-    """Fold whatever prefix has reached the budget, from the row as it stands now.
-
-    A second task for the same session waits, then sees the cursor already moved.
-    """
-    with _fold_lock(session_id):
-        row = db.session(session_id)
-        if not row:
-            return
-        history = list(row.get("history") or [])
-        folded = int(row.get("folded_through") or 0)
-        updated, summary = fold_older(db, llm, row, history, folded, run_id)
-        fields: dict[str, Any] = {}
-        if updated != folded:
-            fields["folded_through"] = updated
-        if summary != (row.get("summary") or ""):
-            fields["summary"] = summary
-        if fields:
-            db.update_session(session_id, **fields)
-
-
 def record_history(
     db: Database, session: dict[str, Any], history: list[dict[str, Any]], *,
     llm: Any | None = None, fold: bool | None = None, run_id: str | None = None, **fields: Any,
 ) -> None:
-    """Store the whole transcript. Folding, when the prefix is long enough, does not run inside the reply.
+    """Store the whole transcript. The worker folds a long prefix with `fold_session_async` after this returns.
 
-    The cursor and summary are left for the fold itself, so a save cannot overwrite a fold that
-    already finished. The chat route schedules that fold after the stream is sent. Without a
-    scheduler the fold still runs here, so a direct caller sees the summary before this returns.
-    `fold` defaults to whether a client was passed. A chat reply sets it so the worker can fold
-    without injecting a vendor; `llm` None then opens the official vendor inside the fold.
+    `llm` and `fold` are ignored. They remain so older callers can still pass them.
     """
+    del llm, fold, run_id
     db.update_session(session["id"], history=history, **fields)
-    folded = int(session.get("folded_through") or 0)
-    should_fold = (llm is not None) if fold is None else fold
-    if not should_fold or _prefix_tokens(history, folded) < FOLD_TOKENS:
-        return
-    session_id = str(session["id"])
-
-    def job() -> None:
-        fold_session(db, llm, session_id, run_id)
-
-    schedule = _fold_scheduler.get()
-    if schedule is None:
-        job()
-    else:
-        schedule(job)

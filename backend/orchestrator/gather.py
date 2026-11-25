@@ -1,15 +1,24 @@
-"""Dispatch one PLAN wave as child runs. No thread pool — workers pick the children up."""
+"""Dispatch one PLAN wave as child runs. Workers claim the children.
+
+Redis, the wave transaction, and the outbox scan are synchronous. An async caller
+runs each of `dispatch_wave`, `collect_wave`, and `finish_child` once via
+`asyncio.to_thread`, so a lock wait does not pin the event loop. The Session
+stays on that worker thread. The children themselves are still separate Celery tasks.
+"""
 
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from typing import Any
 
 from ..db import Database
 from ..redis_store import begin_turn, drop_turn, load_results, store_result
 from ..repositories.run_repository import (
+    RUN_TERMINAL_STATUSES,
     commit_task_wave,
+    find_run_by_idempotency_key,
     find_runs_by_owner,
     latest_checkpoint,
     requeue_waiting_tasks,
@@ -82,35 +91,46 @@ def dispatch_wave(
     into a counter that does not exist yet. A commit that does not park drops
     that counter. Workers are published only after the commit.
     """
-
-    # 计算就绪波
-    ready = ready_wave(tasks, set(finished))   # 依赖全部 finished，但自己还没跑
-    if not ready:
-        return None
-
-    wave_id = uuid.uuid4().hex
-    session_id = str(session["id"])
-    task_ids = [task.id for task in ready]
-    begin_turn(session_id, wave_id, task_ids)
-
+    started = time.perf_counter()
+    ready_count = 0
+    parked: dict[str, Any] | None = None
     try:
-        prior = _collect_prior(ready, results)
-        children = [
-            _child_spec(owner, session, task, payload, wave_id, prior) for task in ready
-        ]
-        parked = commit_task_wave(db, owner["id"], children, checkpoint_state(
-            tasks, finished, results, wave_id=wave_id, wave_ids=task_ids, extra=extra,
-        ), {"wave_id": wave_id, "task_ids": task_ids})
-    except Exception:
-        drop_turn(session_id, wave_id)
-        raise
-    if parked is None:
-        drop_turn(session_id, wave_id)
-        return None
+        # 计算就绪波
+        ready = ready_wave(tasks, set(finished))   # 依赖全部 finished，但自己还没跑
+        ready = _drop_terminal_children(db, owner, session, ready, finished, results)
+        ready_count = len(ready)
+        if not ready:
+            return None
 
-    # 出队，触发下一个 ready 波
-    dispatch_pending(db)
-    return parked
+        wave_id = uuid.uuid4().hex
+        session_id = str(session["id"])
+        task_ids = [task.id for task in ready]
+        begin_turn(session_id, wave_id, task_ids)
+
+        try:
+            prior = _collect_prior(ready, results)
+            children = [
+                _child_spec(owner, session, task, payload, wave_id, prior) for task in ready
+            ]
+            parked = commit_task_wave(db, owner["id"], children, checkpoint_state(
+                tasks, finished, results, wave_id=wave_id, wave_ids=task_ids, extra=extra,
+            ), {"wave_id": wave_id, "task_ids": task_ids})
+        except Exception:
+            drop_turn(session_id, wave_id)
+            raise
+        if parked is None:
+            drop_turn(session_id, wave_id)
+            return None
+
+        # 出队，触发下一个 ready 波
+        dispatch_pending(db)
+        return parked
+    finally:
+        log.info(
+            "dispatch_wave %.1fms owner=%s ready=%s parked=%s",
+            (time.perf_counter() - started) * 1000,
+            owner.get("id"), ready_count, parked is not None,
+        )
 
 
 def _collect_prior(
@@ -182,9 +202,24 @@ def collect_wave(
     Child `output_json` and Redis fill ids the checkpoint does not have yet.
     A later Redis write does not replace the checkpoint copy.
     """
+    started = time.perf_counter()
     boxed: dict[str, dict[str, Any]] = {}
     saved: dict[str, dict[str, Any]] = {}
     owner_id = owner if isinstance(owner, str) else (owner or {}).get("id")
+    try:
+        return _collect_wave(db, owner_id, session_id, wave_id, boxed, saved)
+    finally:
+        log.info(
+            "collect_wave %.1fms owner=%s wave=%s results=%s",
+            (time.perf_counter() - started) * 1000,
+            owner_id, wave_id, len(boxed),
+        )
+
+
+def _collect_wave(
+    db: Database | None, owner_id: Any, session_id: str, wave_id: str,
+    boxed: dict[str, dict[str, Any]], saved: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
     if db is not None and owner_id:
         state = load_state(latest_checkpoint(db, str(owner_id))) or {}
         raw = state.get("results") or {}
@@ -291,43 +326,126 @@ def finish_child(
     result: dict[str, Any],
 ) -> None:
     """Persist the result, then use Redis only to coordinate the fast wake-up path."""
+    started = time.perf_counter()
+    wrote = False
+    try:
+        wrote = _finish_child(db, run, result)
+    finally:
+        log.info(
+            "finish_child %.1fms run=%s wrote=%s",
+            (time.perf_counter() - started) * 1000,
+            run.get("id"), wrote,
+        )
+
+
+def child_terminal_result(child: dict[str, Any]) -> dict[str, Any]:
+    """Envelope for a child the worker already finished without `finish_child`.
+
+    A handler result already stored on `output_json` is kept. A bare failure
+    (`error_json` only) becomes `{ok: false}` so ANSWER still receives it.
+    """
+    payload = child.get("input_json") if isinstance(child.get("input_json"), dict) else {}
+    output = child.get("output_json")
+    if isinstance(output, dict) and output and (
+        "ok" in output or "error" in output or "status" in output
+    ):
+        result = dict(output)
+        result.setdefault("id", payload.get("task_id"))
+        result.setdefault("kind", payload.get("kind"))
+        result.setdefault("name", payload.get("tool_name") or payload.get("name"))
+        if result.get("status") not in RESULT_STATUSES:
+            result["status"] = "succeeded" if result.get("ok") is True else "failed"
+        return result
+    error = child.get("error_json") if isinstance(child.get("error_json"), dict) else {}
+    code = error.get("code")
+    message = str(error.get("message") or f"child {child.get('id')} ended as {child.get('status')}")
+    if code:
+        message = f"{code}: {message}"
+    return {
+        "id": payload.get("task_id"),
+        "kind": payload.get("kind"),
+        "name": payload.get("tool_name") or payload.get("name"),
+        "ok": False,
+        "error": message,
+        "payload": {},
+        "status": "failed",
+    }
+
+
+def _finish_child(db: Database, run: dict[str, Any], result: dict[str, Any]) -> bool:
     payload = run.get("input_json") if isinstance(run.get("input_json"), dict) else {}
     session_id = str(payload.get("session_id") or "")
     wave_id = str(payload.get("wave_id") or "")
     task_id = str(payload.get("task_id") or "")
     owner_id = str(run.get("owner_run_id") or payload.get("owner_run_id") or "")
-    if not session_id or not wave_id or not task_id:
-        return
+    # The checkpoint is the record. Redis only wakes the owner early; a missing
+    # wave id must not drop the result on the floor.
+    if not owner_id or not task_id:
+        return False
     if result.get("status") not in RESULT_STATUSES:
         result["status"] = "succeeded" if result.get("ok") is True else "failed"
-    if owner_id:
-        event_type = StepEvent.TOOL_COMPLETED if result.get("ok") else StepEvent.TOOL_FAILED
-        event_payload = {
-            "tool_name": result.get("name"),
-            "task_id": task_id,
-            "ok": bool(result.get("ok")),
-        }
-        if result.get("ok") is not True and result.get("error"):
-            event_payload["error"] = str(result["error"])
-            event_payload["display"] = str(result["error"])
-        db.record_child_wave_result(
-            str(run.get("org_id") or ""),
-            owner_id,
-            task_id,
-            result,
-            event_type=event_type,
-            event_payload=event_payload,
-        )
-    try:
-        left = store_result(session_id, wave_id, task_id, result)
-    except Exception:
-        log.exception("failed to write wave result to Redis")
-        left = None
-    if left == 0 and owner_id:
+    event_type = StepEvent.TOOL_COMPLETED if result.get("ok") else StepEvent.TOOL_FAILED
+    event_payload = {
+        "tool_name": result.get("name"),
+        "task_id": task_id,
+        "ok": bool(result.get("ok")),
+    }
+    if result.get("ok") is not True and result.get("error"):
+        event_payload["error"] = str(result["error"])
+        event_payload["display"] = str(result["error"])
+    wrote = db.record_child_wave_result(
+        str(run.get("org_id") or ""),
+        owner_id,
+        task_id,
+        result,
+        event_type=event_type,
+        event_payload=event_payload,
+    )
+    left = None
+    if session_id and wave_id:
+        try:
+            left = store_result(session_id, wave_id, task_id, result)
+        except Exception:
+            log.exception("failed to write wave result to Redis")
+    if left == 0:
         woke = requeue_waiting_tasks(db, owner_id, {"wave_id": wave_id})
         if woke is not None:
             drop_turn(session_id, wave_id)
             dispatch_pending(db)
+    return wrote is True
+
+
+def _drop_terminal_children(
+    db: Database,
+    owner: dict[str, Any],
+    session: dict[str, Any],
+    ready: list[PlanTask],
+    finished: list[str],
+    results: dict[str, dict[str, Any]],
+) -> list[PlanTask]:
+    """A reused child that already ended is a result, not another wait.
+
+    The idempotency key would otherwise park the owner on a run that will never
+    call `finish_child` again.
+    """
+    org_id = str(owner.get("org_id") or "")
+    owner_id = str(owner.get("id") or "")
+    session_id = str(session.get("id") or "")
+    if not org_id or not owner_id:
+        return ready
+    live: list[PlanTask] = []
+    for task in ready:
+        key = f"chat:{session_id}:{owner_id}:{task.id}"
+        existing = find_run_by_idempotency_key(db, org_id, key)
+        if existing is None or existing.get("status") not in RUN_TERMINAL_STATUSES:
+            live.append(task)
+            continue
+        result = child_terminal_result(existing)
+        finish_child(db, existing, result)
+        results[task.id] = result
+        if task.id not in finished:
+            finished.append(task.id)
+    return live
 
 
 def _child_spec(

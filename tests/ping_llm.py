@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from backend.llm.calls import qwen_json
+import asyncio
+
+from backend.llm.calls import qwen_json_async
 
 
 def main() -> int:
-    raw = qwen_json(
+    raw = asyncio.run(qwen_json_async(
         system="Reply with a tiny JSON object.",
         messages=[{"role": "user", "content": "return {\"ok\": true}"}],
         purpose="ping",
-    )
+    ))
     print(raw)
     return 0
 

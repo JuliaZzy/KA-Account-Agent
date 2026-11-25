@@ -372,11 +372,14 @@ async def read_agreement(
     read or contains no enforceable terms — nothing is written in that case."""
     if not file_name.lower().endswith(SUPPORTED_EXTS):
         raise ValueError(f"Unsupported agreement: {file_name} (use {', '.join(SUPPORTED_EXTS)})")
-    pages = load_pages(file_name, data, db=db, run_id=run_id)
+    pages = await load_pages(file_name, data, db=db, run_id=run_id)
     if not pages:
         raise ValueError(f"No pages in {file_name!r}.")
     blank = [n for n, t in pages if not (t or "").strip()]
-    images = render_pdf_images(data, blank[:MAX_SCAN_IMAGES]) if file_name.lower().endswith(".pdf") and blank else {}
+    images = (
+        await asyncio.to_thread(render_pdf_images, data, blank[:MAX_SCAN_IMAGES])
+        if file_name.lower().endswith(".pdf") and blank else {}
+    )
     image_pages = set(images)
     tree = split_chunks(pages)
     index = _index_chunks(tree)
@@ -492,17 +495,21 @@ def main(argv: list[str] | None = None) -> int:
 
     data = Path(args.file).read_bytes()
     llm = deepseek_client()
-    if args.apply:
-        rec = asyncio.run(read_and_ingest(
-            Database(), llm, brand_id=args.brand, partnership_id=args.partnership,
-            file_name=Path(args.file).name, data=data, title=args.title,
-        ))
-    else:
-        extraction, tree = asyncio.run(read_agreement(llm, Path(args.file).name, data))
-        rec = record_from_extraction(
+    file_name = Path(args.file).name
+
+    async def _load():
+        if args.apply:
+            return await read_and_ingest(
+                Database(), llm, brand_id=args.brand, partnership_id=args.partnership,
+                file_name=file_name, data=data, title=args.title,
+            )
+        extraction, tree = await read_agreement(llm, file_name, data)
+        return record_from_extraction(
             extraction, brand_id=args.brand, partnership_id=args.partnership, title=args.title,
-            file_name=Path(args.file).name, chunks=_chunk_models(tree),
+            file_name=file_name, chunks=_chunk_models(tree),
         )
+
+    rec = asyncio.run(_load())
     print(json.dumps({
         "contract_id": rec.contract.id, "written": args.apply, "summary": summarize(rec), "skipped": rec.skipped,
     }, ensure_ascii=False, indent=2))

@@ -120,7 +120,7 @@ def _ocr_usage(payload: dict) -> tuple[int, int, str]:
         return prompt if valid[0] else 0, completion if valid[1] else 0, "actual" if all(valid) else "unknown"
     return 0, 0, "unknown"
 
-def ocr_pdf(
+async def ocr_pdf(
     data: bytes, *, db: Database | None = None, run_id: str | None = None, file_name: str = "",
 ) -> list[tuple[int, str]]:
     """Pages of one PDF from GLM-OCR. Raises ValueError when the key is missing or the call fails."""
@@ -144,7 +144,7 @@ def ocr_pdf(
         )
         raise
     try:
-        payload = GLMOCRClient(api_key=key, url=url).parse(data)
+        payload = await GLMOCRClient(api_key=key, url=url).parse(data)
     except Exception as e:
         if db is not None and run_id and step_id:
             db.insert_model_call(
@@ -181,7 +181,7 @@ def ocr_pdf(
     )
     return pages
 
-def load_pages(
+async def load_pages(
     file_name: str, data: bytes, *, db: Database | None = None, run_id: str | None = None,
 ) -> list[tuple[int, str]]:
     """(page_number, text) per page. PDF via GLM-OCR; docx / txt / md stay local.
@@ -193,7 +193,7 @@ def load_pages(
         raise ValueError(f"{file_name} is over 10MB")
     name = file_name.lower()
     if name.endswith(".pdf"):
-        return ocr_pdf(data, db=db, run_id=run_id, file_name=file_name)
+        return await ocr_pdf(data, db=db, run_id=run_id, file_name=file_name)
     if name.endswith(".docx"):
         import docx
 

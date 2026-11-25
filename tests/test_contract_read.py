@@ -241,7 +241,7 @@ def test_chat_holds_the_agreement_until_confirm(db, monkeypatch):
 def test_contract_read_hands_the_run_to_ocr(db, monkeypatch):
     seen: dict = {}
 
-    def fake_pages(file_name, data, *, db=None, run_id=None):
+    async def fake_pages(file_name, data, *, db=None, run_id=None):
         seen["file_name"] = file_name
         seen["run_id"] = run_id
         seen["db"] = db
@@ -269,10 +269,13 @@ def test_chat_contract_read_records_ocr_and_extraction(db, monkeypatch):
 
     monkeypatch.setenv("GLM_API_KEY", "test-key")
     monkeypatch.setenv("GLM_BASE_URL", "https://ocr.example/layout_parsing")
-    monkeypatch.setattr("backend.llm.client.GLMOCRClient.parse", lambda *_args: {
-        "md_results": AGREEMENT,
-        "usage": {"prompt_tokens": 100, "completion_tokens": 50},
-    })
+    async def parsed(*_args, **_kwargs):
+        return {
+            "md_results": AGREEMENT,
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+        }
+
+    monkeypatch.setattr("backend.llm.client.GLMOCRClient.parse", parsed)
     fake = FakeLLM(json_replies=[dict(EXTRACTION)])
     monkeypatch.setattr("backend.contract.turn.deepseek_client", lambda: fake)
     run, _ = db.create_agent_run("dist-1", "u-a", "chat", "contract-ocr-ledger", {"message": "read"})

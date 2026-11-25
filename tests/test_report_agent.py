@@ -777,24 +777,26 @@ def test_review_passes_at_85_and_revises_named_sections_together():
 
 
 def test_reflection_retries_a_failure_and_keeps_three_tries():
-    from backend.codefix import format_failures, with_reflection
+    import asyncio
+
+    from backend.codefix import format_failures, with_reflection_async
     from backend.llm import FakeLLM
 
-    def fail_then_ok(artifact: str):
+    async def fail_then_ok(artifact: str):
         if artifact == "ok":
             return True, "done", None, ""
         return False, None, f"bad {artifact}", "stdout"
 
     fixed = FakeLLM(json_replies=[_fixed("ok")])
-    value, failures = with_reflection(fixed, kind="code", first="bad", run=fail_then_ok)
+    value, failures = asyncio.run(with_reflection_async(fixed, kind="code", first="bad", run=fail_then_ok))
     assert value == "done" and failures == []
     assert "bad bad" in fixed.calls[0]["system"]
 
-    def always_fail(_artifact: str):
+    async def always_fail(_artifact: str):
         return False, None, "boom", "out"
 
     stuck = FakeLLM(json_replies=[_fixed("still"), _fixed("nope")])
-    value, failures = with_reflection(stuck, kind="sql", first="a", run=always_fail)
+    value, failures = asyncio.run(with_reflection_async(stuck, kind="sql", first="a", run=always_fail))
     assert value is None and len(failures) == 3
     assert [item["artifact"] for item in failures] == ["a", "still", "nope"]
     assert all(item["error"] == "boom" for item in failures)
@@ -804,10 +806,11 @@ def test_reflection_retries_a_failure_and_keeps_three_tries():
 
 
 def test_code_fix_is_recorded_on_the_tool_step(db):
+    import asyncio
     from datetime import timedelta
     from types import SimpleNamespace
 
-    from backend.codefix import with_reflection
+    from backend.codefix import with_reflection_async
     from backend.db import utcnow
     from backend.llm import FakeLLM
 
@@ -818,11 +821,13 @@ def test_code_fix_is_recorded_on_the_tool_step(db):
     assert step is not None
     trace = SimpleNamespace(db=db, run_id=run["id"], step_id=step["id"])
 
-    def always_fail(_artifact: str):
+    async def always_fail(_artifact: str):
         return False, None, "boom", "out"
 
     llm = FakeLLM(json_replies=[_fixed("still"), _fixed("nope")])
-    value, failures = with_reflection(llm, kind="code", first="a", run=always_fail, trace=trace)
+    value, failures = asyncio.run(with_reflection_async(
+        llm, kind="code", first="a", run=always_fail, trace=trace,
+    ))
     assert value is None and len(failures) == 3
 
     calls = [
@@ -926,11 +931,12 @@ def test_hard_checks_catch_budget_code_wrong_period_and_invented_numbers():
 
 
 def test_bound_context_records_a_model_call_without_explicit_ledger(db):
+    import asyncio
     from datetime import timedelta
 
     from backend.db import utcnow
     from backend.llm import FakeLLM
-    from backend.llm.calls import deepseek_json
+    from backend.llm.calls import deepseek_json_async
     from backend.llm.context import bind_call_context
 
     run, _created = db.create_agent_run("dist-1", "u-a", "report", "ctx-trace", {"message": "月报"})
@@ -940,11 +946,11 @@ def test_bound_context_records_a_model_call_without_explicit_ledger(db):
     assert step is not None
     llm = FakeLLM(json_replies=[{"content": "指标", "key_points": []}])
     with bind_call_context(db=db, run_id=run["id"], step_id=step["id"], purpose="report"):
-        body = deepseek_json(
+        body = asyncio.run(deepseek_json_async(
             system="写", messages=[{"role": "user", "content": "关键指标"}],
             schema={"name": "report_section", "schema": {"type": "object"}},
             client=llm,
-        )
+        ))
     assert body["content"] == "指标"
     calls = [
         row for row in db.run_trace("dist-1", run["id"])["model_calls"]

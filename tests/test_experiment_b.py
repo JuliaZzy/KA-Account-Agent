@@ -17,11 +17,12 @@ def test_b_ledger_reads_ocr_usage_and_purpose(db, monkeypatch):
 
     monkeypatch.setenv("GLM_API_KEY", "test-key")
     monkeypatch.setenv("GLM_BASE_URL", "https://ocr.example/layout_parsing")
-    monkeypatch.setattr("backend.llm.client.GLMOCRClient.parse", lambda *_args: {
-        "md_results": "Agreement", "usage": {"prompt_tokens": 40000, "completion_tokens": 10000},
-    })
+    async def parsed(*_args, **_kwargs):
+        return {"md_results": "Agreement", "usage": {"prompt_tokens": 40000, "completion_tokens": 10000}}
+
+    monkeypatch.setattr("backend.llm.client.GLMOCRClient.parse", parsed)
     run = db.create_inline_contract_run("dist-1", "u-a", "agreement.pdf")
-    load_pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"])
+    asyncio.run(load_pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"]))
     db.transition_run("dist-1", run["id"], "succeeded")
 
     ledger, _ = run_golden.ledger(db, run["id"])
@@ -81,11 +82,12 @@ def test_b_import_uses_http_run_id_to_collect_ledger(db, monkeypatch, tmp_path):
 
     monkeypatch.setenv("GLM_API_KEY", "test-key")
     monkeypatch.setenv("GLM_BASE_URL", "https://ocr.example/layout_parsing")
-    monkeypatch.setattr("backend.llm.client.GLMOCRClient.parse", lambda *_args: {
-        "md_results": "Agreement", "usage": {"prompt_tokens": 40000, "completion_tokens": 10000},
-    })
+    async def parsed(*_args, **_kwargs):
+        return {"md_results": "Agreement", "usage": {"prompt_tokens": 40000, "completion_tokens": 10000}}
+
+    monkeypatch.setattr("backend.llm.client.GLMOCRClient.parse", parsed)
     run = db.create_inline_contract_run("dist-1", "u-a", "agreement.pdf")
-    load_pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"])
+    asyncio.run(load_pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"]))
     db.transition_run("dist-1", run["id"], "succeeded")
     pdf = tmp_path / "agreement.pdf"
     pdf.write_bytes(b"%PDF")

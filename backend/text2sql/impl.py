@@ -17,6 +17,6 @@ def answer_question_impl() -> Callable[..., Any]:
         from ..text2sql_legacy.text2sql import answer_question as legacy_answer
 
         return legacy_answer
-    from .text2sql import answer_question
+    from .text2sql import answer_question_async
 
-    return answer_question
+    return answer_question_async

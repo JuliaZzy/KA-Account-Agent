@@ -329,6 +329,170 @@ def test_task_wave_leaves_a_running_owner_when_the_checkpoint_is_invalid(db):
     assert db.find_runs_by_owner(parent["id"]) == []
 
 
+def test_a_failed_chat_turn_stays_in_the_session(db):
+    from backend.llm.errors import ProviderError
+    from backend.services.run_worker import PermanentRunError, work_once
+
+    db.upsert_user("u-a", "dist-1", "Ada")
+    sid = db.create_session("sess-fail-turn", "ps-1", "u-a")["id"]
+    run, _created = db.create_agent_run(
+        "dist-1", "u-a", "chat", "chat-fail-turn",
+        {"session_id": sid, "message": "帮我生成一下红牛的今年5月的月报"},
+    )
+
+    def execute(_run):
+        raise PermanentRunError("internal from deepseek deepseek-flash", code="PROVIDER_INTERNAL")
+
+    assert work_once(db, "worker-a", execute, run_id=run["id"]) is True
+    saved = db.session(sid)
+    history = saved["history"]
+    assert [item["role"] for item in history] == ["user", "assistant"]
+    assert history[0]["content"] == "帮我生成一下红牛的今年5月的月报"
+    assert history[1]["run_id"] == run["id"]
+    assert history[1]["failed"] is True
+    assert history[1]["content"].startswith("这次没有完成。")
+    assert saved["title"] == "帮我生成一下红牛的今年5月的月报"
+    assert work_once(db, "worker-a", execute, run_id=run["id"]) is True
+    assert len(db.session(sid)["history"]) == 2
+
+    retry_sid = db.create_session("sess-retry-turn", "ps-1", "u-a")["id"]
+    retry, _created = db.create_agent_run(
+        "dist-1", "u-a", "chat", "chat-retry-turn",
+        {"session_id": retry_sid, "message": "再试一次"},
+    )
+
+    def retry_execute(_run):
+        raise ProviderError("deepseek", "deepseek-flash", "rate_limited")
+
+    assert work_once(db, "worker-a", retry_execute, run_id=retry["id"]) is True
+    assert db.find_agent_run_by_id(retry["id"])["status"] == "queued"
+    assert db.session(retry_sid)["history"] == []
+
+
+def test_worker_hands_a_provider_failure_to_the_owner(db):
+    from backend.llm.errors import ProviderError
+    from backend.orchestrator.gather import load_state
+    from backend.services.run_worker import work_once
+
+    db.upsert_user("u-a", "dist-1", "Ada")
+    parent, _created = db.create_agent_run(
+        "dist-1", "u-a", "chat", "owner-provider", {"session_id": "sess-provider", "message": "月报"},
+    )
+    child, _created = db.create_agent_run(
+        "dist-1", "u-a", "report", "child-provider", {
+            "session_id": "sess-provider", "task_id": "1", "tool_name": "report.draft",
+            "wave_id": "wave-provider", "owner_run_id": parent["id"],
+        },
+        owner_run_id=parent["id"],
+    )
+
+    def execute(_run):
+        raise ProviderError("deepseek", "deepseek-flash", "authentication")
+
+    assert work_once(db, "worker-a", execute, run_id=child["id"]) is True
+    assert db.find_agent_run_by_id(child["id"])["status"] == "failed"
+    state = load_state(db.latest_checkpoint(parent["id"]))
+    assert state is not None
+    assert state["results"]["1"]["ok"] is False
+    assert "PROVIDER_AUTHENTICATION" in state["results"]["1"]["error"]
+    events = db.list_run_events("dist-1", parent["id"]) or []
+    assert any(event["event_type"] == "tool.failed" for event in events)
+
+
+def test_sweep_records_a_failed_child_before_waking_the_owner(db):
+    from datetime import timedelta
+
+    from backend.db import utcnow
+    from backend.orchestrator.gather import load_state
+    from backend.services.run_worker import sweep_waiting_for_tasks
+
+    db.upsert_user("u-a", "dist-1", "Ada")
+    parent, _created = db.create_agent_run(
+        "dist-1", "u-a", "chat", "owner-missed", {"session_id": "sess-missed", "message": "月报"},
+    )
+    assert db.claim_chat_turn(parent["id"], "w1", utcnow() + timedelta(minutes=5)) is not None
+    assert db.mark_waiting_for_tasks(parent["id"], {"wave_id": "wave-old"}) is not None
+    db.append_checkpoint(parent["id"], {
+        "context": [], "completed_tool_calls": [], "last": "user",
+        "orchestrator": {
+            "tasks": [{"id": "1", "kind": "tool", "name": "report.draft", "input": {}, "depends_on": []}],
+            "finished": [], "results": {}, "wave_id": "wave-old", "wave_ids": ["1"],
+        },
+    })
+    child, _created = db.create_agent_run(
+        "dist-1", "u-a", "report", "child-missed", {
+            "session_id": "sess-missed", "task_id": "1", "tool_name": "report.draft", "wave_id": "wave-old",
+        },
+        owner_run_id=parent["id"],
+    )
+    assert db.claim_chat_turn(child["id"], "w2", utcnow() + timedelta(minutes=5)) is not None
+    assert db.fail_run(child["id"], {"code": "PROVIDER_INTERNAL", "message": "internal from deepseek"}) is not None
+    assert sweep_waiting_for_tasks(db, stale_after=timedelta(0)) == 1
+    assert db.find_agent_run_by_id(parent["id"])["status"] == "queued"
+    state = load_state(db.latest_checkpoint(parent["id"]))
+    assert state["results"]["1"]["ok"] is False
+    assert "PROVIDER_INTERNAL" in state["results"]["1"]["error"]
+
+
+def test_sweep_forces_an_answer_after_three_empty_wakes(db):
+    from datetime import timedelta
+
+    from backend.db import utcnow
+    from backend.orchestrator.gather import load_state
+    from backend.services.run_worker import sweep_waiting_for_tasks
+
+    db.upsert_user("u-a", "dist-1", "Ada")
+    parent, _created = db.create_agent_run(
+        "dist-1", "u-a", "chat", "owner-spin", {"session_id": "sess-spin", "message": "月报"},
+    )
+    checkpoint = {
+        "context": [], "completed_tool_calls": [], "last": "user",
+        "orchestrator": {
+            "tasks": [{"id": "1", "kind": "tool", "name": "report.draft", "input": {}, "depends_on": []}],
+            "finished": [], "results": {}, "wave_id": "wave-spin", "wave_ids": ["1"],
+        },
+    }
+    for _ in range(3):
+        assert db.claim_chat_turn(parent["id"], "w", utcnow() + timedelta(minutes=5)) is not None
+        assert db.mark_waiting_for_tasks(parent["id"], {"wave_id": "wave-spin"}) is not None
+        if db.latest_checkpoint(parent["id"]) is None:
+            db.append_checkpoint(parent["id"], checkpoint)
+        assert sweep_waiting_for_tasks(db, stale_after=timedelta(0)) == 1
+    state = load_state(db.latest_checkpoint(parent["id"]))
+    assert state["results"]["1"]["ok"] is False
+    assert "without a result" in state["results"]["1"]["error"]
+    assert db.find_agent_run_by_id(parent["id"])["status"] == "queued"
+
+
+def test_dispatch_uses_a_failed_child_instead_of_waiting(db):
+    from datetime import timedelta
+
+    from backend.db import utcnow
+    from backend.orchestrator.gather import dispatch_wave, load_state
+    from backend.orchestrator.plan import PlanTask
+
+    parent = _running_owner(db, "owner-terminal-child")
+    key = f"chat:sess-commit:{parent['id']}:1"
+    child, _created = db.create_agent_run(
+        "dist-1", "u-a", "report", key, {
+            "session_id": "sess-commit", "task_id": "1", "tool_name": "report.draft", "wave_id": "old",
+        },
+        owner_run_id=parent["id"],
+    )
+    assert db.claim_chat_turn(child["id"], "w2", utcnow() + timedelta(minutes=5)) is not None
+    assert db.fail_run(child["id"], {"code": "PROVIDER_INTERNAL", "message": "internal"}) is not None
+    parked = dispatch_wave(
+        db, parent, {"id": "sess-commit"},
+        [PlanTask(id="1", kind="tool", name="report.draft")],
+        [], {}, {"message": "月报"},
+    )
+    assert parked is None
+    assert db.find_agent_run_by_id(parent["id"])["status"] == "running"
+    state = load_state(db.latest_checkpoint(parent["id"]))
+    assert state["results"]["1"]["ok"] is False
+    assert [row["id"] for row in db.find_runs_by_owner(parent["id"])] == [child["id"]]
+
+
 def test_task_wave_does_not_park_after_cancel_was_requested(db):
     parent = _running_owner(db, "owner-cancel")
     assert db.request_run_cancel("dist-1", parent["id"], "stop") is not None

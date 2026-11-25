@@ -4,9 +4,7 @@ Official `qwen3.7-flash` is the cheap short-text model (answers, titles, transla
 Official `deepseek-flash` writes strict JSON, tools, vision, and report prose, with
 thinking off. None of these calls set `max_tokens`. There is no campus gateway path.
 
-真正调模型的是 `call_model_async`。`call_model` 只给还没改成异步的代码用：
-它用 `asyncio.run` 把一次调用跑完。如果此时已经有事件循环在跑，就直接报错，
-避免两个调用抢同一个循环。
+真正调模型的是 `call_model_async`。调用方已经在事件循环里，直接 await。
 It opens the vendor client from `brand` when the caller did not pass a test
 double. The wrappers keep the shapes callers already expect. Vendors usually send token counts on the final response. A stream, or a
 gateway that drops usage, leaves both counts at 0. Those calls are estimated and
@@ -35,7 +33,7 @@ from ..services.run_names import EntryErrorCode, StepEvent, StepStatus
 from . import breaker
 from .client import VENDORS, client_for
 from .errors import BREAKER_KINDS, ModelCapacityExceeded, ProviderError, translate_provider_error
-from .json_check import repair_json, repair_json_async
+from .json_check import repair_json_async
 from .parse import parse_json_loose
 from .routing import (
     ROUTING_POLICY_VERSION,
@@ -269,7 +267,7 @@ def _json_format(schema: dict[str, Any] | None) -> dict[str, Any]:
     return {"format": {"type": "json_object"}}
 
 
-# 并发名额跟这一次 enter() 新建的事件循环走。
+# 并发名额跟这一次任务的事件循环走。
 # 不要做成全进程共用：上一次 asyncio.run 结束时循环已经关掉，旧名额还绑在那个循环上，下一次任务用不了。
 _vendor_limits: contextvars.ContextVar[dict[str, asyncio.Semaphore] | None] = contextvars.ContextVar(
     "vendor_limits", default=None,
@@ -299,17 +297,6 @@ def tool_limit() -> asyncio.Semaphore:
         sem = asyncio.Semaphore(4)
         _tool_slots.set(sem)
     return sem
-
-
-def enter(coro: Any) -> Any:
-    """同步代码进入异步代码的唯一入口。事件循环已经在跑时，不许再开一次。"""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    raise RuntimeError(
-        "事件循环已经在跑，不能再从同步代码进来。请改成 await 对应的异步函数。",
-    )
 
 
 async def _wait(value: Any) -> Any:
@@ -621,7 +608,13 @@ def _iter_stream_chunks(chunks: Any) -> Iterator[Any]:
         async def _drain() -> list[Any]:
             return [item async for item in chunks]
 
-        return iter(enter(_drain()))
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return iter(asyncio.run(_drain()))
+        raise RuntimeError(
+            "async stream reached the sync assembler while an event loop is already running"
+        )
     return iter(chunks)
 
 
@@ -832,7 +825,7 @@ async def _invoke(
     client: Any,
     on_text: Callable[[str], None] | None = None,
 ) -> _Transport:
-    """One vendor call. Tests replace this; the ledger in `call_model` still runs."""
+    """One vendor call. Tests replace this; the ledger in `call_model_async` still runs."""
     stream = on_text is not None and kind == "chat_completion"
     alias: dict[str, str] = {}
     if not isinstance(client, VENDORS):
@@ -868,6 +861,17 @@ async def _invoke(
             raise ValueError(f"unknown model brand {brand}")
     if isinstance(response, _Assembled):
         return _Transport(response=response.response, client=client, tool_alias=alias)
+    if stream and _is_async_stream(response):
+        # Drain here. `_assemble_stream` would call `asyncio.run` on this loop.
+        assembler = _StreamAssembler(on_text) if on_text is not None else None
+        folded: list[Any] = []
+        async for item in response:
+            if assembler is not None:
+                assembler.feed(item)
+            else:
+                folded.append(item)
+        body = assembler.result() if assembler is not None else folded
+        return _Transport(response=body, client=client, tool_alias=alias)
     if stream:
         return _Transport(response=_assemble_stream(response, on_text), client=client, tool_alias=alias)
     return _Transport(response=response, client=client, tool_alias=alias)
@@ -1455,15 +1459,10 @@ async def call_model_async(*args: Any, **kwargs: Any) -> ModelResult:
             continue
     raise RuntimeError(f"no model route available for {purpose or requested_model}")
 
-def call_model(*args: Any, **kwargs: Any) -> ModelResult:
-    """给同步调用方用。这是唯一的入口。事件循环已经在跑时，拒绝再进一次。"""
-    return enter(call_model_async(*args, **kwargs))
-
-
 def _route_failure_kind(exc: Exception) -> str:
     """Which fallback allowlist entry this error is. `internal` is on none of them."""
     if isinstance(exc, ProviderError):
-        if exc.kind == "internal":
+        if exc.kind in ("internal", "event_loop"):
             return "internal"
         return "provider_error"
     if isinstance(exc, ModelCapacityExceeded):
@@ -1520,44 +1519,6 @@ def _note_exhausted_call(db: Any | None, run_id: str | None, exc: JsonRepairExha
     db.fail_latest_model_call(run_id, {"code": exc.code, "message": str(exc)})
 
 
-def qwen_json(
-    *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
-    schema: dict[str, Any] | None = None, temperature: float = 0,
-    db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
-    purpose: str | None = None,
-) -> dict[str, Any]:
-    """Official qwen3.7-flash. Thinking off. A schema is sent when the caller has one."""
-
-    def fetch(pending: list[dict[str, Any]]) -> Any:
-        return _unwrap(call_model(
-            QWEN_PLAN, brand="qwen", kind="chat_completion", expect="json", temperature=temperature,
-            system=system, messages=pending, schema=schema, reasoning_effort="none", client=client,
-            db=db, run_id=run_id, step_id=step_id, purpose=purpose,
-        ))
-
-    try:
-        return repair_json(fetch, messages=messages, schema=schema, purpose=purpose)
-    except JsonRepairExhausted as exc:
-        _note_exhausted_call(db, run_id, exc)
-        raise
-
-
-def qwen_text(
-    *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
-    temperature: float = 0, on_text: Callable[..., None] | None = None,
-    db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
-    purpose: str | None = None,
-) -> Iterator[str]:
-    """打 Qwen 的 qwen3.7-flash 要一段文字。桌面仍按逐段回复来显示。"""
-    text = _unwrap(call_model(
-        QWEN_PLAN, brand="qwen", kind="chat_completion", expect="text", temperature=temperature,
-        reasoning_effort="none", system=system, messages=messages, client=client, on_text=on_text,
-        db=db, run_id=run_id, step_id=step_id, purpose=purpose,
-    ))
-    if text:
-        yield text
-
-
 async def qwen_text_async(
     *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
     temperature: float = 0, on_text: Callable[..., None] | None = None,
@@ -1573,35 +1534,13 @@ async def qwen_text_async(
     return text or ""
 
 
-def deepseek_json(
-    *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
-    schema: dict[str, Any] | None = None, temperature: float = 0,
-    db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
-    purpose: str | None = None,
-) -> dict[str, Any]:
-    """打 DeepSeek 的 deepseek-flash，关闭思考。调用方给了 schema 就按这个结构返回。"""
-
-    def fetch(pending: list[dict[str, Any]]) -> Any:
-        return _unwrap(call_model(
-            DEEPSEEK_FLASH, brand="deepseek", kind="response", expect="json", temperature=temperature,
-            system=system, messages=pending, schema=schema, reasoning_effort="none", client=client,
-            db=db, run_id=run_id, step_id=step_id, purpose=purpose,
-        ))
-
-    try:
-        return repair_json(fetch, messages=messages, schema=schema, purpose=purpose)
-    except JsonRepairExhausted as exc:
-        _note_exhausted_call(db, run_id, exc)
-        raise
-
-
 async def qwen_json_async(
     *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
     schema: dict[str, Any] | None = None, temperature: float = 0,
     db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
     purpose: str | None = None,
 ) -> dict[str, Any]:
-    """qwen_json 的协程版。已经在事件循环里时用这个，不要再走 call_model。"""
+    """Official qwen3.7-flash. Thinking off. A schema is sent when the caller has one."""
 
     async def fetch(pending: list[dict[str, Any]]) -> Any:
         return _unwrap(await call_model_async(
@@ -1623,7 +1562,7 @@ async def deepseek_json_async(
     db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
     purpose: str | None = None,
 ) -> dict[str, Any]:
-    """deepseek_json 的协程版。已经在事件循环里时用这个，不要再走 call_model。"""
+    """deepseek-flash, thinking off. A schema is sent when the caller has one."""
 
     async def fetch(pending: list[dict[str, Any]]) -> Any:
         return _unwrap(await call_model_async(
@@ -1638,17 +1577,3 @@ async def deepseek_json_async(
         _note_exhausted_call(db, run_id, exc)
         raise
 
-
-def deepseek_tools(
-    *, client: Any | None = None, system: str, messages: list[dict[str, Any]],
-    tools: list[dict[str, Any]], on_text: Callable[..., None] | None = None,
-    db: Any | None = None, run_id: str | None = None, step_id: str | None = None,
-    purpose: str | None = None,
-) -> AssistantTurn:
-    """打 DeepSeek 的 deepseek-flash 做工具调用，关闭思考。"""
-    return _unwrap(call_model(
-        DEEPSEEK_FLASH, brand="deepseek", kind="chat_completion", expect="tools", temperature=0,
-        system=system, messages=messages, tools=tools, tool_choice="auto",
-        reasoning_effort="none", client=client, on_text=on_text,
-        db=db, run_id=run_id, step_id=step_id, purpose=purpose,
-    ))

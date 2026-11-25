@@ -7,8 +7,9 @@ import threading
 from datetime import UTC, datetime
 
 from backend.llm import FakeLLM
-from backend.po.turn import confirm_order, load_bundle, run_po_turn
+from backend.po.turn import confirm_order, load_bundle
 from backend.schemas import CommercialRule
+from tests.support.po_draft import draft_order
 
 EXTRACT_OK = {
     "line_items": [{"reference": "fish oil", "cases": 10, "sku": None}],
@@ -20,17 +21,17 @@ def drive_to_confirm(db, llm=None):
     llm = llm or FakeLLM(json_replies=[dict(EXTRACT_OK)], text_reply="Looks good — press Confirm.")
     s = db.create_session("s1", "ps-1")
     bundle = load_bundle(db, "ps-1")
-    events = list(run_po_turn(db, llm, bundle, s, "10 cases of fish oil, no discount"))
+    events = draft_order(db, llm, bundle, s, "10 cases of fish oil, no discount")
     done = events[-1]
     assert done["type"] == "done" and done["stage"] == "confirm" and done["confirm_token"]
     return bundle, done
 
 
-def test_turn_streams_reply_then_done(db):
+def test_turn_reaches_confirm(db):
     bundle, done = drive_to_confirm(db)
     assert done["draft"]["total"] == 1000 and done["gaps"] == []
     s = db.session("s1")
-    assert s["stage"] == "confirm" and s["confirm_hash"] and s["history"][-1]["role"] == "assistant"
+    assert s["stage"] == "confirm" and s["confirm_hash"] and s["slots"]["line_items"]
 
 
 def test_confirm_creates_one_order_and_burns_the_token(db):
@@ -96,9 +97,9 @@ def test_extraction_failure_keeps_previous_slots(db):
     llm = FakeLLM(json_replies=[dict(EXTRACT_OK)], text_reply="ok")
     s = db.create_session("s1", "ps-1")
     bundle = load_bundle(db, "ps-1")
-    list(run_po_turn(db, llm, bundle, s, "10 cases of fish oil, no discount"))
+    draft_order(db, llm, bundle, s, "10 cases of fish oil, no discount")
     llm.fail_json = True
-    events = list(run_po_turn(db, llm, bundle, db.session("s1"), "and make it quick"))
+    events = draft_order(db, llm, bundle, db.session("s1"), "and make it quick")
     assert any(event["type"] == "warning" for event in events)
     assert events[-1]["slots"]["line_items"][0]["sku"] == "FO-100"
 

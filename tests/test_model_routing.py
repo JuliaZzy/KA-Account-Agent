@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import timedelta
 
@@ -9,7 +10,7 @@ import pytest
 
 from backend.db import utcnow
 from backend.llm import calls
-from backend.llm.calls import ModelResult, qwen_json
+from backend.llm.calls import ModelResult, qwen_json_async
 from backend.llm.errors import ProviderError
 from backend.llm.routing import (
     ROUTING_POLICY_VERSION,
@@ -19,6 +20,10 @@ from backend.llm.routing import (
     quality_check,
     run_budget_for,
 )
+
+
+def qwen_json(**kwargs):
+    return asyncio.run(qwen_json_async(**kwargs))
 
 
 class _TraceDb:
@@ -115,9 +120,9 @@ def test_unknown_purpose_keeps_the_requested_model(monkeypatch):
         return ModelResult("fake", model_name, {"ok": True}, 1, 1, "estimated")
 
     monkeypatch.setattr(calls, "_call_model_once", fake_once)
-    result = calls.call_model(
+    result = asyncio.run(calls.call_model_async(
         "existing-model", brand="deepseek", kind="response", expect="json", purpose="other.task",
-    )
+    ))
 
     assert result.body == {"ok": True}
     assert seen == [("existing-model", "deepseek")]
@@ -131,9 +136,9 @@ def test_blank_purpose_does_not_select_a_route(monkeypatch):
         return ModelResult("fake", model_name, {"ok": True}, 1, 1, "estimated")
 
     monkeypatch.setattr(calls, "_call_model_once", fake_once)
-    result = calls.call_model(
+    result = asyncio.run(calls.call_model_async(
         "existing-model", brand="deepseek", kind="response", expect="json",
-    )
+    ))
 
     assert result.body == {"ok": True}
     assert seen == ["deepseek"]
@@ -145,7 +150,6 @@ def test_named_purposes_receive_a_compatible_route():
         ("memory.fold", "qwen3.7-flash"),
         ("po.claim", "qwen3.7-flash"),
         ("po.resolve", "qwen3.7-flash"),
-        ("po.reply", "qwen3.7-flash"),
         ("brand.query", "qwen3.7-flash"),
         ("brand.answer", "qwen3.7-flash"),
         ("translate", "qwen3.7-flash"),
@@ -179,10 +183,10 @@ def test_internal_provider_error_does_not_fall_back(monkeypatch):
 
     monkeypatch.setattr(calls, "_call_model_once", fake_once)
     with pytest.raises(ProviderError) as caught:
-        calls.call_model(
+        asyncio.run(calls.call_model_async(
             "qwen3.7-flash", brand="qwen", kind="chat_completion", expect="json",
             purpose="orchestrator.plan",
-        )
+        ))
 
     assert caught.value.kind == "internal"
     assert seen == ["qwen3.7-flash"]
@@ -198,10 +202,10 @@ def test_circuit_open_uses_the_fallback_immediately(monkeypatch):
         return ModelResult("fake", model_name, {"tasks": []}, 1, 1, "estimated")
 
     monkeypatch.setattr(calls, "_call_model_once", fake_once)
-    result = calls.call_model(
+    result = asyncio.run(calls.call_model_async(
         "qwen3.7-flash", brand="qwen", kind="chat_completion", expect="json",
         purpose="orchestrator.plan",
-    )
+    ))
 
     assert result.body == {"tasks": []}
     assert seen == ["qwen3.7-flash", "deepseek-flash"]
@@ -217,10 +221,10 @@ def test_plan_provider_error_uses_the_configured_fallback(monkeypatch):
         return ModelResult("fake", model_name, {"tasks": []}, 1, 1, "estimated")
 
     monkeypatch.setattr(calls, "_call_model_once", fake_once)
-    result = calls.call_model(
+    result = asyncio.run(calls.call_model_async(
         "qwen3.7-flash", brand="qwen", kind="chat_completion", expect="json",
         purpose="orchestrator.plan",
-    )
+    ))
 
     assert result.body == {"tasks": []}
     assert seen == [("qwen3.7-flash", "qwen"), ("deepseek-flash", "deepseek")]
@@ -234,10 +238,10 @@ def test_route_events_are_written_to_the_existing_trace(monkeypatch):
         "_call_model_once",
         lambda model_name, **kwargs: ModelResult("fake", model_name, {"tasks": []}, 1, 1, "estimated"),
     )
-    calls.call_model(
+    asyncio.run(calls.call_model_async(
         "qwen3.7-flash", brand="qwen", kind="chat_completion", expect="json",
         purpose="orchestrator.plan", db=db, run_id="run-1", step_id="step-1",
-    )
+    ))
 
     assert [event[0] for event in db.events] == ["model.route_selected"]
     assert db.events[0][1]["selected_model"] == "qwen3.7-flash"
@@ -257,10 +261,10 @@ def test_plan_semantic_errors_stay_with_the_planner(monkeypatch):
         )
 
     monkeypatch.setattr(calls, "_call_model_once", fake_once)
-    result = calls.call_model(
+    result = asyncio.run(calls.call_model_async(
         "qwen3.7-flash", brand="qwen", kind="chat_completion", expect="json",
         purpose="orchestrator.plan", db=db, run_id="run-1", step_id="step-1",
-    )
+    ))
 
     assert result.body["tasks"][0]["kind"] == "unknown"
     assert calls_seen == ["qwen3.7-flash"]

@@ -20,7 +20,6 @@ from ..po.agent import collect_order
 from ..po.turn import load_bundle
 from ..report.turn import chart_for_query
 from ..text2sql.impl import answer_question_impl
-from ..text2sql.text2sql import answer_question as _modern_answer
 from ..text2sql.text2sql import answer_question_async
 from ..tools import exchange_rate, lang_translate, send_email, web_search
 from .run_names import TOOL_STARTED_DISPLAY, StepType, ToolErrorCode, step_name
@@ -203,7 +202,7 @@ def _data_query(db, llm, session, text, bundle):
         step_id = ctx.get("step_id") if isinstance(ctx.get("step_id"), str) else None
         partnership = bundle.partnership
         impl = answer_question_impl()
-        if impl is _modern_answer:
+        if impl is answer_question_async:
             result = await answer_question_async(
                 db, question=str(args.get("question") or "").strip() or _asked(args, text),
                 required_columns=_required_columns(args),

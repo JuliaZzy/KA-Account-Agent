@@ -120,12 +120,12 @@ def test_a_long_chat_folds_after_the_worker_saves(db, monkeypatch):
 
     ran: list = []
 
-    def spy_fold(*args, **kwargs):
+    async def spy_fold(*args, **kwargs):
         ran.append(1)
-        return memory_fold(*args, **kwargs)
+        return await memory_fold(*args, **kwargs)
 
-    memory_fold = memory.fold_session
-    monkeypatch.setattr(memory, "fold_session", spy_fold)
+    memory_fold = memory.fold_session_async
+    monkeypatch.setattr(memory, "fold_session_async", spy_fold)
 
     llm = FakeLLM(
         json_replies=[{"tasks": []}, {"summary": "They ship on Tuesdays"}],

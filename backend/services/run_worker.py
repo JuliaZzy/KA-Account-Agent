@@ -321,9 +321,39 @@ def _settle(
     )
     if outcome == "dead_letter":
         log.error("dead letter run_id=%s error=%s", run_id, error.get("message"))
-    if permanent or outcome == "dead_letter":
+    # A child the handler did not settle (ProviderError, retries exhausted) still
+    # has to reach the owner's ANSWER. Retryable failures stay queued and wait.
+    if (permanent and outcome is not None) or outcome == "dead_letter":
         _maybe_schedule_title(db, run_id)
+        _notify_owner_of_terminal_child(db, run_id)
+        _remember_failed_chat(db, run_id, error)
     return True
+
+
+def _remember_failed_chat(db: Database, run_id: str, error: dict[str, Any]) -> None:
+    """A failed top-level chat still belongs in the session transcript."""
+    row = find_agent_run_by_id(db, run_id)
+    if row is None:
+        return
+    from ..orchestrator.speak import remember_failed_turn
+
+    try:
+        remember_failed_turn(db, row, error)
+    except Exception:
+        log.warning("failed to keep chat turn run_id=%s", run_id, exc_info=True)
+
+
+def _notify_owner_of_terminal_child(db: Database, run_id: str) -> None:
+    """Hand a failed child to its owner. `finish_child` keeps the first result."""
+    row = find_agent_run_by_id(db, run_id)
+    if row is None or not row.get("owner_run_id"):
+        return
+    from ..orchestrator.gather import child_terminal_result, finish_child
+
+    try:
+        finish_child(db, row, child_terminal_result(row))
+    except Exception:
+        log.warning("failed to hand child result to owner run_id=%s", run_id, exc_info=True)
 
 
 def _lease_deadline() -> datetime:
@@ -436,8 +466,121 @@ def sweep_expired_leases(db: Database, limit: int = 100) -> int:
     return _sweep_expired_leases(db, limit)
 
 
+# Same unfinished set this many sweeps in a row: stop re-parking and let ANSWER speak.
+STALE_WAKE_LIMIT = 3
+
+
 def sweep_waiting_for_tasks(
     db: Database, limit: int = 100, stale_after: timedelta | None = None,
 ) -> int:
-    """Requeue owners left in `waiting_for_tasks` after every child finished."""
+    """Requeue owners left in `waiting_for_tasks` after every child finished.
+
+    A child that reached a terminal status without `finish_child` is written onto
+    the owner checkpoint first. Waking the owner alone makes it dispatch the same
+    task again.
+    """
+    _repair_stale_owners(db, limit, stale_after if stale_after is not None else timedelta(minutes=15))
     return _sweep_waiting_for_tasks(db, limit, stale_after)
+
+
+def _repair_stale_owners(db: Database, limit: int, stale_after: timedelta) -> None:
+    from ..orchestrator.gather import child_terminal_result, finish_child, load_state
+    from ..repositories.run_repository import RUN_TERMINAL_STATUSES, latest_checkpoint
+
+    busy = {RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_FOR_TASKS}
+    owners = db.list_stale_waiting_runs(limit, stale_after)
+    for owner in owners:
+        children = db.find_runs_by_owner(str(owner["id"]))
+        if any(child.get("status") in busy for child in children):
+            continue
+        before = _result_ids(load_state(latest_checkpoint(db, str(owner["id"]))))
+        for child in children:
+            if child.get("status") not in RUN_TERMINAL_STATUSES:
+                continue
+            payload = child.get("input_json") if isinstance(child.get("input_json"), dict) else {}
+            task_id = str(payload.get("task_id") or "")
+            if not task_id or task_id in before:
+                continue
+            try:
+                finish_child(db, child, child_terminal_result(child))
+            except Exception:
+                log.warning(
+                    "sweeper failed to record child result owner=%s child=%s",
+                    owner.get("id"), child.get("id"), exc_info=True,
+                )
+        state = load_state(latest_checkpoint(db, str(owner["id"]))) or {}
+        results = state.get("results") if isinstance(state.get("results"), dict) else {}
+        unfinished = _unfinished_task_ids(state, results)
+        if not unfinished:
+            db.note_stale_wake(str(owner["id"]), progressed=True)
+            continue
+        wakes = db.note_stale_wake(str(owner["id"]), progressed=set(results) != before)
+        if wakes < STALE_WAKE_LIMIT:
+            continue
+        _force_unfinished(db, owner, state, unfinished, finish_child)
+
+
+def _result_ids(state: dict[str, Any] | None) -> set[str]:
+    raw = (state or {}).get("results") if isinstance(state, dict) else None
+    if not isinstance(raw, dict):
+        return set()
+    return {str(key) for key in raw}
+
+
+def _unfinished_task_ids(state: dict[str, Any], results: dict[str, Any]) -> list[str]:
+    unfinished: list[str] = []
+    for task in state.get("tasks") or []:
+        if not isinstance(task, dict):
+            continue
+        task_id = str(task.get("id") or "")
+        if task_id and task_id not in results:
+            unfinished.append(task_id)
+    return unfinished
+
+
+def _force_unfinished(
+    db: Database,
+    owner: dict[str, Any],
+    state: dict[str, Any],
+    unfinished: list[str],
+    finish_child: Any,
+) -> None:
+    """Give ANSWER a failure for each task that never produced a result."""
+    payload = owner.get("input_json") if isinstance(owner.get("input_json"), dict) else {}
+    tasks = {
+        str(task.get("id")): task
+        for task in (state.get("tasks") or [])
+        if isinstance(task, dict) and task.get("id")
+    }
+    for task_id in unfinished:
+        task = tasks.get(task_id) or {}
+        name = str(task.get("name") or "task")
+        synthetic = {
+            "id": f"missing:{owner.get('id')}:{task_id}",
+            "org_id": owner.get("org_id") or "",
+            "owner_run_id": owner.get("id"),
+            "input_json": {
+                "session_id": payload.get("session_id") or "",
+                "wave_id": state.get("wave_id") or "",
+                "task_id": task_id,
+                "kind": task.get("kind"),
+                "name": name,
+                "tool_name": name,
+            },
+        }
+        result = {
+            "id": task_id,
+            "kind": task.get("kind"),
+            "name": name,
+            "ok": False,
+            "error": f"task {task_id} ended without a result",
+            "payload": {},
+            "status": "failed",
+        }
+        try:
+            finish_child(db, synthetic, result)
+        except Exception:
+            log.warning(
+                "sweeper failed to force a child result owner=%s task=%s",
+                owner.get("id"), task_id, exc_info=True,
+            )

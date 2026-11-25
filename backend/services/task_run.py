@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import inspect
 import logging
@@ -26,7 +27,7 @@ async def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str,
     session = db.session(session_id)
     if not session:
         result = _failed(payload, "chat run has no session")
-        finish_child(db, run, result)
+        await asyncio.to_thread(finish_child, db, run, result)
         return result
     text = str(payload.get("message") or "")
     images = [url for url in (payload.get("images") or []) if isinstance(url, str)]
@@ -43,7 +44,7 @@ async def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str,
         name = tool_name_for(task)
     saved = _saved_result(db, run, payload, name)
     if saved is not None:
-        return _settle(db, run, saved)
+        return await _settle(db, run, saved)
     if name == "report.draft":
         from ..orchestrator.report import execute_report
 
@@ -53,12 +54,12 @@ async def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str,
             raise
         except ModelBudgetExceeded as exc:
             result = _budget_result(payload, exc, name=name)
-            finish_child(db, run, result)
+            await asyncio.to_thread(finish_child, db, run, result)
             return result
         except Exception as exc:
             log.exception("report child failed")
             result = _failed(payload, str(exc), name=name)
-            finish_child(db, run, result)
+            await asyncio.to_thread(finish_child, db, run, result)
             return result
     tool = registry.find(name)
     args = _arguments_for(payload, list(session.get("history") or []))
@@ -68,7 +69,7 @@ async def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str,
         result = _failed(payload, f"unknown tool {name}", name=name)
         if step_id:
             db.finish_step(step_id, StepStatus.FAILED, None, {"message": result["error"]})
-        return _settle(db, run, result)
+        return await _settle(db, run, result)
 
     # Planned side effects reserve their idempotency seat here, not in the test harness.
     # idempotency seat before entering the handler, so a lease retry can tell
@@ -82,12 +83,12 @@ async def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str,
         if claimed is None:
             result = _failed(payload, "tool run is no longer active", name=name)
             db.finish_step(step_id, StepStatus.FAILED, None, {"message": result["error"]})
-            finish_child(db, run, result)
+            await asyncio.to_thread(finish_child, db, run, result)
             return result
         row, created = claimed
         if not created:
             result = _reused_planned_call(db, step_id, payload, name, row)
-            return _settle(db, run, result)
+            return await _settle(db, run, result)
         claimed_id = str(row["id"])
 
     try:
@@ -120,7 +121,7 @@ async def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str,
             _complete_planned_call(db, claimed_id, result, None)
         else:
             _record_tool(db, run, step_id, name, args, result, None)
-        return _settle(db, run, result)
+        return await _settle(db, run, result)
     except Exception as exc:
         log.exception("child tool %s failed", name)
         result = _failed(payload, str(exc), name=name)
@@ -128,7 +129,7 @@ async def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str,
             _complete_planned_call(db, claimed_id, result, None)
         else:
             _record_tool(db, run, step_id, name, args, result, None)
-    return _settle(db, run, result)
+    return await _settle(db, run, result)
 
 
 def _tool_checkpoint(result: dict[str, Any]) -> dict[str, Any] | None:
@@ -137,9 +138,9 @@ def _tool_checkpoint(result: dict[str, Any]) -> dict[str, Any] | None:
     return checkpoint_state([], [], {}, extra={"phase": "tool_done", "result": result})
 
 
-def _settle(db: Database, run: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
-    """The tool row already stored the checkpoint. Wake the parent."""
-    finish_child(db, run, result)
+async def _settle(db: Database, run: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    """The tool row already stored the checkpoint. Wake the parent off the event loop."""
+    await asyncio.to_thread(finish_child, db, run, result)
     return result
 
 

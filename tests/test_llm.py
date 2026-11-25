@@ -1,5 +1,6 @@
 """The desk no longer sends the dropdown id. Each step names its own model."""
 
+import asyncio
 from datetime import timedelta
 
 import pytest
@@ -10,12 +11,26 @@ from backend.llm.calls import (
     QWEN_PLAN,
     ModelBudgetExceeded,
     ModelCapacityExceeded,
-    call_model,
-    qwen_json,
-    qwen_text,
+    call_model_async,
+    qwen_json_async,
+    qwen_text_async,
 )
 from backend.llm.client import DeepSeekClient, _remember_usage
 from backend.services.run_names import EntryErrorCode
+
+
+def call_model(*args, **kwargs):
+    return asyncio.run(call_model_async(*args, **kwargs))
+
+
+def qwen_json(**kwargs):
+    return asyncio.run(qwen_json_async(**kwargs))
+
+
+def qwen_text(**kwargs):
+    text = asyncio.run(qwen_text_async(**kwargs))
+    if text:
+        yield text
 
 
 def test_usage_keeps_deepseek_and_qwen_cache_fields():
@@ -127,7 +142,7 @@ def test_qwen_stream_reports_text_while_the_stream_is_still_open():
     """on_text must fire per chunk, not after the whole stream is buffered."""
     from types import SimpleNamespace
 
-    from backend.llm.calls import _call_qwen, enter
+    from backend.llm.calls import _call_qwen
 
     timeline: list[str] = []
 
@@ -152,7 +167,7 @@ def test_qwen_stream_reports_text_while_the_stream_is_still_open():
         del reasoning
         timeline.append(f"on_text {text}")
 
-    called = enter(_call_qwen(
+    called = asyncio.run(_call_qwen(
         _Client(), kind="chat_completion", model="qwen3.7-flash", system="s", messages=[],
         stream=True, temperature=None, tools=None, tool_choice=None, reasoning_effort="none",
         on_text=on_text,
@@ -187,9 +202,9 @@ def _slow_qwen_client(first_delay: float, gap: float, chunks: int = 3):
 
 
 def _qwen_call(client):
-    from backend.llm.calls import _call_qwen, enter
+    from backend.llm.calls import _call_qwen
 
-    return enter(_call_qwen(
+    return asyncio.run(_call_qwen(
         client, kind="chat_completion", model="qwen3.7-flash", system="s", messages=[],
         stream=True, temperature=None, tools=None, tool_choice=None, reasoning_effort="none",
         on_text=lambda *_a, **_k: None,
@@ -245,9 +260,9 @@ def _slow_deepseek_client(first_delay: float, gap: float, chunks: int = 3):
 
 
 def _deepseek_call(client, *, stream=True):
-    from backend.llm.calls import _call_deepseek, enter
+    from backend.llm.calls import _call_deepseek
 
-    return enter(_call_deepseek(
+    return asyncio.run(_call_deepseek(
         client, kind="chat_completion", model="deepseek-flash", system="s", messages=[],
         stream=stream, temperature=None, top_p=None, schema=None, tools=None,
         tool_choice=None, reasoning_effort="none",

@@ -9,12 +9,10 @@ client.
 from __future__ import annotations
 
 import base64
-import json
-import urllib.error
-import urllib.request
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
+import httpx
 from openai import AsyncOpenAI, OpenAI
 
 from ..config import LLMSettings, vendor_endpoint, vendor_http_timeout
@@ -488,23 +486,24 @@ class GLMOCRClient:
         self.url = url
         self.timeout = timeout
 
-    def parse(self, data: bytes) -> dict[str, Any]:
-        body = json.dumps({
+    async def parse(self, data: bytes) -> dict[str, Any]:
+        body = {
             "model": "glm-ocr",
             "file": "data:application/pdf;base64," + base64.b64encode(data).decode(),
-        }).encode()
-        req = urllib.request.Request(
-            self.url, data=body, method="POST",
-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-        )
+        }
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                payload = json.loads(resp.read().decode())
-        except urllib.error.HTTPError as err:
-            detail = err.read().decode("utf-8", errors="replace")[:300]
-            raise ValueError(f"GLM-OCR HTTP {err.code}: {detail}") from err
-        except urllib.error.URLError as err:
-            raise ValueError(f"GLM-OCR request failed: {err.reason}") from err
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.post(
+                    self.url, json=body,
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+        except httpx.HTTPStatusError as err:
+            detail = err.response.text[:300]
+            raise ValueError(f"GLM-OCR HTTP {err.response.status_code}: {detail}") from err
+        except httpx.HTTPError as err:
+            raise ValueError(f"GLM-OCR request failed: {err}") from err
         if not isinstance(payload, dict):
             raise ValueError("GLM-OCR returned a non-object response.")
         if payload.get("error"):

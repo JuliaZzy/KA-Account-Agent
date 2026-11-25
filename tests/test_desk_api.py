@@ -130,12 +130,19 @@ def test_contract_upload_records_ocr_and_extraction_on_an_inline_run(db, monkeyp
     db.upsert_user("u-other", "dist-2", "Other")
     monkeypatch.setenv("GLM_API_KEY", "test-key")
     monkeypatch.setenv("GLM_BASE_URL", "https://ocr.example/layout_parsing")
-    monkeypatch.setattr("backend.llm.client.GLMOCRClient.parse", lambda *_args: {
-        "layout_details": [[{"label": "text", "content": "Minimum order USD 500."}]],
-        "usage": {"prompt_tokens": 45000, "completion_tokens": 5000},
-    })
+    async def parsed(*_args, **_kwargs):
+        return {
+            "layout_details": [[{"label": "text", "content": "Minimum order USD 500."}]],
+            "usage": {"prompt_tokens": 45000, "completion_tokens": 5000},
+        }
+
+    monkeypatch.setattr("backend.llm.client.GLMOCRClient.parse", parsed)
     fake = FakeLLM(json_replies=[{
         "minimum_order_quantities": [{"quantity": 500, "unit": "USD", "applies_per": "per_order"}],
+        "commercial_discount_rules": [],
+        "allowed_countries": [],
+        "excluded_countries": [],
+        "field_evidence": {},
         "confidence_score": 1.0,
     }])
     monkeypatch.setattr(import_module("backend.router.contract_router"), "deepseek_client", lambda: fake)

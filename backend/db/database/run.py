@@ -737,6 +737,23 @@ class RunMixin:
             s.flush()
             return len(runs)
 
+    def list_stale_waiting_runs(
+        self, limit: int = 100, stale_after: timedelta = timedelta(minutes=15),
+    ) -> list[dict[str, Any]]:
+        """Owners parked on a wave long enough for the sweeper to look at them."""
+        cutoff = utcnow() - stale_after
+        with self.tx() as s:
+            runs = list(s.scalars(
+                select(orm.AgentRun)
+                .where(
+                    orm.AgentRun.status == RunStatus.WAITING_FOR_TASKS,
+                    orm.AgentRun.updated_at < cutoff,
+                )
+                .order_by(orm.AgentRun.updated_at)
+                .limit(limit)
+            ))
+            return [_row_dict(run) for run in runs]
+
     def sweep_waiting_for_tasks(
         self, limit: int = 100, stale_after: timedelta = timedelta(minutes=15),
     ) -> int:

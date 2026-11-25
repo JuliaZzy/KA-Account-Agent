@@ -110,6 +110,14 @@ const snaps = new Map<string, Snap>();
 onForgetChat((id) => snaps.delete(id));
 const SKIP = new Set(["(message)", "(confirm)"]);
 
+function failedLine(run: AgentRun): string {
+  if (run.error_json?.code === "QUOTA_EXCEEDED") return "今天的额度已经用完，请明天再试。";
+  const message = (run.error_json?.message || "").replace(/\s+/g, " ").trim();
+  if (!message || message.includes("Traceback")) return "这次没有完成。";
+  if (message.startsWith("这次没有完成")) return message;
+  return `这次没有完成。${message}`;
+}
+
 function waitingToolName(events: RunEvent[]): string | null {
   for (let i = events.length - 1; i >= 0; i -= 1) {
     if (events[i].event_type !== "run.waiting_for_user") continue;
@@ -298,6 +306,29 @@ function ChatDesk() {
     if (isForgotten(id)) return;
     snaps.set(id, next);
     if (sidRef.current === id) setSnap(next);
+  }
+
+  async function keepFailedTurn(
+    chatId: string, ended: AgentRun, steps: Activity[], title: string | null, tags: string[],
+  ) {
+    const session = await api<SessionRow>(withUser(`/api/sessions/${chatId}`, userId));
+    const next = fromSession(session, greeting(partnership));
+    const saved = next.turns.some((turn) => turn.runId === ended.id);
+    if (saved) {
+      const last = [...next.turns].reverse().find((turn) => turn.runId === ended.id);
+      if (last && steps.length) last.activity = steps;
+    } else {
+      const base = snaps.get(chatId);
+      next.turns = [
+        ...(base?.turns ?? next.turns),
+        { role: "assistant", text: failedLine(ended), runId: ended.id, activity: steps },
+      ];
+    }
+    commitSnap(chatId, {
+      ...next,
+      title: next.title ?? title,
+      tags: next.tags.length ? next.tags : tags,
+    });
   }
 
   async function withSavedTraces(turns: Turn[]): Promise<Turn[]> {
@@ -510,12 +541,10 @@ function ChatDesk() {
         return;
       }
       if (ended.status === "failed") {
-        if (ended.error_json?.code === "QUOTA_EXCEEDED") {
-          noteQuota(ended);
-          committed = true;
-          return;
-        }
-        throw new Error(ended.error_json?.message || "The model could not finish this reply.");
+        if (ended.error_json?.code === "QUOTA_EXCEEDED") noteQuota(ended);
+        await keepFailedTurn(chatId, ended, steps, title, tags);
+        committed = true;
+        return;
       }
       if (ended.status === "waiting_for_user") {
         committed = true;
@@ -579,13 +608,12 @@ function ChatDesk() {
         return;
       }
       if (ended.status === "failed") {
-        if (ended.error_json?.code === "QUOTA_EXCEEDED") {
-          noteQuota(ended);
-          committed = true;
-          patchFlight(chatId, { approvalTool: null });
-          return;
-        }
-        throw new Error(ended.error_json?.message || "The model could not finish this reply.");
+        if (ended.error_json?.code === "QUOTA_EXCEEDED") noteQuota(ended);
+        const base = snaps.get(chatId);
+        await keepFailedTurn(chatId, ended, steps, base?.title ?? null, base?.tags ?? []);
+        committed = true;
+        patchFlight(chatId, { approvalTool: null });
+        return;
       }
       if (ended.status === "waiting_for_user") {
         committed = true;

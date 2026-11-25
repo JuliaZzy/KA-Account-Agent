@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
 
@@ -57,7 +58,7 @@ async def _advance_report(
     phase = str((report or {}).get("phase") or "")
     if phase == "done" and isinstance((report or {}).get("result"), dict):
         result = report["result"]
-        finish_child(db, run, result)
+        await asyncio.to_thread(finish_child, db, run, result)
         return result
     if phase == "planned":
         return await _resume_decision(db, llm, run, session, payload, text, step_id, report or {}, "await_query")
@@ -69,10 +70,10 @@ async def _advance_report(
     results = dict((state or {}).get("results") or {})
     session_id = str(session["id"])
     if isinstance(wave_id, str) and wave_id:
-        results.update(collect_wave(db, run, session_id, wave_id))
+        results.update(await asyncio.to_thread(collect_wave, db, run, session_id, wave_id))
     if phase == "await_query":
         return await _after_query(db, llm, run, session, payload, text, step_id, report or {}, results)
-    return _fail(db, run, payload, "unknown report phase", step_id)
+    return await _fail(db, run, payload, "unknown report phase", step_id)
 
 
 async def _resume_decision(
@@ -94,9 +95,10 @@ async def _resume_decision(
             depends_on=[str(dep) for dep in (item.get("depends_on") or []) if dep],
         ))
     if tasks:
-        parked = dispatch_wave(db, run, session, tasks, [], {}, payload, extra={
-            REPORT_KEY: {**report, "phase": next_phase},
-        })
+        parked = await asyncio.to_thread(
+            dispatch_wave, db, run, session, tasks, [], {}, payload,
+            extra={REPORT_KEY: {**report, "phase": next_phase}},
+        )
         if parked is not None:
             return None
     planned = [SectionPlan(**item) for item in report.get("sections") or [] if isinstance(item, dict)]
@@ -138,7 +140,9 @@ async def _start(
             found=[],
         )
     extra = {REPORT_KEY: {**decision, "phase": "await_query"}}
-    parked = dispatch_wave(db, run, session, tasks, [], {}, payload, extra=extra)
+    parked = await asyncio.to_thread(
+        dispatch_wave, db, run, session, tasks, [], {}, payload, extra=extra,
+    )
     if parked is not None:
         return None
     empty = {section.id: [] for section in planned}
@@ -197,15 +201,15 @@ async def _consume(
     ):
         if isinstance(item, ReportDraft):
             draft = item
-    return _done(db, run, payload, draft, step_id)
+    return await _done(db, run, payload, draft, step_id)
 
 
-def _done(
+async def _done(
     db: Database, run: dict[str, Any], payload: dict[str, Any],
     draft: ReportDraft | None, step_id: str,
 ) -> dict[str, Any]:
     if draft is None:
-        return _fail(db, run, payload, "No draft found", step_id)
+        return await _fail(db, run, payload, "No draft found", step_id)
     raw = {
         "ok": True,
         "text": draft.text,
@@ -231,11 +235,11 @@ def _done(
         _close_report_step(db, run, step_id, payload, raw, None, checkpoint_state([], [], {}, extra={
             REPORT_KEY: {"phase": "done", "step_id": step_id, "result": result},
         }))
-    finish_child(db, run, result)
+    await asyncio.to_thread(finish_child, db, run, result)
     return result
 
 
-def _fail(
+async def _fail(
     db: Database, run: dict[str, Any], payload: dict[str, Any], error: str, step_id: str,
 ) -> dict[str, Any]:
     if step_id:
@@ -248,7 +252,7 @@ def _fail(
         "error": error,
         "payload": {},
     }
-    finish_child(db, run, result)
+    await asyncio.to_thread(finish_child, db, run, result)
     return result
 
 

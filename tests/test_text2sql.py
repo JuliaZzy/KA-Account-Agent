@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -17,11 +18,15 @@ from backend.llm import FakeLLM
 from backend.llm.types import AssistantTurn, ToolCall
 from backend.schemas import Partnership, Product, PurchaseOrder
 from backend.services.chat_run import work_chat
-from backend.text2sql import answer_question, run_statement
+from backend.text2sql import answer_question_async, run_statement
 from backend.text2sql.analyze_badcase import analyze, classify_error
 from backend.text2sql.sql_validator import system_row_cap, validate
 from backend.text2sql.table_metadata import EXCLUDED_TABLES, HIDDEN_COLUMNS, TABLES, scope_views
 from backend.text2sql.text2sql import _json_rows, _rows_for_prompt, prompt_view
+
+
+def answer_question(*args, **kwargs):
+    return asyncio.run(answer_question_async(*args, **kwargs))
 
 
 def _models(monkeypatch, replies: list[dict]):
@@ -282,7 +287,7 @@ def test_a_bad_column_is_repaired_once(db, monkeypatch):
     assert "missing_column" in result.sql or "total_amount" in (result.sql or "")
 
 
-def test_react_observes_failure_and_requeries_for_original_question(db, monkeypatch):
+def test_react_observes_failure_and_requeries_for_original_question(db):
     db.insert_po(_po(), [], [])
     actions = iter([
         {"action": "inspect_schema", "tables": ["purchase_orders"], "score": 0},
@@ -297,10 +302,9 @@ def test_react_observes_failure_and_requeries_for_original_question(db, monkeypa
         seen.append((question, list(observations)))
         return next(actions)
 
-    monkeypatch.setattr("backend.text2sql.text2sql._next_action", decide)
     result = answer_question(
         db, question="what is the order total?", partnership_id="ps-1",
-        brand_id="brand-1", distributor_id="dist-1",
+        brand_id="brand-1", distributor_id="dist-1", decide=decide,
     )
     assert result.ok and result.rows == [{"total_amount": 1000}] and result.score == 95
     assert all(question == "what is the order total?" for question, _ in seen)
@@ -309,15 +313,14 @@ def test_react_observes_failure_and_requeries_for_original_question(db, monkeypa
     assert len(db.list_text2sql_logs("ps-1")) == 3
 
 
-def test_react_caps_sql_attempts(db, monkeypatch):
+def test_react_caps_sql_attempts(db):
     actions = iter([
         {"action": "inspect_schema", "tables": ["purchase_orders"], "score": 0},
         *({"action": "run_sql", "sql": "DELETE FROM purchase_orders", "score": 0} for _ in range(4)),
     ])
-    monkeypatch.setattr("backend.text2sql.text2sql._next_action", lambda **_kwargs: next(actions))
     result = answer_question(
         db, question="delete orders", partnership_id="ps-1", brand_id="brand-1",
-        distributor_id="dist-1",
+        distributor_id="dist-1", decide=lambda **_kwargs: next(actions),
     )
     assert not result.ok and result.error_type == "validation" and result.handoff
     assert len(db.list_text2sql_logs("ps-1")) == 3
@@ -782,15 +785,16 @@ def test_bad_model_output_is_fed_back_then_recovers(db, monkeypatch):
             raise reply
         return reply
 
-    monkeypatch.setattr(t, "_next_action", decide)
-    result = t.answer_question(db, question="q", partnership_id="p", brand_id="b", distributor_id="d")
+    result = asyncio.run(t.answer_question_async(
+        db, question="q", partnership_id="p", brand_id="b", distributor_id="d", decide=decide,
+    ))
     assert seen[1][0]["action"] == "model_output" and seen[1][0]["hint"]
     assert result.stop_reason == "finished"
     assert result.ok is False and result.error == "no query completed"
     assert [o["turn"] for o in result.trace] == [1]
 
 
-def test_unusable_output_stops_after_the_repair_limit(db, monkeypatch):
+def test_unusable_output_stops_after_the_repair_limit(db):
     from backend.text2sql import text2sql as t
 
     calls = []
@@ -799,23 +803,25 @@ def test_unusable_output_stops_after_the_repair_limit(db, monkeypatch):
         calls.append(1)
         raise ValueError("bad json")
 
-    monkeypatch.setattr(t, "_next_action", decide)
-    result = t.answer_question(db, question="q", partnership_id="p", brand_id="b", distributor_id="d")
+    result = asyncio.run(t.answer_question_async(
+        db, question="q", partnership_id="p", brand_id="b", distributor_id="d", decide=decide,
+    ))
     assert len(calls) == t._MAX_REPAIRS + 1
     assert result.stop_reason == "model_error" and result.error_type == "generation"
     assert [o["action"] for o in result.trace] == ["model_output"] * (t._MAX_REPAIRS + 1)
 
 
-def test_a_spent_model_budget_is_raised_not_swallowed(db, monkeypatch):
+def test_a_spent_model_budget_is_raised_not_swallowed(db):
     from backend.llm.calls import ModelBudgetExceeded
     from backend.text2sql import text2sql as t
 
     def decide(**kwargs):
         raise ModelBudgetExceeded()
 
-    monkeypatch.setattr(t, "_next_action", decide)
     with pytest.raises(ModelBudgetExceeded):
-        t.answer_question(db, question="q", partnership_id="p", brand_id="b", distributor_id="d")
+        asyncio.run(t.answer_question_async(
+            db, question="q", partnership_id="p", brand_id="b", distributor_id="d", decide=decide,
+        ))
 
 
 def test_each_attempt_log_keeps_its_turn_and_later_score(db, monkeypatch):

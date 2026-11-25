@@ -12,7 +12,8 @@ from backend.po.catalog import Catalog
 from backend.po.check import run_code_check
 from backend.po.slots import Discount, LineItemSlot, PoSlots
 from backend.po.submit import create_and_submit_po
-from backend.po.turn import load_bundle, run_po_turn
+from backend.po.turn import load_bundle
+from tests.support.po_draft import draft_order
 
 EXTRACTION = {
     "contract_type": "distribution_agreement",
@@ -137,24 +138,22 @@ def test_contract_rate_is_known_on_the_first_order_turn_before_any_product(db):
         "line_items": [], "discount_kind": None, "reply_language": "English",
     }], text_reply="ok")
     s = db.create_session("s1", "ps-1")
-    done = list(run_po_turn(db, llm, load_bundle(db, "ps-1"), s, "I want to place an order"))[-1]
+    done = draft_order(db, llm, load_bundle(db, "ps-1"), s, "I want to place an order")[-1]
     assert done["slots"]["line_items"] == []
     assert done["slots"]["discount"]["source"] == "contract" and done["slots"]["discount"]["value"] == 5.0
-    extract, reply = llm.calls[0]["system"], llm.calls[-1]["system"]
+    extract = llm.calls[0]["system"]
     assert "1st container" in extract and "discount_kind 保持 null" in extract
-    assert "合同费率" in reply and "1st container" in reply
 
 
 def test_turn_prefills_the_contract_rate_and_reply_is_told(db):
     ingest_extraction(db, EXTRACTION, brand_id="brand-1", partnership_id="ps-1")
     llm = FakeLLM(json_replies=[dict(EXTRACT_NO_DISCOUNT_MENTIONED)], text_reply="ok")
     s = db.create_session("s1", "ps-1")
-    done = list(run_po_turn(db, llm, load_bundle(db, "ps-1"), s, "20 cases of fish oil"))[-1]
+    done = draft_order(db, llm, load_bundle(db, "ps-1"), s, "20 cases of fish oil")[-1]
     assert done["slots"]["discount"] == {"kind": "percent", "value": 5.0, "source": "contract", "note": done["slots"]["discount"]["note"]}
     assert done["draft"]["discount_amount"] == 100.0 and done["draft"]["total"] == 1900.0
     assert not any("discount" in g for g in done["gaps"]) and done["stage"] == "confirm"
-    prompt = llm.calls[-1]["system"]
-    assert "合同费率" in prompt and "1st container" in prompt and "绝不能说成他们可以申请" in prompt
+    assert "1st container" in llm.calls[0]["system"]
 
 
 def test_customer_statement_overrides_the_prefill_and_over_contract_needs_approval(db):
@@ -165,7 +164,7 @@ def test_customer_statement_overrides_the_prefill_and_over_contract_needs_approv
     ], text_reply="ok")
     s = db.create_session("s1", "ps-1")
     bundle = load_bundle(db, "ps-1")
-    list(run_po_turn(db, llm, bundle, s, "20 cases of fish oil"))
-    done = list(run_po_turn(db, llm, bundle, db.session("s1"), "make it 12%"))[-1]
+    draft_order(db, llm, bundle, s, "20 cases of fish oil")
+    done = draft_order(db, llm, bundle, db.session("s1"), "make it 12%")[-1]
     assert done["slots"]["discount"]["source"] == "customer" and done["slots"]["discount"]["value"] == 12
     assert any("exceeds the 8.01% threshold" in a for a in done["advisories"])

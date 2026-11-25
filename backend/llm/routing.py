@@ -130,7 +130,6 @@ ROUTES: dict[str, RoutePolicy] = {
     ),
     "session.title": _cheap_text("session.title", max_tokens=800),
     "translate": _cheap_text("translate"),
-    "po.reply": _cheap_text("po.reply"),
     "po.resolve": _cheap_text("po.resolve"),
     "brand.query": _cheap_text("brand.query"),
     "brand.answer": RoutePolicy(

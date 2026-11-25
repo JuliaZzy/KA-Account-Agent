@@ -1,7 +1,7 @@
 """Bound ledger fields for the current task.
 
 Callers that already pass ``db`` / ``run_id`` / ``step_id`` / ``purpose`` into
-``call_model`` keep winning. The bound values fill in what they omit, so a
+``call_model_async`` keep winning. The bound values fill in what they omit, so a
 report chapter write that forgets ``trace`` still hits the run ledger.
 """
 

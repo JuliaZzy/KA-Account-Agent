@@ -4,23 +4,25 @@ rolling summary plus the raw tail; an older prefix is folded once it reaches the
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from backend import service
 from backend.llm import FakeLLM
 from backend.memory import (
-    bind_fold_scheduler,
+    fold_session_async,
     memory_block,
     prompt_turns,
     recall,
     record_history,
     remember,
-    reset_fold_scheduler,
     summary_block,
     with_memory,
 )
-from backend.po.turn import load_bundle, run_po_turn
+from backend.po.turn import load_bundle
 from backend.services.chat_run import work_chat
+from tests.support.po_draft import draft_order
 
 
 def test_remember_and_recall(db):
@@ -62,14 +64,27 @@ def test_po_turn_prompts_see_the_memory(db):
         {"line_items": [{"reference": "fish oil", "cases": 10, "sku": None}], "discount_kind": "none", "reply_language": "English"},
     ])
     sid = service.new_session(db, "ps-1")["id"]
-    events = list(run_po_turn(
-        db, llm, load_bundle(db, "ps-1"), db.session(sid), "10 cases of fish oil, no discount", [],
-    ))
+    events = draft_order(
+        db, llm, load_bundle(db, "ps-1"), db.session(sid), "10 cases of fish oil, no discount",
+    )
     assert events[-1]["type"] == "done" and events[-1]["stage"] == "confirm"
-    json_calls = [c for c in llm.calls if c["kind"] == "json"]
-    text_calls = [c for c in llm.calls if c["kind"] == "text"]
-    extract_call, reply_call = json_calls[0], text_calls[0]
-    assert "They order in full layers only" in extract_call["system"] and "They order in full layers only" in reply_call["system"]
+    extract_call = next(c for c in llm.calls if c["kind"] == "json")
+    assert "They order in full layers only" in extract_call["system"]
+
+
+def _fold(db, sid: str, llm, run_id: str | None = None) -> None:
+    asyncio.run(fold_session_async(db, llm, sid, run_id))
+
+
+def _shown(session: dict, prompt: str) -> list[str]:
+    folded = int(session.get("folded_through") or 0)
+    messages = [
+        {"role": item.get("role"), "content": str(item.get("content") or "")}
+        for item in prompt_turns(session.get("history") or [], folded)
+        if item.get("role") in ("user", "assistant")
+    ]
+    messages.append({"role": "user", "content": prompt})
+    return [item["content"] for item in messages]
 
 
 def bulky(role: str, tokens: int, mark: str = "x") -> dict:
@@ -106,7 +121,8 @@ def test_a_long_prefix_is_merged_into_one_summary(db):
         {"role": "user", "content": "keep-user"}, {"role": "assistant", "content": "keep-assistant"},
     ]
     llm = FakeLLM(json_replies=[{"summary": "  Their fiscal year starts in April  "}])
-    record_history(db, db.session(sid), history, llm=llm)
+    record_history(db, db.session(sid), history)
+    _fold(db, sid, llm)
     saved = db.session(sid)
     assert len(saved["history"]) == 4 and saved["history"][0]["content"].startswith("QQQQ")
     assert saved["folded_through"] == 2 and saved["summary"] == "Their fiscal year starts in April"
@@ -132,7 +148,8 @@ def test_a_fold_on_a_running_chat_is_recorded_on_that_run(db):
         {"role": "user", "content": "keep-user"}, {"role": "assistant", "content": "keep-assistant"},
     ]
     llm = FakeLLM(json_replies=[{"summary": "Their fiscal year starts in April"}])
-    record_history(db, db.session(sid), history, llm=llm, run_id=run["id"])
+    record_history(db, db.session(sid), history, run_id=run["id"])
+    _fold(db, sid, llm, run["id"])
 
     assert db.session(sid)["summary"] == "Their fiscal year starts in April"
     trace = db.run_trace("dist-1", run["id"])
@@ -155,11 +172,13 @@ def test_a_fold_on_a_running_chat_is_recorded_on_that_run(db):
 def test_a_later_fold_merges_into_the_existing_summary(db):
     sid = service.new_session(db, "ps-1")["id"]
     history = [bulky("user", 2000, "Q"), {"role": "assistant", "content": "tail one"}]
-    record_history(db, db.session(sid), history, llm=FakeLLM(json_replies=[{"summary": "They ship on Tuesdays"}]))
+    record_history(db, db.session(sid), history)
+    _fold(db, sid, FakeLLM(json_replies=[{"summary": "They ship on Tuesdays"}]))
     saved = db.session(sid)
     longer = [*history, bulky("user", 2000, "N"), {"role": "assistant", "content": "tail two"}]
     llm = FakeLLM(json_replies=[{"summary": "They ship on Tuesdays and close in July"}])
-    record_history(db, saved, longer, llm=llm)
+    record_history(db, saved, longer)
+    _fold(db, sid, llm)
     assert "They ship on Tuesdays" in llm.calls[0]["messages"][0]["content"]
     assert "NNNN" in llm.calls[0]["messages"][0]["content"]
     again = db.session(sid)
@@ -167,27 +186,11 @@ def test_a_later_fold_merges_into_the_existing_summary(db):
     assert db.memories("ps-1") == []
 
 
-def test_a_scheduled_fold_does_not_run_until_the_task_does(db):
-    sid = service.new_session(db, "ps-1")["id"]
-    history = [bulky("user", 2000), {"role": "assistant", "content": "tail"}]
-    llm = FakeLLM(json_replies=[{"summary": "They ship on Tuesdays"}])
-    queued: list = []
-    token = bind_fold_scheduler(queued.append)
-    try:
-        record_history(db, db.session(sid), history, llm=llm)
-        assert db.session(sid)["folded_through"] == 0 and not db.session(sid).get("summary") and llm.calls == []
-        assert queued and db.memories("ps-1") == []
-        queued[0]()
-    finally:
-        reset_fold_scheduler(token)
-    saved = db.session(sid)
-    assert saved["folded_through"] == 1 and saved["summary"] == "They ship on Tuesdays"
-
-
 def test_a_failed_fold_keeps_the_cursor_and_the_transcript(db):
     sid = service.new_session(db, "ps-1")["id"]
     history = [bulky("user", 2000), {"role": "assistant", "content": "tail"}]
-    record_history(db, db.session(sid), history, llm=FakeLLM(fail_json=True))
+    record_history(db, db.session(sid), history)
+    _fold(db, sid, FakeLLM(fail_json=True))
     saved = db.session(sid)
     assert len(saved["history"]) == 2 and saved["folded_through"] == 0 and not saved.get("summary")
     assert db.memories("ps-1") == []
@@ -208,22 +211,20 @@ def test_a_plain_answer_and_the_tool_loop_see_the_memory(db):
 def test_the_next_prompt_keeps_the_summary_with_the_raw_tail(db):
     sid = service.new_session(db, "ps-1")["id"]
     history = [bulky("user", 2000, "Q"), {"role": "assistant", "content": "keep-assistant"}]
-    record_history(db, db.session(sid), history, llm=FakeLLM(json_replies=[{
+    record_history(db, db.session(sid), history)
+    _fold(db, sid, FakeLLM(json_replies=[{
         "summary": "Warehouse closes the first week of July",
     }]))
     saved = db.session(sid)
-    from backend.orchestrator.speak import _chat_messages
-
     block = summary_block(saved["summary"])
     assert "Warehouse closes the first week of July" in block and "只作背景" in block
-    messages = _chat_messages(saved, "question 9")
-    contents = [m["content"] for m in messages]
+    contents = _shown(saved, "question 9")
     assert all("QQQQ" not in content for content in contents)
     assert "keep-assistant" in contents and contents[-1] == "question 9"
 
 
 def test_sql_prompt_includes_standing_memory(monkeypatch):
-    from backend.text2sql.text2sql import _next_action, _RunTrace
+    from backend.text2sql.text2sql import _next_action_async, _RunTrace
 
     calls: list[dict] = []
 
@@ -233,22 +234,24 @@ def test_sql_prompt_includes_standing_memory(monkeypatch):
             return type("Reply", (), {"output_text": '{"action":"finish","tables":[],"sql":"","score":0}'})()
 
     monkeypatch.setattr("backend.text2sql.text2sql.deepseek_client", lambda: _DeepSeek())
-    _next_action(question="how many orders", context="[fact] fiscal year starts in April",
-                 history=None, folded_through=0, observations=[], trace=_RunTrace(), remaining={})
+    asyncio.run(_next_action_async(
+        question="how many orders", context="[fact] fiscal year starts in April",
+        history=None, folded_through=0, observations=[], trace=_RunTrace(), remaining={},
+    ))
     assert "fiscal year" in calls[0]["instructions"]
     calls.clear()
-    _next_action(question="how many orders", context="", history=None,
-                 folded_through=0, observations=[], trace=_RunTrace(), remaining={})
+    asyncio.run(_next_action_async(
+        question="how many orders", context="", history=None,
+        folded_through=0, observations=[], trace=_RunTrace(), remaining={},
+    ))
     assert "fiscal year" not in calls[0]["instructions"]
 
 
 def test_an_unsummarised_prefix_stays_in_the_next_prompt(db):
     sid = service.new_session(db, "ps-1")["id"]
     history = [bulky("user", 800, "Q"), {"role": "assistant", "content": "keep-assistant"}]
-    record_history(db, db.session(sid), history, llm=FakeLLM())
-    from backend.orchestrator.speak import _chat_messages
-
-    contents = [m["content"] for m in _chat_messages(db.session(sid), "next")]
+    record_history(db, db.session(sid), history)
+    contents = _shown(db.session(sid), "next")
     assert "QQQQ" in contents[0] and "keep-assistant" in contents[1] and contents[-1] == "next"
 
 

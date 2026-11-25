@@ -111,6 +111,40 @@ class RecordMixin:
             s.flush()
             return True
 
+    def note_stale_wake(self, run_id: str, *, progressed: bool) -> int:
+        """Count sweeps that woke this owner without a new child result.
+
+        A new result resets the count. The sweeper uses the number to stop
+        re-dispatching the same unfinished tasks.
+        """
+        now = utcnow()
+        with self.tx() as s:
+            if self._lock_run(s, run_id) is None:
+                return 0
+            previous = s.scalars(
+                select(orm.Checkpoint)
+                .where(orm.Checkpoint.run_id == run_id)
+                .order_by(orm.Checkpoint.checkpoint_index.desc())
+                .limit(1)
+            ).first()
+            if previous is None:
+                return 0
+            state = dict(previous.state_json or {})
+            orchestrator = dict(state.get("orchestrator") or {})
+            if progressed:
+                count = 0
+            else:
+                try:
+                    count = int(orchestrator.get("stale_wakes") or 0) + 1
+                except (TypeError, ValueError):
+                    count = 1
+            orchestrator["stale_wakes"] = count
+            state["orchestrator"] = orchestrator
+            if self._write_checkpoint(s, run_id, state, now) is None:
+                return 0
+            s.flush()
+            return count
+
     def insert_step(
         self, 
         run_id: str, 

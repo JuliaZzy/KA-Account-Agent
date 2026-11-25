@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from typing import Any
@@ -66,7 +67,8 @@ async def execute_parent(db: Database, llm: Any, run: dict[str, Any], session: d
         wave_id = state.get("wave_id")
         session_id = str(session["id"])
         if isinstance(wave_id, str) and wave_id:
-            for task_id, item in collect_wave(db, run, session_id, wave_id).items():
+            collected = await asyncio.to_thread(collect_wave, db, run, session_id, wave_id)
+            for task_id, item in collected.items():
                 results[task_id] = item
                 if task_id not in finished:
                     finished.append(task_id)
@@ -79,7 +81,9 @@ async def execute_parent(db: Database, llm: Any, run: dict[str, Any], session: d
     if not tasks:
         return {"text": await _answer(db, llm, run, session, text, tasks, finished, results, plan_note)}
 
-    parked = dispatch_wave(db, run, session, tasks, finished, results, payload)
+    parked = await asyncio.to_thread(
+        dispatch_wave, db, run, session, tasks, finished, results, payload,
+    )
     if parked is not None:
         return None
     return {"text": await _answer(db, llm, run, session, text, tasks, finished, results, plan_note)}

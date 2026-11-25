@@ -93,6 +93,18 @@ def test_async_generator_typeerror_is_internal_not_network():
     assert "async_generator" in (err.cause or "")
 
 
+def test_running_event_loop_is_not_a_provider_failure():
+    err = translate_provider_error(
+        RuntimeError("This event loop is already running"),
+        provider="deepseek",
+        model="deepseek-flash",
+    )
+    assert err.kind == "event_loop"
+    assert err.retryable is False
+    assert err.code == "EVENT_LOOP_REENTERED"
+    assert err.cause_type == "RuntimeError"
+
+
 def test_closed_event_loop_is_internal_not_network():
     err = translate_provider_error(
         RuntimeError("Event loop is closed"),

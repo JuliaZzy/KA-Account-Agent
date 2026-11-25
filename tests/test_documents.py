@@ -2,36 +2,42 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
+import httpx
 import pytest
 
 from backend.documents import load_pages
 
 
-def _response(payload: dict):
-    class _Body:
-        def read(self):
-            return json.dumps(payload).encode()
+def _ocr(monkeypatch, handler):
+    transport = httpx.MockTransport(handler)
+    real = httpx.AsyncClient
 
-        def __enter__(self):
-            return self
+    def factory(*args, **kwargs):
+        kwargs["transport"] = transport
+        seen_timeout.append(kwargs.get("timeout"))
+        return real(*args, **kwargs)
 
-        def __exit__(self, *_args):
-            return False
+    seen_timeout: list = []
+    monkeypatch.setattr("backend.llm.client.httpx.AsyncClient", factory)
+    return seen_timeout
 
-    return _Body()
+
+def _pages(file_name, data, **kwargs):
+    return asyncio.run(load_pages(file_name, data, **kwargs))
 
 
 def test_files_over_10mb_are_refused():
     with pytest.raises(ValueError, match="10MB"):
-        load_pages("notes.txt", b"x" * (20 * 1024 * 1024 + 1))
+        _pages("notes.txt", b"x" * (20 * 1024 * 1024 + 1))
 
 
 def test_pdf_without_a_key_names_the_variable(monkeypatch):
     monkeypatch.setenv("GLM_API_KEY", "")
     with pytest.raises(ValueError, match="GLM_API_KEY"):
-        load_pages("agreement.pdf", b"%PDF-1.4")
+        _pages("agreement.pdf", b"%PDF-1.4")
 
 
 def test_pdf_pages_come_from_GLM_layout(monkeypatch):
@@ -50,35 +56,34 @@ def test_pdf_pages_come_from_GLM_layout(monkeypatch):
         ],
     }
 
-    def fake_urlopen(req, timeout=0):
-        body = json.loads(req.data.decode())
-        seen["url"] = req.full_url
-        seen["auth"] = req.get_header("Authorization")
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen["url"] = str(request.url)
+        seen["auth"] = request.headers["authorization"]
         seen["model"] = body["model"]
         seen["file"] = body["file"]
         seen["capped"] = "end_page_id" in body or "start_page_id" in body
-        seen["timeout"] = timeout
-        return _response(payload)
+        return httpx.Response(200, json=payload)
 
-    monkeypatch.setattr("backend.llm.client.urllib.request.urlopen", fake_urlopen)
-    pages = load_pages("agreement.pdf", b"%PDF-1.4")
+    timeouts = _ocr(monkeypatch, handler)
+    pages = _pages("agreement.pdf", b"%PDF-1.4")
     assert pages == [(1, "Term 2026-01-01\n\nUSD 500"), (2, "Sweden")]
     assert seen["url"] == "https://ocr.example/layout_parsing"
     assert seen["auth"] == "Bearer test-key"
     assert seen["model"] == "glm-ocr" and seen["capped"] is False
     assert seen["file"].startswith("data:application/pdf;base64,")
-    assert seen["timeout"] == 180
+    assert timeouts == [180]
 
 
 def test_pdf_uses_markdown_when_the_response_has_no_pages(monkeypatch):
     monkeypatch.setenv("GLM_API_KEY", "test-key")
     monkeypatch.setenv("GLM_BASE_URL", "https://ocr.example/layout_parsing")
 
-    def fake_urlopen(req, timeout=0):
-        return _response({"md_results": "# Agreement\n\nMinimum order USD 500."})
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"md_results": "# Agreement\n\nMinimum order USD 500."})
 
-    monkeypatch.setattr("backend.llm.client.urllib.request.urlopen", fake_urlopen)
-    assert load_pages("agreement.pdf", b"%PDF") == [(1, "# Agreement\n\nMinimum order USD 500.")]
+    _ocr(monkeypatch, handler)
+    assert _pages("agreement.pdf", b"%PDF") == [(1, "# Agreement\n\nMinimum order USD 500.")]
 
 
 def test_pdf_ocr_is_a_tool_step_while_the_run_is_running(db, monkeypatch):
@@ -89,19 +94,18 @@ def test_pdf_ocr_is_a_tool_step_while_the_run_is_running(db, monkeypatch):
     monkeypatch.setenv("GLM_API_KEY", "test-key")
     monkeypatch.setenv("GLM_BASE_URL", "https://ocr.example/layout_parsing")
 
-    def fake_urlopen(req, timeout=0):
-        del req, timeout
-        return _response({"md_results": "# Agreement\n\nMinimum order USD 500."})
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"md_results": "# Agreement\n\nMinimum order USD 500."})
 
-    monkeypatch.setattr("backend.llm.client.urllib.request.urlopen", fake_urlopen)
+    _ocr(monkeypatch, handler)
     run, _created = db.create_agent_run("dist-1", "u-a", "chat", "ocr-trace", {"message": "read the file"})
     with pytest.raises(ValueError, match="run is not running"):
-        load_pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"])
+        _pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"])
     assert db.run_trace("dist-1", run["id"])["steps"] == []
     assert db.claim_chat_turn(run["id"], "worker-test", utcnow() + timedelta(minutes=5)) is not None
-    pages = load_pages("notes.txt", b"hello\n\nthere", db=db, run_id=run["id"])
+    pages = _pages("notes.txt", b"hello\n\nthere", db=db, run_id=run["id"])
     assert pages == [(1, "hello\n\nthere")]
-    pages = load_pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"])
+    pages = _pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"])
     trace = db.run_trace("dist-1", run["id"])
     assert trace["run"]["status"] == "running"
     assert [(step["step_type"], step["name"], step["status"]) for step in trace["steps"]] == [
@@ -123,10 +127,13 @@ def test_ocr_actual_usage_enters_the_ledger_even_if_page_parsing_fails(db, monke
     monkeypatch.setenv("GLM_API_KEY", "test-key")
     monkeypatch.setenv("GLM_BASE_URL", "https://ocr.example/layout_parsing")
     payload = {"usage": {"prompt_tokens": 40000, "completion_tokens": 10000}, "request_id": "req-1"}
-    monkeypatch.setattr("backend.llm.client.urllib.request.urlopen", lambda *_args, **_kw: _response(payload))
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    _ocr(monkeypatch, handler)
     run = db.create_inline_contract_run("dist-1", "u-a", "agreement.pdf")
     with pytest.raises(ValueError, match="no pages"):
-        load_pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"])
+        _pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"])
     trace = db.run_trace("dist-1", run["id"])
     call, usage = trace["model_calls"][0], trace["usage_records"][0]
     assert (call["status"], call["usage_source"], call["prompt_tokens"], call["completion_tokens"]) == (
@@ -145,14 +152,21 @@ def test_ocr_budget_prevents_request_and_does_not_create_a_model_call(db, monkey
     monkeypatch.setenv("GLM_API_KEY", "test-key")
     monkeypatch.setenv("GLM_BASE_URL", "https://ocr.example/layout_parsing")
     run = db.create_inline_contract_run("dist-1", "u-a", "agreement.pdf")
-    monkeypatch.setattr("backend.llm.client.urllib.request.urlopen", lambda *_args, **_kw: _response({
-        "md_results": "Agreement", "usage": {"prompt_tokens": 10, "completion_tokens": 5},
-    }))
-    load_pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"])
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "md_results": "Agreement", "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        })
+
+    _ocr(monkeypatch, handler)
+    _pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"])
     monkeypatch.setenv("KA_ACCOUNT_ORG_DAILY_TOKENS", "15")
-    monkeypatch.setattr("backend.llm.client.urllib.request.urlopen", lambda *_args, **_kw: pytest.fail("called"))
+
+    def refuse(_request: httpx.Request) -> httpx.Response:
+        pytest.fail("called")
+
+    _ocr(monkeypatch, refuse)
     with pytest.raises(ModelBudgetExceeded):
-        load_pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"])
+        _pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"])
     trace = db.run_trace("dist-1", run["id"])
     assert len(trace["model_calls"]) == 1
     assert [row["status"] for row in trace["tool_calls"]] == ["succeeded", "failed"]
@@ -163,13 +177,13 @@ def test_ocr_transport_failure_is_unknown_and_repeated_filenames_are_distinct(db
     monkeypatch.setenv("GLM_BASE_URL", "https://ocr.example/layout_parsing")
     run = db.create_inline_contract_run("dist-1", "u-a", "agreement.pdf")
 
-    def fail(*_args, **_kwargs):
-        raise OSError("connection lost")
+    def fail(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection lost")
 
-    monkeypatch.setattr("backend.llm.client.urllib.request.urlopen", fail)
+    _ocr(monkeypatch, fail)
     for _ in range(2):
-        with pytest.raises(OSError, match="connection lost"):
-            load_pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"])
+        with pytest.raises(ValueError, match="connection lost"):
+            _pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"])
     trace = db.run_trace("dist-1", run["id"])
     assert len(trace["tool_calls"]) == len(trace["model_calls"]) == 2
     assert all(row["usage_source"] == "unknown" for row in trace["usage_records"])
@@ -180,11 +194,12 @@ def test_ocr_transport_failure_is_unknown_and_repeated_filenames_are_distinct(db
 def test_partial_ocr_usage_keeps_known_tokens(db, monkeypatch):
     monkeypatch.setenv("GLM_API_KEY", "test-key")
     monkeypatch.setenv("GLM_BASE_URL", "https://ocr.example/layout_parsing")
-    monkeypatch.setattr("backend.llm.client.urllib.request.urlopen", lambda *_args, **_kw: _response({
-        "md_results": "Agreement", "usage": {"prompt_tokens": 123},
-    }))
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"md_results": "Agreement", "usage": {"prompt_tokens": 123}})
+
+    _ocr(monkeypatch, handler)
     run = db.create_inline_contract_run("dist-1", "u-a", "agreement.pdf")
-    load_pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"])
+    _pages("agreement.pdf", b"%PDF", db=db, run_id=run["id"])
     usage = db.list_usage_records(run["id"])[0]
     assert (usage["prompt_tokens"], usage["completion_tokens"], usage["usage_source"]) == (123, 0, "unknown")
 

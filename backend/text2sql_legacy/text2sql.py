@@ -7,6 +7,7 @@ query safety, result shape, logging, and prompt rules.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -91,10 +92,10 @@ def _ask_ds(
 ) -> dict[str, Any]:
     """One JSON object from deepseek-flash, thinking off."""
     _charge_model_call(trace)
-    return model_calls.deepseek_json(
+    return asyncio.run(model_calls.deepseek_json_async(
         system=system, messages=[{"role": "user", "content": user}], schema=schema,
         temperature=0, client=_ds_client(), **_ledger(trace, purpose),
-    )
+    ))
 
 
 def _strip_fence(sql: str) -> str:
@@ -221,10 +222,10 @@ def _ask_school(
     """Run the historical planning role through the same DeepSeek JSON route as ReAct."""
     _charge_model_call(trace)
     schema = table_schema() if purpose == "data.pick" else reflection_schema()
-    return model_calls.deepseek_json(
+    return asyncio.run(model_calls.deepseek_json_async(
         system=system, messages=[{"role": "user", "content": user}], schema=schema,
         temperature=0, client=_ds_client(), **_ledger(trace, purpose),
-    )
+    ))
 
 
 def sql_schema() -> dict[str, Any]:

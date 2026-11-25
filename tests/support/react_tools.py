@@ -32,7 +32,7 @@ REACT = """你是一个带工具的工作台助手。请根据用户的提问，
 """
 
 
-def _run_one_tool(
+async def _run_one_tool(
     call: Any, runners: dict[str, Any], llm: Any, context: dict[str, Any],
 ) -> dict[str, Any]:
     fn = runners.get(call.name)
@@ -42,7 +42,7 @@ def _run_one_tool(
         try:
             result = fn(call.arguments, llm=llm, context=context)
             if inspect.isawaitable(result):
-                result = asyncio.run(result)
+                result = await result
         except (ModelCapacityExceeded, ProviderError):
             raise
         except Exception as err:
@@ -55,6 +55,16 @@ def _run_one_tool(
 
 
 def run_tool_calls(
+    llm: Any, *, text: str, history: list[dict[str, Any]], extra: dict[str, Any] | None = None,
+    include_mcp: bool | None = None, memory: str | None = None, folded_through: int = 0,
+) -> str | None:
+    return asyncio.run(_run_tool_calls(
+        llm, text=text, history=history, extra=extra, include_mcp=include_mcp,
+        memory=memory, folded_through=folded_through,
+    ))
+
+
+async def _run_tool_calls(
     llm: Any, *, text: str, history: list[dict[str, Any]], extra: dict[str, Any] | None = None,
     include_mcp: bool | None = None, memory: str | None = None, folded_through: int = 0,
 ) -> str | None:
@@ -72,10 +82,11 @@ def run_tool_calls(
     used = False
     last: AssistantTurn | None = None
     for _ in range(MAX_TOOL_ROUNDS):
-        last = model_calls.deepseek_tools(
-            client=llm, system=attach(REACT, memory or ""), messages=messages, tools=schemas,
-            purpose="session.tools",
-        )
+        last = model_calls._unwrap(await model_calls.call_model_async(
+            model_calls.DEEPSEEK_FLASH, brand="deepseek", kind="chat_completion", expect="tools",
+            temperature=0, system=attach(REACT, memory or ""), messages=messages, tools=schemas,
+            tool_choice="auto", reasoning_effort="none", client=llm, purpose="session.tools",
+        ))
         if not last.tool_calls:
             if used:
                 return (last.content or "").strip() or "Done."
@@ -83,5 +94,5 @@ def run_tool_calls(
         used = True
         messages.append(last.as_message())
         for call in last.tool_calls:
-            messages.append(_run_one_tool(call, runners, llm, context))
+            messages.append(await _run_one_tool(call, runners, llm, context))
     return (last.content if last else None) or "Done."

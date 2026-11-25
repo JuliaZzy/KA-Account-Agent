@@ -1,10 +1,7 @@
-"""采购单对话的一轮，以及确认闸门。
+"""采购单草稿，以及确认闸门。
 
-    合同折扣（代码）→ 抽取（模型）→ 合并 → 代码检查（代码，外加模型解析回退）→ 草稿 → 回复（模型，流式）
-
-回复以 `token` 事件流出；草稿表和缺口在最后的 `done` 事件里——界面根据代码渲染，绝不根据模型。
-
-确认是另一条确定性的路：没有模型，对着当前目录和规则重跑检查，草稿哈希必须等于签发令牌时的那个，
+合同折扣（代码）→ 抽取（模型）→ 合并 → 代码检查 → 草稿。`prepare_order` 不写会话，也不写回复。
+编排器拿到草稿后再写会话。确认对着当前目录和规则重跑检查，草稿哈希必须等于签发令牌时的那个，
 并且令牌在创建订单之前烧掉。
 """
 
@@ -12,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -21,14 +17,13 @@ from ..contract import contract_discount_for_next_order
 from ..db import Database
 from ..llm.calls import JsonRepairExhausted
 from ..llm.errors import ModelCapacityExceeded, ProviderError
-from ..memory import prompt_context, recall, record_history, summary_block, with_memory
+from ..memory import prompt_context, recall, summary_block, with_memory
 from ..orchestrator.status import status
 from ..schemas import AgentSettings, CommercialRule, Partnership
 from .catalog import Catalog
 from .check import CheckResult, run_code_check, typed_in
 from .draft import build_draft, build_draft_summary, hash_draft
 from .extract import extract_turn
-from .reply import ReplyInput, stream_reply
 from .resolver import resolve_references
 from .slots import Discount, PoSlots, merge_slots
 from .submit import create_and_submit_po
@@ -88,13 +83,6 @@ async def _check(
                 # so the line resolves the same way then (an exact SKU always wins the search).
                 li.reference = l.sku
     return check
-
-
-def _layer_notes(check: CheckResult) -> list[str]:
-    return [
-        f"{l.product_name}: {l.cases} cases is a partial layer ({l.cases_per_layer}/layer) — {l.cases_to_full_layer} more fills it"
-        for l in check.lines if l.partial_layer and l.cases_per_layer and l.cases_to_full_layer
-    ]
 
 
 @dataclass
@@ -202,55 +190,6 @@ def order_result(prepared: PoPrepared, bundle: Bundle, *, clear_po: bool = False
         "gaps_detail": _gap_detail(check),
         "advisories": [rule.message for rule in check.advisory],
         "clear_po": clear_po,
-    }
-
-
-def run_po_turn(
-    db: Database, llm: Any, bundle: Bundle, session: dict[str, Any], message: str, images: list[str] | None = None,
-) -> Iterator[dict[str, Any]]:
-    prepared = asyncio.run(prepare_order(db, llm, bundle, session, message, images))
-    yield from prepared.events
-    slots, check, stage = prepared.slots, prepared.check, prepared.stage
-    draft, language, images = prepared.draft, prepared.language, images or []
-
-    # Stream the reply — told the gate outcome, so it is accurate.
-    yield status("po-reply", "回复", "正在写回复", state="running")
-    reply_text = ""
-    try:
-        for tok in stream_reply(llm, ReplyInput(
-            tone=bundle.settings.tone, language=language, user_message=message, stage=stage,
-            draft_summary=build_draft_summary(slots, check, bundle.settings, bundle.partnership.currency),
-            resolutions=[(l.reference, l.product_name) for l in check.lines if l.resolved],
-            gaps=check.gap_messages, advisories=[r.message for r in check.advisory],
-            layer_notes=_layer_notes(check), image_count=len(images),
-            operating_context=prepared.context, contract_discount=prepared.applied,
-            history=prepared.history, folded_through=prepared.folded,
-        )):
-            reply_text += tok
-            yield {"type": "token", "text": tok}
-        yield status("po-reply", "回复", "回复已写完", state="done")
-    except (ModelCapacityExceeded, ProviderError, JsonRepairExhausted):
-        raise
-    except Exception as err:
-        yield {"type": "warning", "message": f"reply failed: {err}"}
-        yield status("po-reply", "回复", "回复失败", state="done")
-
-    # 6. Persist the whole transcript, then hand the UI the structured payload.
-    #    A long unsummarised prefix is folded into this chat's summary after the reply.
-    assistant: dict[str, Any] = {"role": "assistant", "content": reply_text, "order": True}
-    if draft:
-        assistant["order_draft"] = draft
-    history = [*prepared.history, {"role": "user", "content": message or "(image)"}, assistant]
-    record_history(
-        db, session, history, llm=llm,
-        slots=slots.model_dump(), stage=stage, specialist="po",
-        confirm_token=prepared.token, confirm_hash=prepared.draft_hash, confirm_expires_at=prepared.expires,
-    )
-    yield {
-        "type": "done", "stage": stage, "slots": slots.model_dump(), "draft": draft, "order": True,
-        "gaps": check.gap_messages, "gaps_detail": _gap_detail(check),
-        "advisories": [r.message for r in check.advisory],
-        "confirm_token": prepared.token, "submitted": None,
     }
 
 
