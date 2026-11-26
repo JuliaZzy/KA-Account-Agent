@@ -151,8 +151,7 @@ def repair_json(
     purpose: str | None,
 ) -> Any:
     """带着问题再调 `fetch`，直到对象合格，或次数用完。"""
-    from .calls import ModelBudgetExceeded, ModelOutputError, last_finish_reason
-    from .errors import ModelCapacityExceeded, ProviderError
+    from .calls import ModelOutputError, last_finish_reason
 
     pending = list(messages)
     if not repairs_enabled(purpose):
@@ -163,8 +162,6 @@ def repair_json(
         try:
             raw = fetch(pending)
             truncated = last_finish_reason() == "length"
-        except (ModelCapacityExceeded, ProviderError, ModelBudgetExceeded):
-            raise
         except ModelOutputError as err:
             last_error = err
             truncated = err.finish_reason == "length" or last_finish_reason() == "length"
@@ -214,8 +211,7 @@ async def repair_json_async(
     purpose: str | None,
 ) -> Any:
     """和 repair_json 一样：不合格就带着问题再问一次。这里的 fetch 是协程。"""
-    from .calls import ModelBudgetExceeded, ModelOutputError, last_finish_reason
-    from .errors import ModelCapacityExceeded, ProviderError
+    from .calls import ModelOutputError, last_finish_reason
 
     pending = list(messages)
     if not repairs_enabled(purpose):
@@ -226,8 +222,6 @@ async def repair_json_async(
         try:
             raw = await fetch(pending)
             truncated = last_finish_reason() == "length"
-        except (ModelCapacityExceeded, ProviderError, ModelBudgetExceeded):
-            raise
         except ModelOutputError as err:
             last_error = err
             truncated = err.finish_reason == "length" or last_finish_reason() == "length"

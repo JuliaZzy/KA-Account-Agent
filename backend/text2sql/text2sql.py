@@ -21,7 +21,7 @@ from typing import Any
 from ..db import Database, utcnow
 from ..llm import calls as model_calls
 from ..llm import deepseek_client
-from ..llm.errors import ModelCapacityExceeded, ProviderError
+from ..llm.errors import classify, hands_off_to_worker
 from ..memory import actor_id, attach, prompt_context, prompt_turns, standing_block, summary_block
 from .prompt import REACT
 from .sql_validator import system_row_cap, unlimited_statement, validate
@@ -383,9 +383,10 @@ async def answer_question_async(
                 required_columns=required,
                 decide=decide,
             )
-        except (ModelCapacityExceeded, ProviderError, model_calls.ModelBudgetExceeded):
-            raise
         except Exception as err:
+            kind = classify(err)
+            if hands_off_to_worker(kind) or kind.name == "budget":
+                raise
             kind = _model_failure(err)
             message = f"{type(err).__name__}: {str(err)[:300]}"
             entry = _note(observations, turn, action="model_output", error=message, kind=kind)

@@ -12,8 +12,7 @@ from typing import Any
 
 from ..db import Database
 from ..llm import calls as model_calls
-from ..llm.calls import JsonRepairExhausted
-from ..llm.errors import ModelCapacityExceeded, ProviderError
+from ..llm.errors import classify, hands_off_to_worker
 from ..services.chat_run import enqueue_chat_run
 from ..services.run_names import StepStatus, StepType, step_name
 from .prompt import OPEN
@@ -113,9 +112,9 @@ async def execute_open(db: Database, llm: Any, run: dict[str, Any]) -> dict[str,
         opened = await open_session(
             llm, message=message, attachments=attachments, db=db, run_id=str(run["id"]),
         )
-    except (ModelCapacityExceeded, ProviderError, JsonRepairExhausted):
-        raise
     except Exception as exc:
+        if hands_off_to_worker(classify(exc)):
+            raise
         log.exception("Failed to name new chat")
         return {"ok": False, "error": str(exc)}
     with hold_session(session_id):

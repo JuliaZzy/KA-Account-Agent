@@ -1539,8 +1539,9 @@ async def qwen_json_async(
 
     try:
         return await repair_json_async(fetch, messages=messages, schema=schema, purpose=purpose)
-    except JsonRepairExhausted as exc:
-        _note_exhausted_call(db, run_id, exc)
+    except Exception as exc:
+        if isinstance(exc, JsonRepairExhausted):
+            _note_exhausted_call(db, run_id, exc)
         raise
 
 
@@ -1561,7 +1562,8 @@ async def deepseek_json_async(
 
     try:
         return await repair_json_async(fetch, messages=messages, schema=schema, purpose=purpose)
-    except JsonRepairExhausted as exc:
-        _note_exhausted_call(db, run_id, exc)
+    except Exception as exc:
+        if isinstance(exc, JsonRepairExhausted):
+            _note_exhausted_call(db, run_id, exc)
         raise
 

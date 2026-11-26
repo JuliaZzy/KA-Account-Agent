@@ -14,8 +14,7 @@ from typing import Any
 
 from ..contract import contract_discount_for_next_order
 from ..db import Database
-from ..llm.calls import JsonRepairExhausted
-from ..llm.errors import ModelCapacityExceeded, ProviderError
+from ..llm.errors import classify, hands_off_to_worker
 from ..memory import prompt_context, recall, summary_block, with_memory
 from ..orchestrator.status import status
 from ..schemas import AgentSettings, CommercialRule, Partnership
@@ -144,9 +143,9 @@ async def prepare_order(
         )
         slots, language = merge_slots(current, ex.slots), ex.reply_language
         events.append(status("po-extract", "抽取", "订单字段已填上", state="done"))
-    except (ModelCapacityExceeded, ProviderError, JsonRepairExhausted):
-        raise
     except Exception as err:
+        if hands_off_to_worker(classify(err)):
+            raise
         events.append({"type": "warning", "message": f"extraction failed: {err}"})
         events.append(status("po-extract", "抽取", "没读出来，沿用已有订单", state="done"))
         slots, language = current, "English"

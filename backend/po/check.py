@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..llm.calls import JsonRepairExhausted
+from ..llm.errors import classify, hands_off_to_worker
 from ..schemas import CommercialRule, Product
 from .catalog import Catalog
 from .rules import EvalItem, POContext, RuleResult, evaluate_rules, moq_minimum_cases
@@ -209,9 +209,9 @@ def _apply_llm_resolution(lines: list[ResolvedLine], catalog: Catalog, resolve: 
         return lines
     try:
         mapping = resolve(refs)
-    except JsonRepairExhausted:
-        raise
-    except Exception:
+    except Exception as exc:
+        if hands_off_to_worker(classify(exc)):
+            raise
         return lines
     out: list[ResolvedLine] = []
     for l in lines:

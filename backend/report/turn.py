@@ -28,8 +28,8 @@ from ..codefix import format_failures
 from ..codefix.fix import with_reflection_async
 from ..db import Database, utcnow
 from ..llm import calls as model_calls
-from ..llm.calls import JsonRepairExhausted, ModelBudgetExceeded, tool_limit
-from ..llm.errors import ModelCapacityExceeded, ProviderError, classify, hands_off_to_worker
+from ..llm.calls import ModelBudgetExceeded, tool_limit
+from ..llm.errors import classify, hands_off_to_worker
 from ..memory import actor_id, attach, prompt_turns
 from ..text2sql import QueryResult
 from ..text2sql.table_metadata import catalog_text, scope_views
@@ -695,9 +695,9 @@ async def _plan_async(
             temperature=0,
             trace=trace,
         )
-    except (ModelCapacityExceeded, ProviderError, JsonRepairExhausted):
-        raise
-    except Exception:
+    except Exception as exc:
+        if hands_off_to_worker(classify(exc)):
+            raise
         raw = {}
     planned = ensure_chart_questions(parse_plan(raw, today=utcnow().date()), message)
     return planned, parse_report_title(raw)
@@ -944,9 +944,9 @@ async def _draw_charts_async(
         for item in by_section.get(section.id) or []:
             try:
                 drawn, fails, decision = await _chart_one_async(llm, message, section.id, item, trace=trace)
-            except ModelBudgetExceeded:
-                raise
             except Exception as exc:
+                if classify(exc).name == "budget":
+                    raise
                 _note_degraded(degraded, section.id, "report_charts", exc)
                 chart_failures.append(str(exc).split("\n", 1)[0][:200])
                 role = chart_role(item.question, message)
@@ -1282,9 +1282,9 @@ async def _code_wizards_async(
             messages=[{"role": "user", "content": "为四个章节各写一段独立的 analyze(datasets)。"}],
             schema=code_wizards_schema(), temperature=0, trace=trace,
         )
-    except ModelBudgetExceeded:
-        raise
     except Exception as err:
+        if classify(err).name == "budget":
+            raise
         message = str(err).split("\n", 1)[0][:200]
         for section in sections:
             _note_degraded(degraded, section.id, "code_wizards", err)
@@ -1298,9 +1298,9 @@ async def _code_wizards_async(
             insights, err, fails = await _run_analyze_async(
                 llm, str(raw.get(section.id) or ""), query_results, trace=trace,
             )
-        except ModelBudgetExceeded:
-            raise
         except Exception as exc:
+            if classify(exc).name == "budget":
+                raise
             _note_degraded(degraded, section.id, "code_wizard", exc)
             errors.append(f"{section.title}: {exc}")
             continue
@@ -1446,9 +1446,9 @@ async def _write_section_async(
             messages=messages,
             schema=section_schema(), temperature=0, trace=trace,
         )
-    except (ModelCapacityExceeded, ProviderError, JsonRepairExhausted):
-        raise
-    except Exception:
+    except Exception as exc:
+        if hands_off_to_worker(classify(exc)):
+            raise
         return "", []
     return _read_section(raw)
 
@@ -1471,9 +1471,9 @@ async def _write_summary_async(
             messages=messages,
             schema=section_schema(), temperature=0, trace=trace,
         )
-    except (ModelCapacityExceeded, ProviderError, JsonRepairExhausted):
-        raise
-    except Exception:
+    except Exception as exc:
+        if hands_off_to_worker(classify(exc)):
+            raise
         return "", []
     return _read_section(raw)
 
@@ -1944,9 +1944,9 @@ async def _review_report_async(
             messages=[{"role": "user", "content": "找出问题并给这整份报告打分。"}],
             schema=review_schema(), temperature=0, trace=trace,
         )
-    except (ModelCapacityExceeded, ProviderError, JsonRepairExhausted):
-        raise
     except Exception as err:
+        if hands_off_to_worker(classify(err)):
+            raise
         return None, [], [], str(err).split("\n", 1)[0][:200]
     score, chapters = _review_score(raw)
     if score is None:
@@ -2041,9 +2041,9 @@ async def _revise_report_async(
             messages=[{"role": "user", "content": _revise_instruction(issues)}],
             schema=revise_schema(), temperature=0, trace=trace,
         )
-    except (ModelCapacityExceeded, ProviderError, JsonRepairExhausted):
-        raise
-    except Exception:
+    except Exception as exc:
+        if hands_off_to_worker(classify(exc)):
+            raise
         return ""
     return _apply_revise(report, raw)
 

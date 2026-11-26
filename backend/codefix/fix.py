@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ..llm import calls as model_calls
-from ..llm.calls import JsonRepairExhausted
+from ..llm.errors import classify, hands_off_to_worker
 from .prompt import CODE_FIX_PROMPT
 
 MAX_ATTEMPTS = 3
@@ -101,9 +101,9 @@ async def _revise_async(
             client=llm,
             **_ledger(trace),
         )
-    except JsonRepairExhausted:
-        raise
-    except Exception:
+    except Exception as exc:
+        if hands_off_to_worker(classify(exc)):
+            raise
         return ""
     if not isinstance(parsed, dict):
         return ""

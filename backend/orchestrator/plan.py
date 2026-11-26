@@ -11,7 +11,6 @@ from typing import Any
 from ..db import Database
 from ..llm import calls as model_calls
 from ..llm.calls import ModelOutputError
-from ..llm.errors import ModelCapacityExceeded, ProviderError
 from ..memory import attach, prompt_turns
 from ..services.run_names import StepStatus, StepType, step_name
 from ..tools import all_schemas
@@ -604,8 +603,6 @@ async def make_plan(
                     db=db, run_id=run_id, step_id=step_id, purpose="orchestrator.plan",
                 )
                 truncated = model_calls.last_finish_reason() == "length"
-            except (ModelCapacityExceeded, ProviderError, model_calls.ModelBudgetExceeded):
-                raise
             except ModelOutputError as err:
                 parsed = None
                 previous = err.raw or str(err)
@@ -633,8 +630,6 @@ async def make_plan(
         if fatal is not None:
             code = fatal.code
             unusable = True
-    except (ModelCapacityExceeded, ProviderError, model_calls.ModelBudgetExceeded) as err:
-        caught = err
     except Exception as err:
         caught = err
     tasks: list[PlanTask] = []

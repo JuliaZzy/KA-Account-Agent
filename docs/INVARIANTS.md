@@ -55,7 +55,7 @@
 
 - 规则：所有异常经过 `backend/llm/errors.py` 里的 `classify(exc) -> ErrorKind`。本地 `RuntimeError`（包括 `This event loop is already running`）归为内部错误，码是 `INTERNAL`，不记成 `PROVIDER_INTERNAL`。内部错误可重试，次数是 `INTERNAL_ERROR_RETRIES`（1）。`TimeoutError` 单独是 `timeout`，码是 `TIMEOUT`，按 `TIMEOUT_ERROR_RETRIES`（3）重试，不占用内部错误那一次。供应商超时仍是 `provider`。重试、换模型、熔断只看 `ErrorKind`。`fallback_on` 用 `ErrorKind.name`（`provider`、`capacity`、`invalid_json`）。
 - 原因：见 INC-1。这次的 `RuntimeError` 被收成 `ProviderError` / `PROVIDER_INTERNAL`。供应商没有失败，本地循环被重入了。按供应商错误处理之后，这条调用不重试、不换模型，整条月报被判死。
-- 检查：由 `scripts/check_invariants.sh` 执行。`except ProviderError`、`except ModelCapacityExceeded`，以及只包含这两类的元组，只出现在 `backend/llm/errors.py`。`"provider_error"` 和 `"model_capacity"` 也只允许出现在这个文件。脚本列出的调用点改为 `except Exception`，再 `kind = classify(exc)`。还带着 `JsonRepairExhausted` 或 `ModelBudgetExceeded` 的元组不在这条正则里，它们仍是原样再抛。
+- 检查：由 `scripts/check_invariants.sh` 执行。`except ProviderError`、`except ModelCapacityExceeded`，以及只包含这两类的元组，只出现在 `backend/llm/errors.py`。`except` 行里出现 `JsonRepairExhausted` 或 `ModelBudgetExceeded` 也只允许在这个文件。`"provider_error"` 和 `"model_capacity"` 也只允许出现在这个文件。脚本列出的调用点改为 `except Exception`，再 `kind = classify(exc)`，要交给 worker 的用 `hands_off_to_worker(kind)`。
 - 测试：`This event loop is already running` 分类为内部错误，码不是 `PROVIDER_INTERNAL`，不进入供应商熔断，不触发换模型。
 
 ## I-5 可选步骤失败要降级
@@ -73,6 +73,7 @@
 - 原因：见 INC-1。失败的那次调用是 `code_wizards`。洞察没有算出来，图表调用仍在成功，月报却因为这一次错误整条失败。
 - 检查：由 `scripts/check_invariants.sh` 执行。`backend/report/` 里的 `TaskGroup` 只能有一处，文件在白名单 `[report_task_group]`。这一处是四节正文，必选步骤，一个失败取消其余。
 - 和 I-6 的关系：可选步骤之间互不取消。必选步骤失败才取消其余还没发出的调用。图表和洞察不要改回一起取消。
+- 可选步骤失败直接降级，不在报告内部重试。`call_model_async` 也不按 `retryable` 对同一个模型再试一次。它只在路由的 `fallback_on` 包含这个 `ErrorKind.name` 时换下一个候选。`internal` 不在这张表里。供应商超时是 `provider`，审稿因此会换到备用模型，这不是同一调用的重试。
 - 测试：洞察调用注入失败，草稿仍然生成，对应章节写着「本节洞察暂缺」，图表调用次数不少，`degraded` 里有记录。图表调用注入失败，草稿仍然生成，对应章节写着「本节图表暂缺」，洞察还在。大纲调用注入失败，report run 失败，父 run 收到 `{ok:false}` 并进入 ANSWER。`ModelBudgetExceeded` 不降级，整条 run 失败。
 
 ## I-6 失败要真正取消

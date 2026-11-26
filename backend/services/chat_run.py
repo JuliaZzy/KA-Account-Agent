@@ -17,6 +17,7 @@ from typing import Any
 
 from ..db import Database
 from ..llm.calls import ModelBudgetExceeded
+from ..llm.errors import classify
 from ..llm.routing import run_budget_for
 from ..repositories.run_repository import (
     RunStatus,
@@ -206,7 +207,9 @@ def execute_chat(db: Database, llm: Any | None = None) -> Callable[[dict[str, An
             output = await execute_parent(db, llm, run, session)
         except InvalidPlan as exc:
             raise PermanentRunError(str(exc), code=exc.code) from exc
-        except ModelBudgetExceeded as exc:
+        except Exception as exc:
+            if classify(exc).name != "budget":
+                raise
             output = await _close_over_quota(db, llm, run, session, text, exc)
 
         ## 判断是否需要写回复

@@ -157,6 +157,17 @@ else
   pass "I-4 没有这些 except"
 fi
 
+named_hits=$(grep -rnE 'except .*(JsonRepairExhausted|ModelBudgetExceeded)' backend/ | strip_comments || true)
+named_files=$(printf '%s\n' "$named_hits" | awk -F: 'NF {print $1}' | sort -u)
+named_outside=$(printf '%s\n' "$named_files" | grep -vxF 'backend/llm/errors.py' || true)
+if [[ -n "$named_outside" ]]; then
+  fail "I-4 except JsonRepairExhausted / ModelBudgetExceeded 只允许在 backend/llm/errors.py" "$named_hits"
+elif [[ -n "$named_hits" ]]; then
+  pass "I-4 这两个 except 只在 backend/llm/errors.py"
+else
+  pass "I-4 没有 JsonRepairExhausted / ModelBudgetExceeded 的 except"
+fi
+
 # Route labels. The old names exist only as comments or constants in errors.py.
 literal_hits=$(grep -rnE '"provider_error"|"model_capacity"' backend/ | strip_comments || true)
 literal_files=$(printf '%s\n' "$literal_hits" | awk -F: 'NF {print $1}' | sort -u)
