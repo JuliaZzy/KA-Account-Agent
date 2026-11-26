@@ -110,10 +110,10 @@ def message(
 
 
 @router.post("/api/sessions/{sid}/confirm")
-def confirm(sid: str, body: Confirm, user_id: str, db: Database = Depends(get_db)) -> dict[str, Any]:
+async def confirm(sid: str, body: Confirm, user_id: str, db: Database = Depends(get_db)) -> dict[str, Any]:
     session_for_user(db, sid, user_id)
     try:
-        return service.confirm(db, sid, body.token)
+        return await service.confirm(db, sid, body.token)
     except KeyError as err:
         raise HTTPException(404, str(err)) from err
 

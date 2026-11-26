@@ -217,24 +217,31 @@ class McpHub:
         self._start_timeout = start_timeout
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
+        # One loop for this process. Two callers must not each start a thread.
+        self._loop_lock = threading.Lock()
 
     def _ensure_loop(self) -> asyncio.AbstractEventLoop:
-        if self._loop is not None and self._loop.is_running():
-            return self._loop
-        loop = asyncio.new_event_loop()
-        ready = threading.Event()
+        """Return the dedicated loop. Callers submit with `run_coroutine_threadsafe`."""
+        with self._loop_lock:
+            if self._loop is not None and not self._loop.is_closed():
+                return self._loop
+            loop = asyncio.new_event_loop()
+            ready = threading.Event()
 
-        def _run_loop() -> None:
-            asyncio.set_event_loop(loop)
-            ready.set()
-            loop.run_forever()
+            def _run_loop() -> None:
+                asyncio.set_event_loop(loop)
+                ready.set()
+                loop.run_forever()
 
-        thread = threading.Thread(target=_run_loop, name="ka_account-mcp", daemon=True)
-        thread.start()
-        ready.wait(timeout=5)
-        self._loop = loop
-        self._thread = thread
-        return loop
+            thread = threading.Thread(target=_run_loop, name="ka_account-mcp", daemon=True)
+            thread.start()
+            if not ready.wait(timeout=5):
+                loop.call_soon_threadsafe(loop.stop)
+                thread.join(timeout=1)
+                raise RuntimeError("MCP event loop did not start")
+            self._loop = loop
+            self._thread = thread
+            return loop
 
     def _run(self, coro: Any, *, timeout: float | None = None) -> Any:
         loop = self._ensure_loop()
@@ -307,14 +314,18 @@ class McpHub:
             self._ready = False
             self._failed = None
 
-        if self._loop is not None and self._loop.is_running():
-            with contextlib.suppress(Exception):
-                self._run(_close_all(), timeout=15)
-            self._loop.call_soon_threadsafe(self._loop.stop)
-            if self._thread is not None:
-                self._thread.join(timeout=5)
+        with self._loop_lock:
+            loop = self._loop
+            thread = self._thread
             self._loop = None
             self._thread = None
+        if loop is not None and loop.is_running():
+            with contextlib.suppress(Exception):
+                fut = asyncio.run_coroutine_threadsafe(_close_all(), loop)
+                fut.result(timeout=15)
+            loop.call_soon_threadsafe(loop.stop)
+            if thread is not None:
+                thread.join(timeout=5)
 
 
 _hub: McpHub | None = None

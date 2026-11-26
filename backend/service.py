@@ -60,18 +60,18 @@ def delete_session(db: Database, session_id: str) -> None:
     db.purge_session(session_id)
 
 
-def confirm(db: Database, session_id: str, token: str) -> dict[str, Any]:
+async def confirm(db: Database, session_id: str, token: str) -> dict[str, Any]:
     """The gate. Adds a code-composed `message` for the UI on the two states a person reads."""
     with hold_session(session_id):
-        return _confirm(db, session_id, token)
+        return await _confirm(db, session_id, token)
 
 
-def _confirm(db: Database, session_id: str, token: str) -> dict[str, Any]:
+async def _confirm(db: Database, session_id: str, token: str) -> dict[str, Any]:
     session = db.session(session_id)
     if not session:
         raise KeyError("session not found")
     bundle = load_bundle(db, session["partnership_id"], session.get("user_id"))
-    result = confirm_order(db, bundle, session, token)
+    result = await confirm_order(db, bundle, session, token)
     if result["state"] == "submitted":
         msg = f"Done — placed as {result['po_number']} ({result['currency']} {result['total']:.2f}). The brand will review it next."
         if result["advisories"]:

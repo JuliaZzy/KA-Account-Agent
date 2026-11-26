@@ -7,7 +7,6 @@ write thte chat transcript. `send_email` and every MCP tool wait for approval.
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 from ..brand_knowledge.answer import _search_query, _with_sources
@@ -19,7 +18,6 @@ from ..memory import prompt_context, standing_block, summary_block
 from ..po.agent import collect_order
 from ..po.turn import load_bundle
 from ..report.turn import chart_for_query
-from ..text2sql.impl import answer_question_impl
 from ..text2sql.text2sql import answer_question_async
 from ..tools import exchange_rate, lang_translate, send_email, web_search
 from .run_names import TOOL_STARTED_DISPLAY, StepType, ToolErrorCode, step_name
@@ -201,29 +199,16 @@ def _data_query(db, llm, session, text, bundle):
         run_id = ctx.get("run_id") if isinstance(ctx.get("run_id"), str) else None
         step_id = ctx.get("step_id") if isinstance(ctx.get("step_id"), str) else None
         partnership = bundle.partnership
-        impl = answer_question_impl()
-        if impl is answer_question_async:
-            result = await answer_question_async(
-                db, question=str(args.get("question") or "").strip() or _asked(args, text),
-                required_columns=_required_columns(args),
-                run_id=run_id, step_id=step_id,
-                partnership_id=partnership.id, brand_id=partnership.brand_id,
-                distributor_id=partnership.distributor_id, session_id=session["id"],
-                history=list(session.get("history") or []),
-                folded_through=int(session.get("folded_through") or 0),
-                summary=str(session.get("summary") or ""),
-            )
-        else:
-            result = await asyncio.to_thread(
-                impl, db, question=str(args.get("question") or "").strip() or _asked(args, text),
-                required_columns=_required_columns(args),
-                run_id=run_id, step_id=step_id,
-                partnership_id=partnership.id, brand_id=partnership.brand_id,
-                distributor_id=partnership.distributor_id, session_id=session["id"],
-                history=list(session.get("history") or []),
-                folded_through=int(session.get("folded_through") or 0),
-                summary=str(session.get("summary") or ""),
-            )
+        result = await answer_question_async(
+            db, question=str(args.get("question") or "").strip() or _asked(args, text),
+            required_columns=_required_columns(args),
+            run_id=run_id, step_id=step_id,
+            partnership_id=partnership.id, brand_id=partnership.brand_id,
+            distributor_id=partnership.distributor_id, session_id=session["id"],
+            history=list(session.get("history") or []),
+            folded_through=int(session.get("folded_through") or 0),
+            summary=str(session.get("summary") or ""),
+        )
         contract_error = (
             "query result is missing required columns: " + ", ".join(result.missing_columns)
             if result.missing_columns else result.error

@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -193,7 +192,7 @@ def order_result(prepared: PoPrepared, bundle: Bundle, *, clear_po: bool = False
     }
 
 
-def confirm_order(db: Database, bundle: Bundle, session: dict[str, Any], token: str) -> dict[str, Any]:
+async def confirm_order(db: Database, bundle: Bundle, session: dict[str, Any], token: str) -> dict[str, Any]:
     """The gate. Returns {state: submitted | done | used | expired | changed, ...}."""
     if session.get("stage") == "submitted":
         po = db.po(session["po_id"]) if session.get("po_id") else None
@@ -208,7 +207,7 @@ def confirm_order(db: Database, bundle: Bundle, session: dict[str, Any], token: 
     # conversation, and re-extracting at click time would let the model re-decide an
     # order the user has already read.
     slots = PoSlots(**session["slots"])
-    check = asyncio.run(_check(bundle, slots, None, resolve_names=False))
+    check = await _check(bundle, slots, None, resolve_names=False)
     draft = build_draft(slots, check, bundle.partnership.currency, bundle.settings)
     if not draft or not check.ready or hash_draft(draft) != session.get("confirm_hash"):
         db.update_session(session["id"], stage="gathering", confirm_token=None, confirm_hash=None, confirm_expires_at=None)
