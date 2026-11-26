@@ -11,6 +11,7 @@ import urllib.request
 from typing import Any
 
 from ..config import env
+from ..llm.errors import ProviderError, classify, classify_status
 
 BOCHA_URL = "https://api.bocha.cn/v1/web-search"
 MAX_COUNT = 5
@@ -46,7 +47,8 @@ def search(query: str, *, count: int = MAX_COUNT, api_key: str | None = None) ->
         with urllib.request.urlopen(req, timeout=20) as resp:
             payload = json.loads(resp.read().decode())
     except urllib.error.HTTPError as err:
-        raise RuntimeError(f"Bocha HTTP {err.code}") from err
+        kind, _retryable = classify_status(err.code)
+        raise ProviderError("bocha", "web-search", kind, status_code=err.code) from err
     pages = (((payload.get("data") or {}).get("webPages") or {}).get("value")) or []
     out: list[dict[str, str]] = []
     for page in pages:
@@ -67,4 +69,5 @@ def run(arguments: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
     try:
         return {"ok": True, "data": {"results": search(query)}, "error": None}
     except Exception as err:
-        return {"ok": False, "data": None, "error": str(err)}
+        kind = classify(err)
+        return {"ok": False, "data": None, "error": str(err), "code": kind.code}

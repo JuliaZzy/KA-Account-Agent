@@ -209,6 +209,16 @@ def _reused_planned_call(
     return result
 
 
+def _stored_tool_error(result: dict[str, Any]) -> dict[str, Any] | None:
+    if result.get("ok"):
+        return None
+    error: dict[str, Any] = {"message": result.get("error") or "tool failed"}
+    payload = result.get("payload")
+    if isinstance(payload, dict) and payload.get("code"):
+        error["code"] = str(payload["code"])
+    return error
+
+
 def _complete_planned_call(
     db: Database,
     tool_call_id: str,
@@ -218,7 +228,7 @@ def _complete_planned_call(
     """Close a pre-claimed planned side effect and its current step atomically."""
     ok = bool(result.get("ok"))
     status = ToolCallStatus.SUCCEEDED if ok else ToolCallStatus.FAILED
-    error = None if ok else {"message": result.get("error") or "tool failed"}
+    error = _stored_tool_error(result)
     db.complete_tool_call(
         tool_call_id,
         result=output or {},
@@ -242,7 +252,7 @@ def _record_tool(
         return
     ok = bool(result.get("ok"))
     status = StepStatus.SUCCEEDED if ok else StepStatus.FAILED
-    error = None if ok else {"message": result.get("error") or "tool failed"}
+    error = _stored_tool_error(result)
     payload = run.get("input_json") if isinstance(run.get("input_json"), dict) else {}
     saved = db.insert_tool_call(
         run["id"], step_id,

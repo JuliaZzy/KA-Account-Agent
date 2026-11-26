@@ -101,6 +101,25 @@ def test_web_search_parses_bocha_pages(monkeypatch):
     assert search_run({"query": "Nordic Beauty"})["ok"] is True
 
 
+def test_web_search_403_is_a_permanent_provider_error(monkeypatch):
+    import io
+    import urllib.error
+
+    monkeypatch.setenv("BOCHA_API_KEY", "test-key")
+
+    def boom(*_args, **_kwargs):
+        raise urllib.error.HTTPError(
+            "https://api.bocha.cn/v1/web-search", 403, "Forbidden", hdrs=None,
+            fp=io.BytesIO(b'{"message":"You do not have enough money or package quota"}'),
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", boom)
+    out = search_run({"query": "红牛"})
+    assert out["ok"] is False
+    assert out["code"] == "PROVIDER_AUTHENTICATION"
+    assert "403" in out["error"]
+
+
 def test_orchestrator_runs_translate_then_answers(monkeypatch):
     school = _school(monkeypatch, "ten cases of fish oil")
     llm = FakeLLM(
