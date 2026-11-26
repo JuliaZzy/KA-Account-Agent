@@ -12,6 +12,16 @@
 
 后面的原因写「见 INC-1」。
 
+### INC-1 结案
+
+- I-1 并发：`5e9020f`，`3d85701`
+- I-2 lease_owner 随机后缀：`20df844`
+- I-3 终态出口、对账、上限：`20df844`
+- I-4 classify：`96c39a7`（分类函数和映射表），`20df844`（worker、四处 except、换模型和熔断）
+- I-5：未落地。洞察失败、图表失败、大纲失败这三支测试不在仓库里，降级句子也没有写进报告代码。
+- I-6、I-7：`5e9020f`（检查脚本），`3d85701`（删掉遗留 text2sql）
+- 脚本接入 CI：`b4304fb`
+
 ## I-1 并发只用 asyncio
 
 - 规则：异步代码里只 `await` 异步函数。`asyncio.run` 只允许出现在进程入口，每个入口文件一处。允许一个专用线程里的事件循环，只在 `backend/mcp/runtime.py`：只通过 `run_coroutine_threadsafe` 提交协程，不在调用方线程上 `run_until_complete`，单例创建带锁。MCP 会话绑在创建它的循环上，worker 每次执行都是新的 `asyncio.run`，会话没法跨 run 存活，所以需要这一个长生命周期的循环。
