@@ -220,6 +220,7 @@ async def _done(
         "named_period_empty": draft.named_period_empty,
         "web_notes": draft.web_notes,
         "warnings": draft.warnings,
+        "degraded": draft.degraded,
         "report_pending_id": f"rp_{uuid.uuid4().hex[:12]}",
         "data_query": draft.data_query,
     }
@@ -229,6 +230,7 @@ async def _done(
         "name": "report.draft",
         "ok": True,
         "error": None,
+        "degraded": draft.degraded,
         "payload": raw,
     }
     if step_id:

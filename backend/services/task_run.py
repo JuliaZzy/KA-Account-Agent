@@ -48,19 +48,9 @@ async def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str,
     if name == "report.draft":
         from ..orchestrator.report import execute_report
 
-        try:
-            return await execute_report(db, llm, run, session)
-        except Exception as exc:
-            kind = classify(exc)
-            if hands_off_to_worker(kind):
-                raise
-            if kind.name == "budget":
-                result = _budget_result(payload, exc, name=name)
-            else:
-                log.exception("report child failed")
-                result = _failed(payload, str(exc), name=name)
-            await asyncio.to_thread(finish_child, db, run, result)
-            return result
+        # Optional chart and insight failures degrade inside the report. Anything
+        # that escapes, including the outline and a spent quota, fails this run.
+        return await execute_report(db, llm, run, session)
     tool = registry.find(name)
     args = _arguments_for(payload, list(session.get("history") or []))
     step = db.insert_step(run["id"], StepType.TOOL, step_name(StepType.TOOL, name), args)

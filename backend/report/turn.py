@@ -28,7 +28,7 @@ from ..codefix import format_failures
 from ..codefix.fix import with_reflection_async
 from ..db import Database, utcnow
 from ..llm import calls as model_calls
-from ..llm.calls import JsonRepairExhausted, tool_limit
+from ..llm.calls import JsonRepairExhausted, ModelBudgetExceeded, tool_limit
 from ..llm.errors import ModelCapacityExceeded, ProviderError, classify, hands_off_to_worker
 from ..memory import actor_id, attach, prompt_turns
 from ..text2sql import QueryResult
@@ -134,6 +134,7 @@ class ReportDraft:
     chart_status: list[dict[str, Any]] = field(default_factory=list)
     named_period: str | None = None
     named_period_empty: bool = False
+    degraded: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -187,6 +188,9 @@ def code_wizard_schema() -> dict[str, Any]:
 _INSIGHT_SECTION_IDS = tuple(
     str(section["id"]) for section in SECTIONS if section["id"] not in {"summary", "risks"}
 )
+# Fixed sentences. The reviewer is told to leave them in place.
+CHART_GAP = "本节图表暂缺"
+INSIGHT_GAP = "本节洞察暂缺"
 
 
 def code_wizards_schema() -> dict[str, Any]:
@@ -521,9 +525,10 @@ async def _iter_after_queries(
     yield status("report-chart", "图表", "正在给业绩和库存配图", state="running")
     yield status("report-insight", "洞察", "正在按章节计算", state="running")
     query_results = _query_results(asked, include_full=True)
-    charts, charts_for, chart_failures, insights_by_section, insight_errors, insight_failures, chart_decisions = (
-        await _charts_and_insights_async(llm, message, planned, by_section, query_results, trace)
-    )
+    (
+        charts, charts_for, chart_failures, insights_by_section, insight_errors,
+        insight_failures, chart_decisions, degraded,
+    ) = await _charts_and_insights_async(llm, message, planned, by_section, query_results, trace)
     yield status("report-chart", "图表", f"{len(charts)} 张图" if charts else "这组数不画图", state="done")
     insight_count = sum(len(items) for items in insights_by_section.values())
     yield status("report-insight", "洞察", f"{insight_count} 条" if insight_count else "没有算出洞察", state="done")
@@ -532,7 +537,7 @@ async def _iter_after_queries(
     texts = await _write_body_sections_async(
         llm, message, history, planned, by_section, found, charts_for, insights_by_section,
         remembered=remembered, folded_through=folded_through, trace=trace,
-        chart_decisions=chart_decisions,
+        chart_decisions=chart_decisions, degraded=degraded,
     )
     written = sum(
         1 for section in planned
@@ -550,7 +555,7 @@ async def _iter_after_queries(
         found=found, insights_by_section=insights_by_section, insight_failures=insight_failures,
         insight_errors=insight_errors, texts=texts,
         message=message, history=history, remembered=remembered, folded_through=folded_through,
-        trace=trace, write=bool(flags), chart_decisions=chart_decisions,
+        trace=trace, write=bool(flags), chart_decisions=chart_decisions, degraded=degraded,
     ):
         yield item
 
@@ -565,6 +570,7 @@ async def _iter_from_risks(
     message: str, history: list[dict[str, Any]], remembered: str, folded_through: int,
     trace: _RunTrace | None = None, write: bool,
     chart_decisions: list[ChartDecision] | None = None,
+    degraded: list[dict[str, str]] | None = None,
 ) -> Iterator[dict[str, Any] | ReportDraft]:
     """Write risks from flags (if any), then summary and review."""
     from ..orchestrator.status import status
@@ -610,7 +616,7 @@ async def _iter_from_risks(
     else:
         review_note = f"{score} 分，未过关"
     yield status("report-review", "审核", review_note, state="done")
-    report = finish_report(report, planned, charts_for)
+    report = finish_report(report, planned, charts_for, degraded or [])
 
     warnings = _warnings(asked, found)
     warnings.extend(failures)
@@ -654,6 +660,7 @@ async def _iter_from_risks(
         chart_status=[item.as_dict() for item in chart_decisions or []],
         named_period=named_period,
         named_period_empty=named_empty,
+        degraded=list(degraded or []),
     )
 
 
@@ -852,11 +859,79 @@ def _hydrate_full_rows(
 
 
 
+def _note_degraded(
+    bucket: list[dict[str, str]] | None, section: str, step: str, exc: BaseException,
+) -> None:
+    if bucket is None:
+        return
+    bucket.append({"section": section, "step": step, "code": classify(exc).code})
+
+
+def _degrade(result: Any, *, step: str, sections: list[str], empty: Any) -> tuple[Any, list[dict[str, str]]]:
+    """Keep an optional step's failure inside that step.
+
+    A spent quota still fails the report. Cancellation and other non-Exception
+    signals propagate. Everything else becomes an empty result plus one record
+    per section.
+    """
+    if isinstance(result, ModelBudgetExceeded):
+        raise result
+    if isinstance(result, BaseException) and not isinstance(result, Exception):
+        raise result
+    if isinstance(result, Exception):
+        code = classify(result).code
+        rows = [{"section": section, "step": step, "code": code} for section in sections]
+        if not rows:
+            rows = [{"section": "", "step": step, "code": code}]
+        return empty, rows
+    return result, []
+
+
+def _gap_lines(section_id: str, degraded: list[dict[str, str]]) -> list[str]:
+    steps = {row.get("step") for row in degraded if row.get("section") == section_id}
+    lines: list[str] = []
+    if "report_charts" in steps:
+        lines.append(CHART_GAP)
+    if "code_wizards" in steps or "code_wizard" in steps:
+        lines.append(INSIGHT_GAP)
+    return lines
+
+
+def _append_gaps(text: str, lines: list[str]) -> str:
+    body = text or ""
+    for line in lines:
+        if line not in body:
+            body = f"{body.rstrip()}\n\n{line}".strip()
+    return body
+
+
+def restore_degraded_notes(
+    report: str, planned: list[SectionPlan], degraded: list[dict[str, str]],
+) -> str:
+    """Put the fixed sentences back after review, which may rewrite a section."""
+    if not degraded:
+        return report
+    rebuilt: list[str] = []
+    for part in re.split(r"(?=^##\s+)", report or "", flags=re.M):
+        if not part.strip():
+            continue
+        lines = part.split("\n", 1)
+        heading = lines[0]
+        body = lines[1] if len(lines) > 1 else ""
+        if heading.startswith("##"):
+            sid = _section_heading_id(heading, planned) or ""
+            body = _append_gaps(body, _gap_lines(sid, degraded))
+            rebuilt.append(heading + ("\n\n" + body.strip() if body.strip() else ""))
+        else:
+            rebuilt.append(part.strip())
+    return "\n\n".join(part for part in rebuilt if part.strip())
+
+
 async def _draw_charts_async(
     llm: Any, message: str, planned: list[SectionPlan], by_section: dict[str, list[_Ask]],
-    trace: _RunTrace | None = None,
+    trace: _RunTrace | None = None, degraded: list[dict[str, str]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]], list[str], list[ChartDecision]]:
-    """和 _draw_charts 同一套图。模型调用在当前事件循环里等，不再另开线程。"""
+    """和 _draw_charts 同一套图。一张图失败只缺那一张，其余照常。"""
     charts: list[dict[str, Any]] = []
     charts_for: dict[str, list[dict[str, Any]]] = {}
     used_chart_ids: set[str] = set()
@@ -867,7 +942,20 @@ async def _draw_charts_async(
             continue
         made: list[dict[str, Any]] = []
         for item in by_section.get(section.id) or []:
-            drawn, fails, decision = await _chart_one_async(llm, message, section.id, item, trace=trace)
+            try:
+                drawn, fails, decision = await _chart_one_async(llm, message, section.id, item, trace=trace)
+            except ModelBudgetExceeded:
+                raise
+            except Exception as exc:
+                _note_degraded(degraded, section.id, "report_charts", exc)
+                chart_failures.append(str(exc).split("\n", 1)[0][:200])
+                role = chart_role(item.question, message)
+                period = decision_period(item.question, message)
+                decisions.append(ChartDecision(
+                    dataset_id=item.id, section_id=section.id, question=item.question,
+                    role=role, status="skipped", period=period, reason="degraded", note=CHART_GAP,
+                ))
+                continue
             chart_failures.extend(fails)
             if drawn:
                 fitted = fit_chart_axes(_assign_chart_ids(drawn[:1], used_chart_ids))
@@ -887,12 +975,16 @@ async def _draw_charts_async(
 
 
 
-def _unwrap_task_group(errors: BaseException) -> BaseException:
-    """The first failure inside a TaskGroup. A plain exception is returned as itself."""
+def _first_failure(errors: BaseException) -> BaseException:
+    """The first failure inside a required-step group. A plain exception is itself."""
     grouped = getattr(errors, "exceptions", None)
     if grouped:
         return grouped[0]
     return errors
+
+
+_EMPTY_CHARTS = ([], {}, [], [])
+_EMPTY_INSIGHTS = ({}, [], [])
 
 
 async def _charts_and_insights_async(
@@ -901,22 +993,32 @@ async def _charts_and_insights_async(
 ) -> tuple[
     list[dict[str, Any]], dict[str, list[dict[str, Any]]], list[str],
     dict[str, list[dict[str, Any]]], list[str], list[str], list[ChartDecision],
+    list[dict[str, str]],
 ]:
-    """画图和洞察一起等模型。其中一个失败，另一个会被取消。"""
+    """Draw and analyze together. One optional failure does not cancel the other."""
     insight_sections = [section for section in planned if section.id in _INSIGHT_SECTION_IDS]
-    try:
-        async with asyncio.TaskGroup() as group:
-            charts_task = group.create_task(
-                _draw_charts_async(llm, message, planned, by_section, trace),
-            )
-            insights_task = group.create_task(
-                _code_wizards_async(llm, insight_sections, query_results, trace=trace),
-            )
-    except BaseException as errors:
-        raise _unwrap_task_group(errors) from errors
-    charts, charts_for, chart_failures, decisions = charts_task.result()
-    insights_by_section, insight_errors, insight_failures = insights_task.result()
-    return charts, charts_for, chart_failures, insights_by_section, insight_errors, insight_failures, decisions
+    degraded: list[dict[str, str]] = []
+    charts_res, insights_res = await asyncio.gather(
+        _draw_charts_async(llm, message, planned, by_section, trace, degraded),
+        _code_wizards_async(llm, insight_sections, query_results, trace=trace, degraded=degraded),
+        return_exceptions=True,
+    )
+    chart_sections = [section.id for section in planned if section.chart]
+    insight_ids = [section.id for section in insight_sections]
+    charts_value, chart_rows = _degrade(
+        charts_res, step="report_charts", sections=chart_sections, empty=_EMPTY_CHARTS,
+    )
+    insights_value, insight_rows = _degrade(
+        insights_res, step="code_wizards", sections=insight_ids, empty=_EMPTY_INSIGHTS,
+    )
+    degraded.extend(chart_rows)
+    degraded.extend(insight_rows)
+    charts, charts_for, chart_failures, decisions = charts_value
+    insights_by_section, insight_errors, insight_failures = insights_value
+    return (
+        charts, charts_for, chart_failures, insights_by_section,
+        insight_errors, insight_failures, decisions, degraded,
+    )
 
 
 
@@ -945,21 +1047,16 @@ async def _chart_one_async(
             rows, columns=columns, row_count=item.result.row_count, truncated=item.result.truncated,
         ),
     }]
-    try:
-        raw = await _call_json_async(
-            llm,
-            model=model_calls.DEEPSEEK_FLASH,
-            system=CHART_GENERATION_PROMPT.format(
-                message=(message or "").strip()[:4000] or "（无文字）",
-                query_results=json.dumps(query_results, ensure_ascii=False),
-            ),
-            messages=[{"role": "user", "content": chart_user_hint(role, message)}],
-            schema=chart_schema(), temperature=0, trace=trace,
-        )
-    except (ModelCapacityExceeded, ProviderError, JsonRepairExhausted):
-        raise
-    except Exception as err:
-        raw = {"error": str(err).split("\n", 1)[0][:300]}
+    raw = await _call_json_async(
+        llm,
+        model=model_calls.DEEPSEEK_FLASH,
+        system=CHART_GENERATION_PROMPT.format(
+            message=(message or "").strip()[:4000] or "（无文字）",
+            query_results=json.dumps(query_results, ensure_ascii=False),
+        ),
+        messages=[{"role": "user", "content": chart_user_hint(role, message)}],
+        schema=chart_schema(), temperature=0, trace=trace,
+    )
 
     def run(text: str) -> tuple[bool, list[dict[str, Any]], str | None, str]:
         try:
@@ -1166,7 +1263,7 @@ async def _code_wizard_async(
 
 async def _code_wizards_async(
     llm: Any, sections: list[SectionPlan], query_results: list[dict[str, Any]],
-    trace: _RunTrace | None = None,
+    trace: _RunTrace | None = None, degraded: list[dict[str, str]] | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], list[str], list[str]]:
     """一次让模型写出四段分析代码，再分别执行。和画图共用同一个事件循环。"""
     by_section: dict[str, list[dict[str, Any]]] = {section.id: [] for section in sections}
@@ -1185,19 +1282,28 @@ async def _code_wizards_async(
             messages=[{"role": "user", "content": "为四个章节各写一段独立的 analyze(datasets)。"}],
             schema=code_wizards_schema(), temperature=0, trace=trace,
         )
-    except (ModelCapacityExceeded, ProviderError, JsonRepairExhausted):
+    except ModelBudgetExceeded:
         raise
     except Exception as err:
         message = str(err).split("\n", 1)[0][:200]
+        for section in sections:
+            _note_degraded(degraded, section.id, "code_wizards", err)
         return by_section, [f"{section.title}: {message}" for section in sections], []
     if not isinstance(raw, dict):
         raw = {}
     errors: list[str] = []
     failures: list[str] = []
     for section in sections:
-        insights, err, fails = await _run_analyze_async(
-            llm, str(raw.get(section.id) or ""), query_results, trace=trace,
-        )
+        try:
+            insights, err, fails = await _run_analyze_async(
+                llm, str(raw.get(section.id) or ""), query_results, trace=trace,
+            )
+        except ModelBudgetExceeded:
+            raise
+        except Exception as exc:
+            _note_degraded(degraded, section.id, "code_wizard", exc)
+            errors.append(f"{section.title}: {exc}")
+            continue
         by_section[section.id] = insights
         if err:
             errors.append(f"{section.title}: {err}")
@@ -1280,6 +1386,7 @@ async def _write_body_sections_async(
     charts_for: dict[str, list[dict[str, Any]]], insights_by_section: dict[str, list[dict[str, Any]]],
     *, remembered: str = "", folded_through: int = 0, trace: _RunTrace | None = None,
     chart_decisions: list[ChartDecision] | None = None,
+    degraded: list[dict[str, str]] | None = None,
 ) -> dict[str, str]:
     """四节正文一起写。摘要和风险等这些正文写完。"""
     sections = [section for section in planned if section.id not in {"summary", "risks"}]
@@ -1299,14 +1406,16 @@ async def _write_body_sections_async(
             chart_notes=notes,
         )
         content = finish_section(content, owned if section.chart else [])
-        return section.id, content or "这一节没有写成。"
+        content = _append_gaps(content or "这一节没有写成。", _gap_lines(section.id, degraded or []))
+        return section.id, content
 
     async def write_all() -> dict[str, str]:
+        # required-step group: one body section failing cancels the others.
         try:
             async with asyncio.TaskGroup() as group:
                 tasks = [group.create_task(write_one(section)) for section in sections]
         except BaseException as errors:
-            raise _unwrap_task_group(errors) from errors
+            raise _first_failure(errors) from errors
         return dict(task.result() for task in tasks)
 
     return await write_all()
@@ -1608,10 +1717,12 @@ def place_charts_in_sections(
 
 def finish_report(
     report: str, planned: list[SectionPlan], charts_for: dict[str, list[dict[str, Any]]],
+    degraded: list[dict[str, str]] | None = None,
 ) -> str:
     """The revise step can undo breaks and chart placement. Put them back on the final text."""
     placed = place_charts_in_sections(report, planned, charts_for)
-    return shape_prose(placed) or report
+    shaped = shape_prose(placed) or report
+    return restore_degraded_notes(shaped, planned, degraded or []) or shaped
 
 
 def _report_evidence(

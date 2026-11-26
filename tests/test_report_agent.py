@@ -497,7 +497,7 @@ def test_charts_and_insights_async_are_produced_together():
         }]},
         _wizard_ok(),
     ])
-    charts, charts_for, failures, insights, errors, insight_fails, decisions = asyncio.run(_charts_and_insights_async(
+    charts, charts_for, failures, insights, errors, insight_fails, decisions, _gaps = asyncio.run(_charts_and_insights_async(
         llm, "出一份月报，要品类饼图", sections, by_section, datasets,
     ))
     assert failures == [] and errors == [] and insight_fails == []
@@ -520,7 +520,7 @@ def test_empty_category_query_skips_the_chart_model():
         "columns": ["title"], "rows": [{"title": "协议"}],
     }]
     llm = FakeLLM(json_replies=[_wizard_ok()])
-    charts, charts_for, failures, _insights, errors, insight_fails, decisions = asyncio.run(_charts_and_insights_async(
+    charts, charts_for, failures, _insights, errors, insight_fails, decisions, _gaps = asyncio.run(_charts_and_insights_async(
         llm, "出一份2026年10月采购月报，要品类饼图", sections, by_section, datasets,
     ))
     assert charts == [] and charts_for["performance"] == []
@@ -546,7 +546,7 @@ def test_category_pie_of_product_names_is_dropped():
         }]},
         _wizard_ok(),
     ])
-    charts, _charts_for, failures, _insights, _errors, _insight_fails, decisions = asyncio.run(_charts_and_insights_async(
+    charts, _charts_for, failures, _insights, _errors, _insight_fails, decisions, _gaps = asyncio.run(_charts_and_insights_async(
         llm, "出一份月报，要品类饼图", sections, by_section, [],
     ))
     assert charts == [] and failures == []
@@ -568,7 +568,7 @@ def test_inventory_product_pie_is_dropped_when_the_user_asked_for_a_category_pie
         }]},
         _wizard_ok(),
     ])
-    charts, charts_for, failures, _insights, _errors, _insight_fails, decisions = asyncio.run(_charts_and_insights_async(
+    charts, charts_for, failures, _insights, _errors, _insight_fails, decisions, _gaps = asyncio.run(_charts_and_insights_async(
         llm, "出一份2026年10月采购月报，要品类饼图", sections, by_section, [],
     ))
     assert charts == [] and charts_for["inventory"] == [] and failures == []
@@ -596,7 +596,7 @@ def test_trend_chart_is_kept_when_the_axis_is_periods():
         }]},
         _wizard_ok(),
     ])
-    charts, charts_for, failures, _insights, _errors, _insight_fails, decisions = asyncio.run(_charts_and_insights_async(
+    charts, charts_for, failures, _insights, _errors, _insight_fails, decisions, _gaps = asyncio.run(_charts_and_insights_async(
         llm, "出一份2026年10月采购月报，要品类饼图", sections, by_section, [],
     ))
     assert failures == [] and charts and charts_for["performance"]

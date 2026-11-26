@@ -169,6 +169,18 @@ else
   pass "I-4 没有旧的路由字面量"
 fi
 
+# I-5. Optional chart and insight work must not join a TaskGroup.
+# The one allowed use is the required body sections, and that file may contain it once.
+task_hits=$(grep -rn "TaskGroup" backend/report | strip_comments || true)
+task_count=$(printf '%s\n' "$task_hits" | awk 'NF' | wc -l | tr -d ' ')
+if [[ -z "$task_hits" ]]; then
+  fail "I-5 必选正文的 TaskGroup 不见了" ""
+elif [[ "$task_count" != "1" ]]; then
+  fail "I-5 backend/report 里的 TaskGroup 只能有一处" "$task_hits"
+else
+  check_file_set "I-5 TaskGroup 只允许必选正文" "report_task_group" "$task_hits"
+fi
+
 # I-6. Sync defs of these names, including methods indented inside a class.
 # async def does not match: the line would start with "async", not "def".
 sync_hits=$(grep -rnE '^[[:space:]]*def (call_model|_ask_ds|deepseek_json|_call_deepseek)[(]' backend/ | strip_comments || true)
