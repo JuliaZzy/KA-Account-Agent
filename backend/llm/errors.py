@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import Any, Literal
 
 # Vendor failures only. `circuit_open` is not here: the cooldown gates the next
 # probe, and this request falls back or fails immediately. `internal` is a local
@@ -220,6 +220,66 @@ def _status_of(exc: BaseException) -> int | None:
     if isinstance(status, int) and status > 0:
         return status
     return None
+
+
+# Names routing and the breaker compare against. String literals for the old
+# route labels stay in this module so other files reference these constants.
+KIND_CAPACITY = "capacity"
+KIND_PROVIDER = "provider"
+KIND_BUDGET = "budget"
+KIND_INVALID_JSON = "invalid_json"
+KIND_PERMANENT = "permanent"
+KIND_INTERNAL = "internal"
+KIND_TIMEOUT = "timeout"
+INTERNAL_ERROR_CODE = "INTERNAL"
+TIMEOUT_ERROR_CODE = "TIMEOUT"
+# One retry. A second failure is the same local bug, not a vendor outage.
+INTERNAL_ERROR_RETRIES = 1
+# A slow external call keeps the execution budget. This is not a local bug.
+TIMEOUT_ERROR_RETRIES = 3
+# A ProviderError with one of these kinds was wrapped around a local fault.
+_LOCAL_PROVIDER_KINDS = frozenset({"internal", "event_loop"})
+
+
+@dataclass(frozen=True)
+class ErrorKind:
+    name: Literal["capacity", "provider", "budget", "invalid_json", "permanent", "internal", "timeout"]
+    retryable: bool
+    code: str
+
+
+def classify(exc: BaseException) -> ErrorKind:
+    """One mapping from an exception to the retry, fallback, and breaker decision.
+
+    A `ProviderError` whose own kind is `internal` or `event_loop` is a local
+    fault that the transport wrapper already caught. It is `internal` here, so
+    it does not switch models or open the vendor breaker.
+    """
+    if isinstance(exc, ModelCapacityExceeded):
+        return ErrorKind(KIND_CAPACITY, True, str(exc.code))
+    if isinstance(exc, ProviderError):
+        if exc.kind in _LOCAL_PROVIDER_KINDS:
+            return ErrorKind(KIND_INTERNAL, True, INTERNAL_ERROR_CODE)
+        return ErrorKind(KIND_PROVIDER, bool(exc.retryable), exc.code)
+    from ..services.run_worker import PermanentRunError
+    from .calls import JsonRepairExhausted, ModelBudgetExceeded, ModelOutputError
+
+    if isinstance(exc, ModelBudgetExceeded):
+        return ErrorKind(KIND_BUDGET, False, "QUOTA_EXCEEDED")
+    if isinstance(exc, (JsonRepairExhausted, ModelOutputError)):
+        code = getattr(exc, "code", None) or "INVALID_JSON"
+        return ErrorKind(KIND_INVALID_JSON, False, str(code))
+    if isinstance(exc, PermanentRunError):
+        code = getattr(exc, "code", None) or "PERMANENT"
+        return ErrorKind(KIND_PERMANENT, False, str(code))
+    if isinstance(exc, TimeoutError):
+        return ErrorKind(KIND_TIMEOUT, True, TIMEOUT_ERROR_CODE)
+    return ErrorKind(KIND_INTERNAL, True, INTERNAL_ERROR_CODE)
+
+
+def hands_off_to_worker(kind: ErrorKind) -> bool:
+    """The worker retries these. Every other kind is a local failure result."""
+    return kind.name == KIND_CAPACITY or (kind.name == KIND_PROVIDER and kind.retryable)
 
 
 def _headers_of(exc: BaseException) -> Any:
