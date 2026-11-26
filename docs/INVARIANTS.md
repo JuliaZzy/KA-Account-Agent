@@ -17,12 +17,15 @@
 - I-1 并发：`5e9020f`，`3d85701`
 - I-2 lease_owner 随机后缀：`20df844`
 - I-3 终态出口、对账、上限：`20df844`
-- I-4 classify：`96c39a7`（分类函数和映射表），`20df844`（worker、四处 except、换模型和熔断）
-- I-5 可选步骤降级：`03f539e`
+- I-4 classify：`96c39a7`（分类函数和映射表），`20df844`（worker、四处 except、换模型和熔断），`fc918e2`（`JsonRepairExhausted` 和额度用尽不再各写一套 except）
+- I-5 可选步骤降级：`03f539e`。结案行：`6569c50`。可选步骤失败直接降级、不在报告内重试：`fc918e2`
 - I-6、I-7：`5e9020f`（检查脚本），`3d85701`（删掉遗留 text2sql）
 - 脚本接入 CI：`b4304fb`
+- 结案记录：`aadd2cb`，`6569c50`
+- 测试跟上异步的合同读取和审稿 schema：`a8d626d`
+- 博查 HTTP 错误交给 classify：`d535f60`。403 是额度或套餐不够，码是 `PROVIDER_AUTHENTICATION`
 
-到 `03f539e` 为止，INC-1 的七条都已落地。
+到 `fc918e2` 为止，INC-1 已结案。干净重放和注入重放都已跑过：月报成功，或带着 `degraded` 成功，父 run 不再空转。
 
 ## I-1 并发只用 asyncio
 
