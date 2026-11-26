@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from .errors import KIND_CAPACITY, KIND_INVALID_JSON, KIND_PROVIDER
+
 log = logging.getLogger(__name__)
 
 ROUTING_POLICY_VERSION = "model-routing-v1"
@@ -29,8 +31,8 @@ class RouteDecision(StrEnum):
 class RouteReason(StrEnum):
     POLICY_PRIMARY = "policy_primary"
     PREVIOUS_CANDIDATE_FAILED = "previous_candidate_failed"
-    PROVIDER_ERROR = "provider_error"
-    MODEL_CAPACITY = "model_capacity"
+    PROVIDER_ERROR = KIND_PROVIDER
+    MODEL_CAPACITY = KIND_CAPACITY
     INVALID_JSON = "invalid_json"
     QUALITY_GATE_FAILED = "quality_gate_failed"
 
@@ -62,15 +64,24 @@ class RoutePolicy:
 
 @dataclass(frozen=True)
 class RunBudget:
-    """Safety-net caps on the run row. Purpose policies still cap one task."""
+    """Safety-net caps on the run row. Purpose policies still cap one task.
+
+    `max_duration_seconds` is wall time from `started_at`, including a parent
+    parked in `waiting_for_tasks`. None leaves the duration sweep with nothing to close.
+    """
 
     max_model_calls: int | None = None
     max_tokens: int | None = None
+    max_duration_seconds: int | None = None
 
 
 # Prompt plus completion. Purpose policies cap accepted completion tokens separately.
+# Two hours is the chat parent's own clock, not the queue-age setting.
+CHAT_MAX_DURATION_SECONDS = 2 * 60 * 60
 RUN_BUDGETS: dict[str, RunBudget] = {
-    "chat": RunBudget(max_model_calls=8, max_tokens=32_000),
+    "chat": RunBudget(
+        max_model_calls=8, max_tokens=32_000, max_duration_seconds=CHAT_MAX_DURATION_SECONDS,
+    ),
     # One title draft plus two JSON repairs.
     "open": RunBudget(max_model_calls=4, max_tokens=8_000),
 }
@@ -90,7 +101,7 @@ def _cheap_text(task: str, *, max_tokens: int = 1600, max_model_calls: int = 4) 
         max_model_calls=max_model_calls,
         quality_gate="response_parsed",
         # Bad JSON goes back to the same model. A vendor failure still changes model.
-        fallback_on=("provider_error", "model_capacity"),
+        fallback_on=(KIND_PROVIDER, KIND_CAPACITY),
     )
 
 
@@ -104,7 +115,7 @@ def _structured(
         max_tokens=max_tokens,
         max_model_calls=max_model_calls,
         quality_gate=quality_gate,
-        fallback_on=("provider_error", "model_capacity"),
+        fallback_on=(KIND_PROVIDER, KIND_CAPACITY),
     )
 
 
@@ -117,7 +128,7 @@ ROUTES: dict[str, RoutePolicy] = {
         # Draft, two repairs, one shorter plan, two more repairs.
         max_model_calls=6,
         quality_gate="response_parsed",
-        fallback_on=("provider_error", "model_capacity"),
+        fallback_on=(KIND_PROVIDER, KIND_CAPACITY),
     ),
     "orchestrator.answer": RoutePolicy(
         task="orchestrator.answer",
@@ -126,7 +137,7 @@ ROUTES: dict[str, RoutePolicy] = {
         max_tokens=1600,
         max_model_calls=2,
         quality_gate="non_empty_answer",
-        fallback_on=("provider_error", "model_capacity"),
+        fallback_on=(KIND_PROVIDER, KIND_CAPACITY),
     ),
     "session.title": _cheap_text("session.title", max_tokens=800),
     "translate": _cheap_text("translate"),
@@ -139,7 +150,7 @@ ROUTES: dict[str, RoutePolicy] = {
         max_tokens=1600,
         max_model_calls=2,
         quality_gate="non_empty_answer",
-        fallback_on=("provider_error", "model_capacity"),
+        fallback_on=(KIND_PROVIDER, KIND_CAPACITY),
     ),
     "memory.fold": _cheap_text("memory.fold"),
     "contract.select": _cheap_text("contract.select"),
@@ -151,7 +162,7 @@ ROUTES: dict[str, RoutePolicy] = {
         max_tokens=1600,
         max_model_calls=2,
         quality_gate="non_empty_answer",
-        fallback_on=("provider_error", "model_capacity"),
+        fallback_on=(KIND_PROVIDER, KIND_CAPACITY),
     ),
     "po.extract": _structured("po.extract"),
     # Three classifiers on one run, each allowed a draft and two repairs.
@@ -168,7 +179,7 @@ ROUTES: dict[str, RoutePolicy] = {
         max_tokens=12_000,
         max_model_calls=10,
         quality_gate="response_parsed",
-        fallback_on=("provider_error", "model_capacity"),
+        fallback_on=(KIND_PROVIDER, KIND_CAPACITY),
     ),
     "report.optional": _structured("report.optional", max_tokens=12_000, max_model_calls=14),
     "code.fix": _structured("code.fix", max_model_calls=9),
@@ -176,7 +187,7 @@ ROUTES: dict[str, RoutePolicy] = {
         task="data.react", primary=DEEPSEEK_FLASH, fallbacks=(QWEN_FLASH,),
         max_tokens=8_000, max_model_calls=8,
         quality_gate="response_parsed",
-        fallback_on=("provider_error", "model_capacity", "invalid_json"),
+        fallback_on=(KIND_PROVIDER, KIND_CAPACITY, KIND_INVALID_JSON),
     ),
     "session.tools": _structured("session.tools"),
     "run.decide": _structured("run.decide"),
@@ -208,7 +219,7 @@ def policy_for(
         primary=RouteCandidate(requested_provider or "unknown", requested_model),
         fallbacks=(fallback,) if fallback is not None else (),
         quality_gate="response_parsed",
-        fallback_on=("provider_error", "model_capacity", "invalid_json"),
+        fallback_on=(KIND_PROVIDER, KIND_CAPACITY, KIND_INVALID_JSON),
     )
 
 

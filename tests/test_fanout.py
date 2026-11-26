@@ -7,10 +7,12 @@ import threading
 import pytest
 
 from backend import service
+from backend.db.outcome import Outcome
 from backend.llm import FakeLLM
 from backend.redis_store import begin_turn, drop_turn, fx_drop, fx_put, load_results, store_result
 from backend.schemas import PurchaseOrder
 from backend.services.chat_run import work_chat
+from backend.services.run_names import RunStatus
 from backend.tools.exchange_rate import quote
 
 
@@ -198,7 +200,7 @@ def test_sweep_wakes_a_parent_after_children_finish(db):
         owner_run_id=parent["id"],
     )
     assert db.claim_chat_turn(child["id"], "w2", utcnow() + timedelta(minutes=5)) is not None
-    assert db.complete_run(child["id"], {"ok": True}) is not None
+    assert db.finalize_run_row(child["id"], Outcome(kind="succeeded", output={"ok": True}), allowed_from=frozenset({RunStatus.RUNNING})) is not None
     assert sweep_waiting_for_tasks(db, stale_after=timedelta(0)) == 1
     assert db.find_agent_run_by_id(parent["id"])["status"] == "queued"
 
@@ -426,7 +428,7 @@ def test_sweep_records_a_failed_child_before_waking_the_owner(db):
         owner_run_id=parent["id"],
     )
     assert db.claim_chat_turn(child["id"], "w2", utcnow() + timedelta(minutes=5)) is not None
-    assert db.fail_run(child["id"], {"code": "PROVIDER_INTERNAL", "message": "internal from deepseek"}) is not None
+    assert db.finalize_run_row(child["id"], Outcome(kind="failed", error={"code": "PROVIDER_INTERNAL", "message": "internal from deepseek"}, reason="permanent", dead_letter=True), allowed_from=frozenset({RunStatus.RUNNING})) is not None
     assert sweep_waiting_for_tasks(db, stale_after=timedelta(0)) == 1
     assert db.find_agent_run_by_id(parent["id"])["status"] == "queued"
     state = load_state(db.latest_checkpoint(parent["id"]))
@@ -452,15 +454,18 @@ def test_sweep_forces_an_answer_after_three_empty_wakes(db):
             "finished": [], "results": {}, "wave_id": "wave-spin", "wave_ids": ["1"],
         },
     }
+    woke = []
     for _ in range(3):
         assert db.claim_chat_turn(parent["id"], "w", utcnow() + timedelta(minutes=5)) is not None
         assert db.mark_waiting_for_tasks(parent["id"], {"wave_id": "wave-spin"}) is not None
         if db.latest_checkpoint(parent["id"]) is None:
             db.append_checkpoint(parent["id"], checkpoint)
-        assert sweep_waiting_for_tasks(db, stale_after=timedelta(0)) == 1
+        woke.append(sweep_waiting_for_tasks(db, stale_after=timedelta(0)))
+    assert woke[:2] == [1, 1]
     state = load_state(db.latest_checkpoint(parent["id"]))
     assert state["results"]["1"]["ok"] is False
-    assert "without a result" in state["results"]["1"]["error"]
+    assert state["results"]["1"]["error"].startswith("WAVE_STALE:")
+    assert "1" in state["finished"]
     assert db.find_agent_run_by_id(parent["id"])["status"] == "queued"
 
 
@@ -480,7 +485,7 @@ def test_dispatch_uses_a_failed_child_instead_of_waiting(db):
         owner_run_id=parent["id"],
     )
     assert db.claim_chat_turn(child["id"], "w2", utcnow() + timedelta(minutes=5)) is not None
-    assert db.fail_run(child["id"], {"code": "PROVIDER_INTERNAL", "message": "internal"}) is not None
+    assert db.finalize_run_row(child["id"], Outcome(kind="failed", error={"code": "PROVIDER_INTERNAL", "message": "internal"}, reason="permanent", dead_letter=True), allowed_from=frozenset({RunStatus.RUNNING})) is not None
     parked = dispatch_wave(
         db, parent, {"id": "sess-commit"},
         [PlanTask(id="1", kind="tool", name="report.draft")],

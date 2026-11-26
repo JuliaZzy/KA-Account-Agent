@@ -14,7 +14,7 @@ from typing import Any
 from ..db import Database
 from ..documents import SUPPORTED_EXTS
 from ..llm import deepseek_client
-from ..llm.errors import ModelCapacityExceeded, ProviderError
+from ..llm.errors import classify, hands_off_to_worker
 from ..schemas import ContractChunk
 from .chunks import flatten_chunk_tree
 from .ingest import record_from_extraction
@@ -49,9 +49,9 @@ async def file_contract(
             partnership_id=session["partnership_id"],
             title=name, file_name=name, file_sha256=digest, model=model, chunks=chunks,
         )
-    except (ModelCapacityExceeded, ProviderError):
-        raise
     except Exception as err:
+        if hands_off_to_worker(classify(err)):
+            raise
         return {"status": "failed", "contract_id": None, "table": None, "pending": None, "error": str(err)}
     pending_id = f"cp_{uuid.uuid4().hex[:12]}"
     table = filing_table(rec)

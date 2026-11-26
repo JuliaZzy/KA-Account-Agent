@@ -3,9 +3,9 @@
 Celery 送来 `run_id`。租约和 `run.started` 在 `execute` 之前提交。
 Run 进入终态、`waiting_for_user`，或已经排上下一条 outbox 之后，任务才返回。这次返回就是 ack。
 
-`PermanentRunError`、`ModelBudgetExceeded`、`JsonRepairExhausted` 直接判失败并写入
-`dead_letter_jobs`。其余异常先按执行次数重试，次数用完再进 `dead_letter_jobs`。
-基础设施错误把 Run 放回队列，不扣这次执行次数。
+`classify` 判成不可重试的异常直接失败并写入 `dead_letter_jobs`。
+内部错误（`INTERNAL_ERROR_RETRIES`）只重试一次。`TimeoutError` 按
+`TIMEOUT_ERROR_RETRIES` 重试。容量和可重试的供应商错误把 Run 放回队列，不扣这次执行次数。
 """
 
 from __future__ import annotations
@@ -25,18 +25,25 @@ from sqlalchemy.exc import OperationalError
 
 from ..db import Database, utcnow
 from ..db.database import ChatTurnBusy
-from ..llm.calls import JsonRepairExhausted, ModelBudgetExceeded
-from ..llm.errors import ModelCapacityExceeded, ProviderError
+from ..db.outcome import Outcome, over_duration_outcome
+from ..llm.errors import (
+    INTERNAL_ERROR_RETRIES,
+    KIND_CAPACITY,
+    KIND_PROVIDER,
+    TIMEOUT_ERROR_RETRIES,
+    ErrorKind,
+    ModelCapacityExceeded,
+    ProviderError,
+    classify,
+)
 from ..repositories.run_repository import (
     RUN_TERMINAL_STATUSES,
     RunStatus,
-    cancel_run,
     claim_chat_turn,
-    complete_run,
-    fail_run,
     find_agent_run_by_id,
     note_running_reply,
     renew_run_lease,
+    requeue_waiting_tasks,
     schedule_retry,
 )
 from ..repositories.run_repository import (
@@ -46,6 +53,8 @@ from ..repositories.run_repository import (
     sweep_waiting_for_tasks as _sweep_waiting_for_tasks,
 )
 from .entry_guard import acquire_run, queue_enabled
+from .run_finalize import _maybe_schedule_title, after_terminal, after_terminal_row, finalize_run
+from .run_names import LIVE_CHILD_STATUSES
 
 # How long a silent worker is treated as dead. A live worker renews inside this
 # window; the sweeper only reclaims a run that has not been renewed for the whole
@@ -113,15 +122,6 @@ def _soft_busy_countdown() -> float:
     return random.uniform(5.0, 15.0)
 
 
-def _maybe_schedule_title(db: Database, run_id: str) -> None:
-    row = find_agent_run_by_id(db, run_id)
-    if row is None or row["status"] not in RUN_TERMINAL_STATUSES:
-        return
-    from .session_title import schedule_title_refine
-
-    schedule_title_refine(db, row)
-
-
 def _finish_claimed(
     db: Database,
     run: dict[str, Any],
@@ -133,12 +133,11 @@ def _finish_claimed(
     run_id = str(run["id"])
     worker_id = str(run.get("lease_owner") or "")
     if _over_duration(run):
-        fail_run(db, run_id, {
-            "kind": "permanent",
-            "code": "COST_BUDGET_EXCEEDED",
-            "message": "run duration exceeded",
-        })
-        _maybe_schedule_title(db, run_id)
+        finalize_run(
+            db, run_id,
+            over_duration_outcome(run.get("cancel_requested_at") is not None),
+            lease_owner=worker_id,
+        )
         return True
     try:
         output = execute(run)
@@ -146,43 +145,6 @@ def _finish_claimed(
             output = asyncio.run(output)
         if not _still_held(db, run_id, worker_id, run_lease, pg_lease):
             return True
-    except ModelCapacityExceeded as exc:
-        if not _still_held(db, run_id, worker_id, run_lease, pg_lease):
-            return True
-        _abandon_running_reply(db, run_id)
-        schedule_retry(
-            db, run_id, {
-                "kind": "infrastructure",
-                "code": exc.code,
-                "brand": exc.brand,
-                "model": exc.model,
-                "message": str(exc),
-            },
-            INFRASTRUCTURE_AFTER, spend_attempt=False,
-        )
-        db.note_capacity_wait(run_id)
-        return True
-    except ProviderError as exc:
-        if not _still_held(db, run_id, worker_id, run_lease, pg_lease):
-            return True
-        if not exc.retryable:
-            return _settle(db, run_id, exc, permanent=True, retry_after=retry_after)
-        _abandon_running_reply(db, run_id)
-        schedule_retry(
-            db, run_id, {
-                "kind": "infrastructure",
-                "code": exc.code,
-                "brand": exc.provider,
-                "model": exc.model,
-                "provider_kind": exc.kind,
-                "status_code": exc.status_code,
-                "retry_after_seconds": exc.retry_after_seconds,
-                "request_id": exc.request_id,
-                "message": str(exc),
-            },
-            PROVIDER_AFTER, spend_attempt=False, delay=_provider_delay(exc),
-        )
-        return True
     except (InfrastructureError, OperationalError) as exc:
         if not _still_held(db, run_id, worker_id, run_lease, pg_lease):
             return True
@@ -191,46 +153,58 @@ def _finish_claimed(
             INFRASTRUCTURE_AFTER, spend_attempt=False,
         )
         return True
-    except PermanentRunError as exc:
-        if not _still_held(db, run_id, worker_id, run_lease, pg_lease):
-            return True
-        return _settle(db, run_id, exc, permanent=True, retry_after=retry_after)
-    except JsonRepairExhausted as exc:
-        # JSON 修复次数已经用完。
-        if not _still_held(db, run_id, worker_id, run_lease, pg_lease):
-            return True
-        return _settle(
-            db, run_id,
-            PermanentRunError(str(exc), code=exc.code),
-            permanent=True, retry_after=retry_after,
-        )
-    except ModelBudgetExceeded as exc:
-        # The cap is already spent. Another attempt calls the vendor the same way.
-        if not _still_held(db, run_id, worker_id, run_lease, pg_lease):
-            return True
-        return _settle(
-            db, run_id,
-            PermanentRunError(
-                "今天的额度已经用完，请明天再试。", code="QUOTA_EXCEEDED", scope=exc.scope,
-            ),
-            permanent=True, retry_after=retry_after,
-        )
     except LeaseLost:
         return True
     except Exception as exc:
         if not _still_held(db, run_id, worker_id, run_lease, pg_lease):
             return True
-        return _settle(db, run_id, exc, permanent=False, retry_after=retry_after)
+        kind = classify(exc)
+        if kind.name == KIND_CAPACITY and isinstance(exc, ModelCapacityExceeded):
+            _abandon_running_reply(db, run_id)
+            schedule_retry(
+                db, run_id, {
+                    "kind": "infrastructure",
+                    "code": exc.code,
+                    "brand": exc.brand,
+                    "model": exc.model,
+                    "message": str(exc),
+                },
+                INFRASTRUCTURE_AFTER, spend_attempt=False,
+            )
+            db.note_capacity_wait(run_id)
+            return True
+        if kind.name == KIND_PROVIDER and kind.retryable and isinstance(exc, ProviderError):
+            _abandon_running_reply(db, run_id)
+            schedule_retry(
+                db, run_id, {
+                    "kind": "infrastructure",
+                    "code": exc.code,
+                    "brand": exc.provider,
+                    "model": exc.model,
+                    "provider_kind": exc.kind,
+                    "status_code": exc.status_code,
+                    "retry_after_seconds": exc.retry_after_seconds,
+                    "request_id": exc.request_id,
+                    "message": str(exc),
+                },
+                PROVIDER_AFTER, spend_attempt=False, delay=_provider_delay(exc),
+            )
+            return True
+        limits = {"internal": INTERNAL_ERROR_RETRIES, "timeout": TIMEOUT_ERROR_RETRIES}
+        return _settle(
+            db, run_id, exc, kind=kind, retry_after=retry_after, worker_id=worker_id,
+            attempt_limit=limits.get(kind.name),
+        )
     row = find_agent_run_by_id(db, run_id)
     if row is None or row["status"] in RUN_TERMINAL_STATUSES or row["status"] in (
         RunStatus.WAITING_FOR_USER, RunStatus.WAITING_FOR_TASKS,
     ):
         _maybe_schedule_title(db, run_id)
         return True
-    finished = complete_run(db, run_id, output)
-    if finished is None:
-        cancel_run(db, run_id)
-    _maybe_schedule_title(db, run_id)
+    if not finalize_run(
+        db, run_id, Outcome(kind="succeeded", output=output), lease_owner=worker_id,
+    ):
+        finalize_run(db, run_id, Outcome(kind="cancelled"), lease_owner=worker_id)
     return True
 
 
@@ -303,57 +277,36 @@ def _settle(
     run_id: str,
     exc: Exception,
     *,
-    permanent: bool,
+    kind: ErrorKind,
     retry_after: tuple[timedelta, ...],
+    worker_id: str,
+    attempt_limit: int | None = None,
 ) -> bool:
-    error = {"kind": "permanent" if permanent else "transient", "message": str(exc)}
-    code = getattr(exc, "code", None)
-    if code is not None:
-        error["code"] = str(code)
+    """`kind.retryable` chooses another attempt. The code written is `kind.code`."""
+    permanent = not kind.retryable
+    message = "今天的额度已经用完，请明天再试。" if kind.name == "budget" else str(exc)
+    error: dict[str, Any] = {
+        "kind": "permanent" if permanent else "transient",
+        "message": message,
+        "code": kind.code,
+    }
     scope = getattr(exc, "scope", None)
     if scope:
         error["scope"] = str(scope)
     if not run_id:
         return True
-    outcome = (
-        fail_run(db, run_id, error) if permanent
-        else schedule_retry(db, run_id, error, retry_after)
-    )
-    if outcome == "dead_letter":
+    if permanent:
+        finalize_run(
+            db, run_id,
+            Outcome(kind="failed", error=error, reason="permanent", dead_letter=True),
+            lease_owner=worker_id,
+        )
+    elif schedule_retry(
+        db, run_id, error, retry_after, attempt_limit=attempt_limit,
+    ) == "dead_letter":
         log.error("dead letter run_id=%s error=%s", run_id, error.get("message"))
-    # A child the handler did not settle (ProviderError, retries exhausted) still
-    # has to reach the owner's ANSWER. Retryable failures stay queued and wait.
-    if (permanent and outcome is not None) or outcome == "dead_letter":
-        _maybe_schedule_title(db, run_id)
-        _notify_owner_of_terminal_child(db, run_id)
-        _remember_failed_chat(db, run_id, error)
+        after_terminal(db, run_id, Outcome(kind="failed", error=error))
     return True
-
-
-def _remember_failed_chat(db: Database, run_id: str, error: dict[str, Any]) -> None:
-    """A failed top-level chat still belongs in the session transcript."""
-    row = find_agent_run_by_id(db, run_id)
-    if row is None:
-        return
-    from ..orchestrator.speak import remember_failed_turn
-
-    try:
-        remember_failed_turn(db, row, error)
-    except Exception:
-        log.warning("failed to keep chat turn run_id=%s", run_id, exc_info=True)
-
-
-def _notify_owner_of_terminal_child(db: Database, run_id: str) -> None:
-    """Hand a failed child to its owner. `finish_child` keeps the first result."""
-    row = find_agent_run_by_id(db, run_id)
-    if row is None or not row.get("owner_run_id"):
-        return
-    from ..orchestrator.gather import child_terminal_result, finish_child
-
-    try:
-        finish_child(db, row, child_terminal_result(row))
-    except Exception:
-        log.warning("failed to hand child result to owner run_id=%s", run_id, exc_info=True)
 
 
 def _lease_deadline() -> datetime:
@@ -462,8 +415,15 @@ def _over_duration(run: dict[str, Any]) -> bool:
 
 
 def sweep_expired_leases(db: Database, limit: int = 100) -> int:
-    """Release runs whose lease has expired. Do not call this from `create_app`."""
-    return _sweep_expired_leases(db, limit)
+    """Release runs whose lease has expired. Do not call this from `create_app`.
+
+    The count includes leases put back on the queue. Parents are told only about
+    runs this pass wrote to a terminal status.
+    """
+    handled, terminal = _sweep_expired_leases(db, limit)
+    for run_id in terminal:
+        after_terminal_row(db, run_id)
+    return handled
 
 
 # Same unfinished set this many sweeps in a row: stop re-parking and let ANSWER speak.
@@ -484,14 +444,13 @@ def sweep_waiting_for_tasks(
 
 
 def _repair_stale_owners(db: Database, limit: int, stale_after: timedelta) -> None:
-    from ..orchestrator.gather import child_terminal_result, finish_child, load_state
+    from ..orchestrator.gather import finish_child, load_state, settle_terminal_child
     from ..repositories.run_repository import RUN_TERMINAL_STATUSES, latest_checkpoint
 
-    busy = {RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_FOR_TASKS}
     owners = db.list_stale_waiting_runs(limit, stale_after)
     for owner in owners:
         children = db.find_runs_by_owner(str(owner["id"]))
-        if any(child.get("status") in busy for child in children):
+        if any(child.get("status") in LIVE_CHILD_STATUSES for child in children):
             continue
         before = _result_ids(load_state(latest_checkpoint(db, str(owner["id"]))))
         for child in children:
@@ -502,7 +461,7 @@ def _repair_stale_owners(db: Database, limit: int, stale_after: timedelta) -> No
             if not task_id or task_id in before:
                 continue
             try:
-                finish_child(db, child, child_terminal_result(child))
+                settle_terminal_child(db, child)
             except Exception:
                 log.warning(
                     "sweeper failed to record child result owner=%s child=%s",
@@ -573,7 +532,7 @@ def _force_unfinished(
             "kind": task.get("kind"),
             "name": name,
             "ok": False,
-            "error": f"task {task_id} ended without a result",
+            "error": f"WAVE_STALE: task {task_id} ended without a result",
             "payload": {},
             "status": "failed",
         }
@@ -584,3 +543,7 @@ def _force_unfinished(
                 "sweeper failed to force a child result owner=%s task=%s",
                 owner.get("id"), task_id, exc_info=True,
             )
+    owner_id = str(owner.get("id") or "")
+    if owner_id:
+        # `finish_child` only wakes when Redis still has the wave counter.
+        requeue_waiting_tasks(db, owner_id, {"reason": "stale_limit"})

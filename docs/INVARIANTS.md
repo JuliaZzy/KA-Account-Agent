@@ -14,12 +14,12 @@
 
 ## I-1 并发只用 asyncio
 
-- 规则：异步代码里只 `await` 异步函数。`asyncio.run` 只允许出现在进程入口，每个入口文件一处。不保留进程内共享的事件循环，也不为它加锁。
+- 规则：异步代码里只 `await` 异步函数。`asyncio.run` 只允许出现在进程入口，每个入口文件一处。允许一个专用线程里的事件循环，只在 `backend/mcp/runtime.py`：只通过 `run_coroutine_threadsafe` 提交协程，不在调用方线程上 `run_until_complete`，单例创建带锁。MCP 会话绑在创建它的循环上，worker 每次执行都是新的 `asyncio.run`，会话没法跨 run 存活，所以需要这一个长生命周期的循环。
 - 原因：见 INC-1。调模型有过两套实现。`data.react` 走 `_ask_ds_async` → `deepseek_json_async` → `call_model_async`，全程 `await`，三路并发都成功。`report.optional` 走到同步的 `_call_deepseek` → `_await` → `run_until_complete`，撞上已经在跑的循环。
-- 检查：由 `scripts/check_invariants.sh` 执行。每个白名单文件里 `asyncio.run(` 恰好一处，别处没有。`run_until_complete`、`new_event_loop`、`_await`、`_background_loop` 整词匹配必须为空。注释行不算命中。白名单是允许留下的入口，不是把今天的命中抄进去。
-- 测试：一个 `TaskGroup` 里同时发起两次模型调用，重复跑几十遍，两次都返回，没有 `This event loop is already running`。
+- 检查：由 `scripts/check_invariants.sh` 执行。白名单分成两类。`asyncio.run(` 每个入口文件一处。`new_event_loop` 只允许专用线程那一处。`run_until_complete`、`_await`、`_background_loop` 整词匹配必须为空。注释行不算命中。白名单是允许留下的位置，不是把今天的命中抄进去。
+- 测试：一个 `TaskGroup` 里同时发起两次模型调用，重复跑几十遍，两次都返回，没有 `This event loop is already running`。两个线程同时要 MCP 的循环，拿到的是同一个 loop。
 
-当前允许的入口：`backend/services/run_worker.py`（worker 执行协程）、`backend/contract/read.py`（命令行 `main`）、`backend/llm/client.py`（`if __name__` 脚本）。同一文件里的第二处算违反，白名单不给它开口子。
+`asyncio.run` 的入口：`backend/services/run_worker.py`（worker 执行协程）、`backend/contract/read.py`（命令行 `main`）、`backend/llm/client.py`（`if __name__` 脚本）。`new_event_loop` 只允许 `backend/mcp/runtime.py`。同一文件里的第二处算违反。
 
 ## I-2 互斥只靠数据库状态转换
 
@@ -28,20 +28,22 @@
 - 检查：终态更新的语句里带 `lease_owner` 条件。新增的互斥不靠进程内的锁或全局可变对象挡住另一个 worker。
 - 测试：同一 `run_id` 的两条执行消息同时认领，只有一条进入执行。同一个进程（同一个 pid）在租约过期后再次认领，旧的 `lease_owner` 写不进终态，行保持第二次认领的结果。
 
-## I-3 终态只有一个出口
+## I-3 终态和父 run
 
-- 规则：run 置为终态只能通过 `finalize_run`。`RunStatus` 的终态是 `succeeded`、`failed`、`cancelled`，没有 `done`，也没有 `dead`。死信是 `dead_letter_jobs` 里的一行，run 仍写成 `failed`，由 `finalize_run` 写。成功、普通异常、`ProviderError`、`ModelCapacityExceeded`、取消、租约过期、死信都走它。置终态、把结果写入父 run 的 checkpoint、把父 run 的唤醒写入 outbox，在同一个事务里完成。
-- 对账：sweeper 发现子 run 已终态，而父 checkpoint 的 `orchestrator.results` 没有这个 `task_id`。它调用 `finalize_run` 把结果补上。sweeper 不单独把父 run 改成 `queued`。
-- 上限：连续空转的次数存在父 run 最新 checkpoint 的 `state_json.orchestrator.stale_wakes`，整数，不是 `agent_runs` 的列。sweeper 在以 `waiting_tasks_stale` 唤醒之前调用 `note_stale_wake`：这一轮没有新的子结果则加一，有新结果则写成 0。加一之后达到 3，不再入队，由 `finalize_run` 把父 run 带进 ANSWER。同一轮里先对账、再数数：补成功才归零，补失败再加一。
+- 规则：worker 收口走 `finalize_run`：一个事务里 `_write_terminal` 写终态，提交后 `after_terminal`。清扫和次数用尽在调用方已有的事务里调 `_write_terminal`，提交后 `after_terminal_row`。`RunStatus` 的终态是 `succeeded`、`failed`、`cancelled`。死信是 `dead_letter_jobs` 里的一行，run 仍是 `failed`。排标题、通知父 run、写失败对话在事务外。`notify_parent` 失败只记 warning。下一轮 `_repair_stale_owners` 按 checkpoint 把缺的子结果补上。唤醒以数据库为准；Redis 计数归零只是提前入队。
+  经 `_write_terminal`：worker 成功、worker 取消、`_settle` 的永久失败、worker 超时、时长清扫（`running`，以及父 run 停在 `waiting_for_tasks` 且已超过自己的 `max_duration_seconds`）、租约清扫的三个终态（内联导入失败、已请求取消、执行次数用尽）、`schedule_retry` 执行次数用尽、`mark_outbox_retry` 发布次数用尽（先 `queued → running`，再失败）。`COST_BUDGET_EXCEEDED` 的 worker 超时和 sweeper 时长清扫都写死信。
+  经 `_write_terminal`（`_fail_locked_run` 只是转给它），提交后 `after_terminal_row`：队列清扫里卡住的 run、worker 丢失重投用尽、容量等待超时。API 取消 `queued` / `waiting_for_user` / `waiting_for_tasks`，以及合同内联导入成功，直接 `_transition`。内联导入的租约过期走 `_write_terminal`，失败且不写死信。`complete_run`、`fail_run`、`cancel_run` 已删除，调用方走 `finalize_run` 或 `finalize_run_row`。
+- 对账：`_repair_stale_owners`。子 run 已终态，而父 checkpoint 的 `orchestrator.results` 没有这个 `task_id` 时，调用 `settle_terminal_child`。有活子 run（`queued`、`running`、`waiting_for_tasks`）时不补结果、不计数、不唤醒。
+- 上限：连续空转的次数在父 run 最新 checkpoint 的 `state_json.orchestrator.stale_wakes`，整数，不是 `agent_runs` 的列。父 run 另受自己的 `max_duration_seconds` 约束；这一列为空则时长清扫不关它。子 run 都已结束且这一轮没有新结果时 `note_stale_wake` 加一，有新结果则写成 0。补上原先缺失的子结果也算进展，同一次清扫把 `stale_wakes` 写成 0，不是漏加。达到 `STALE_WAKE_LIMIT`，`_force_unfinished` 写入 `WAVE_STALE` 并以 `stale_limit` 重新入队。未到 `STALE_WAKE_LIMIT` 时，同一次清扫里的 `sweep_waiting_for_tasks` 以 `waiting_tasks_stale` 入队。父 run 再执行时 `dispatch_wave` 返回空，走 `_answer`。
 - 原因：见 INC-1。子 run 遇到 `ProviderError` 后直接抛出，worker 只调用了 `fail_run`，没有 `finish_child`。父 run 停在 `waiting_for_tasks`。sweeper 看到子 run 已经结束，只把父 run 重新入队，checkpoint 里仍然没有结果。父 run 再派发时命中已经失败的幂等键，又停回去。
-- 检查：由 `scripts/check_invariants.sh` 执行。`fail_run` 整词匹配必须为空，不会命中 `_fail_run`。`_fail_run` 只出现在定义 `finalize_run` 的那个文件里。
-- 测试：`test_finalize_all_paths`。在每个失败点注入故障（`ProviderError`、容量超限、取消、进程被杀、租约过期），断言父 run 在有限次数内进入 ANSWER。对账和上限分开断言：补成功时 checkpoint 有结果并且 `stale_wakes` 归零；补失败时计数加一，父 run 仍不入队；连续 3 次没有新结果时父 run 进入 ANSWER，状态不是 `queued`。
+- 检查：由 `scripts/check_invariants.sh` 执行。`fail_run` 整词匹配必须为空。`_write_terminal` 只定义在 `backend/db/database/run.py`。`_transition(` 到 `SUCCEEDED` / `FAILED` / `CANCELLED`，以及 `transition_run(` 带这三个状态，只允许出现在白名单 `[terminal_transition]`。`_fail_locked_run` 内部调 `_write_terminal`，不再自己 `_transition` 到 `failed`。
+- 测试：`test_finalize_all_paths`。在每个失败点注入故障（`ProviderError`、容量超限、取消、进程被杀、租约过期），断言父 run 在有限次数内进入 ANSWER。对账和上限分开断言：补上终态子结果时 checkpoint 有结果并且 `stale_wakes` 归零，父 run 被入队；子 run 仍在运行时不补、不计数、不唤醒；连续 3 次没有新结果时写入 `WAVE_STALE` 并入队，再次执行走 ANSWER，不再停回 `waiting_for_tasks`。同一状态重新派发时 `stale_wakes` 保持为 1、2、3。
 
 ## I-4 错误分类只有一个函数
 
-- 规则：所有异常经过 `backend/llm/errors.py` 里的 `classify(exc) -> ErrorKind`。本地 `RuntimeError`（包括 `This event loop is already running`）归为内部错误，不记成 `PROVIDER_INTERNAL`。重试、换模型、熔断只看 `ErrorKind`。
+- 规则：所有异常经过 `backend/llm/errors.py` 里的 `classify(exc) -> ErrorKind`。本地 `RuntimeError`（包括 `This event loop is already running`）归为内部错误，码是 `INTERNAL`，不记成 `PROVIDER_INTERNAL`。内部错误可重试，次数是 `INTERNAL_ERROR_RETRIES`（1）。`TimeoutError` 单独是 `timeout`，码是 `TIMEOUT`，按 `TIMEOUT_ERROR_RETRIES`（3）重试，不占用内部错误那一次。供应商超时仍是 `provider`。重试、换模型、熔断只看 `ErrorKind`。`fallback_on` 用 `ErrorKind.name`（`provider`、`capacity`、`invalid_json`）。
 - 原因：见 INC-1。这次的 `RuntimeError` 被收成 `ProviderError` / `PROVIDER_INTERNAL`。供应商没有失败，本地循环被重入了。按供应商错误处理之后，这条调用不重试、不换模型，整条月报被判死。
-- 检查：由 `scripts/check_invariants.sh` 执行。`except ProviderError` 和 `except ModelCapacityExceeded` 只出现在 `backend/llm/errors.py`。其他文件捕获异常只写 `except Exception as exc:`，然后 `kind = classify(exc)`。
+- 检查：由 `scripts/check_invariants.sh` 执行。`except ProviderError`、`except ModelCapacityExceeded`，以及只包含这两类的元组，只出现在 `backend/llm/errors.py`。`"provider_error"` 和 `"model_capacity"` 也只允许出现在这个文件。脚本列出的调用点改为 `except Exception`，再 `kind = classify(exc)`。还带着 `JsonRepairExhausted` 或 `ModelBudgetExceeded` 的元组不在这条正则里，它们仍是原样再抛。
 - 测试：`This event loop is already running` 分类为内部错误，码不是 `PROVIDER_INTERNAL`，不进入供应商熔断，不触发换模型。
 
 ## I-5 可选步骤失败要降级
@@ -80,10 +82,72 @@
 
 | 规则 | 怎么算过 | 测试 |
 |---|---|---|
-| I-1 `asyncio.run(` | 每个白名单文件一处，文件集合等于白名单 | `TaskGroup` 里两次模型调用，重复几十遍 |
-| I-1 `run_until_complete`、`new_event_loop`、`_await`、`_background_loop` | 空 | 同上 |
+| I-1 `asyncio.run(` | 每个入口文件一处，文件集合等于白名单的 `[asyncio.run]` | `TaskGroup` 里两次模型调用，重复几十遍 |
+| I-1 `new_event_loop` | 只有白名单 `[new_event_loop]` 里的文件，每个一处 | 两个线程拿到同一个 MCP loop |
+| I-1 `run_until_complete`、`_await`、`_background_loop` | 空 | 同上 |
 | I-3 `fail_run` | 空 | `test_finalize_all_paths` |
-| I-3 `_fail_run` | 只有定义 `finalize_run` 的文件 | 同上 |
+| I-3 `_write_terminal` | 只定义在 `backend/db/database/run.py` | 同上 |
+| I-3 直接写成终态的 `_transition(` / `transition_run(` | 只有白名单 `[terminal_transition]` | 同上 |
 | I-4 `except ProviderError`、`except ModelCapacityExceeded` | 只有 `backend/llm/errors.py` | 事件循环重入分类为内部错误 |
 | I-6 同步的 `call_model`、`_ask_ds`、`deepseek_json`、`_call_deepseek` | 空。只防这几个名字回潮 | 洞察失败后图表不再打模型 |
 | I-7 `_ORIGINAL_` | 空 | 替身从参数传入 |
+
+# 终态、通知、对账
+
+`Outcome` 在 `backend/db/outcome.py`。`kind` 是 `succeeded`、`failed`、`cancelled`。`reason` 没有默认值。`dead_letter` 为真时，同一次 `_write_terminal` 往 `dead_letter_jobs` 写一行。时长用尽走 `over_duration_outcome`：已经请求取消则 `cancelled`，`reason` 为 `over_duration`，不写死信；否则 `failed`，错误码 `COST_BUDGET_EXCEEDED`，写死信。worker 超时和 sweeper 时长清扫用这同一个函数。
+
+## 出口
+
+`db/` 不 import `orchestrator/`。写状态和通知父 run 分开。
+
+| 出口 | 位置 | 做什么 |
+|---|---|---|
+| `_write_terminal` | `backend/db/database/run.py` | 调用方已锁住 run 的事务里，把 `status` 写成终态。需要死信时同一事务写入 |
+| `finalize_run_row` | 同上 | 自己开事务：加锁、校验起点、`lease_owner`、取消标记，再 `_write_terminal`。没写返回空 |
+| `finalize_run` | `backend/services/run_finalize.py` | `finalize_run_row` 写成功后跑 `after_terminal`。没写就返回，留给 sweeper |
+| `after_terminal` | 同上 | 事务外：排标题、`notify_parent`、失败时把这次对话留在会话里 |
+| `after_terminal_row` | 同上 | 按已经落库的 status 组一个 `Outcome`，再跑 `after_terminal` |
+| `notify_parent` | 同上 | 有 `owner_run_id` 时调用 `settle_terminal_child`。异常只记 warning |
+
+`_ENTRY`：`succeeded` 从 `running`；`failed` 从 `running`、`waiting_for_tasks`；`cancelled` 从 `running`、`queued`、`waiting_for_user`、`waiting_for_tasks`。worker 传入这次认领的 `lease_owner`，对不上就不写。sweeper 在自己的事务里调 `_write_terminal`，不传 `lease_owner`。成功时已有 `cancel_requested_at` 则不写成功；取消时没有这个标记则不写取消。
+
+`notify_parent` 走到 `finish_child`。checkpoint 先写入。同一 `task_id` 保留第一次；内容不同的后到结果记 `wave.result_ignored`，不改 `stale_wakes`。Redis 的波次计数只在这个 `task_id` 第一次出现时减一，减到 0 才 `requeue_waiting_tasks`。计数不存在或 `store_result` 返回 `-1` 时，checkpoint 仍在，父 run 交给下面的清扫唤醒。重复通知无害。`child_terminal_result` 把 `error_json.code` 拼进结果里的 `error` 字符串。
+
+`requeue_waiting_tasks` 只在 `waiting_for_tasks` 且没有取消标记时把 run 改回 `queued` 并加一条 execute outbox。
+
+## 会在提交后通知父 run 的终态
+
+- worker 超时：`finalize_run(over_duration_outcome(...), lease_owner=这次认领)`。
+- worker 成功：`Outcome(kind="succeeded", output=output)`。这次写入被取消标记拒绝时，再写 `Outcome(kind="cancelled")`。
+- `_settle` 永久失败：`finalize_run`，`reason` 为 `permanent`，写死信。
+- 执行次数用尽：`schedule_retry` 从 `running` 调 `_write_terminal`（`reason` 为 `dead_letter`，写死信，`attempts` 用 outbox 计数），返回 `dead_letter` 后 worker 调 `after_terminal`。
+- 租约过期：`sweep_expired_leases` 从 `running` 处理。内联导入失败、已请求取消、执行次数用尽写成终态，返回这些 id；services 对每个调 `after_terminal_row`。这三条不写死信。次数还没用尽的回到 `queued`，加一条 execute outbox。
+- 时长清扫：`_fail_over_duration` 覆盖 `running` 和 `waiting_for_tasks`。`queued` 不在此列，避免把还在等 worker 的 run 关掉。`max_duration_seconds` 或 `started_at` 为空则跳过。`close_attention` 对返回的 id 调 `after_terminal_row`。父 run 因此失败时，还在跑的子 run 不会被取消，各自按租约和时长收口。之后写进父 checkpoint 的结果无害：父 run 已经不是 `waiting_for_tasks`，`requeue_waiting_tasks` 返回 `None`。
+- outbox 发布次数用尽：`mark_outbox_retry` 先锁 run、再锁 outbox，和 `schedule_retry`、`mark_outbox_dispatched` 同一顺序。`queued` 先到 `running`，再 `_write_terminal` 失败并写死信，`attempts` 用 outbox 计数。`dispatcher` 对返回的 id 调 `after_terminal_row`。
+
+## 对账和空转上限
+
+`stale_wakes` 在父 run 最新 checkpoint 的 `orchestrator` 里。
+
+`commit_task_wave` 写 checkpoint 的同一事务里读上一份。`results` 的键和 `finished` 都没变，就沿用上一份的 `stale_wakes`；有新结果或新完成的任务则写成 0。新的 `wave_id` 不算进展。`record_child_wave_result` 写入一条新结果时也把 `stale_wakes` 写成 0。
+
+`sweep` 里 `sweep_waiting_for_tasks` 先跑 `_repair_stale_owners`，再跑数据库里的 `sweep_waiting_for_tasks`。对象是停在 `waiting_for_tasks` 且超过阈值的父 run。
+
+- 还有子 run 处于 `queued`、`running`、`waiting_for_tasks`：这一轮不补结果、不加计数、不唤醒。活子 run 交给租约清扫和时长清扫。
+- 子 run 已终态，而 `orchestrator.results` 没有它的 `task_id`：`settle_terminal_child`。这一次抛错只记 warning，下一轮再补。
+- 未完成的任务是整份 `orchestrator.tasks` 里还没有结果的 id。当前这一波的 id 在 `orchestrator.wave_ids`。整份计划在 `orchestrator.tasks`。
+- 没有未完成任务：`note_stale_wake(progressed=True)` 把计数写成 0。补上缺失结果之后未完成集合变空，也走这一支，所以计数停在 0。随后数据库清扫把父 run 以 `waiting_tasks_stale` 重新入队。
+- 仍有未完成任务：这一轮 `results` 的键变了则计数写成 0，否则加一。`note_stale_wake` 只在父 run 仍是 `waiting_for_tasks` 时写 checkpoint。
+- 计数达到 `STALE_WAKE_LIMIT`：`_force_unfinished` 给每个缺结果的任务写入 `error` 为 `WAVE_STALE: task {id} ended without a result` 的失败结果，经 `finish_child` 同时放进 `results` 和 `finished`，再 `requeue_waiting_tasks(reason="stale_limit")`。`ready_wave` 只看 `finished`。父 run 再次进入 `execute_parent` 时，`dispatch_wave` 返回空，调用 `_answer`。
+- 计数未到 `STALE_WAKE_LIMIT`：同一次清扫后面的 `sweep_waiting_for_tasks` 看到子 run 都已结束，以 `waiting_tasks_stale` 入队。
+
+## 另外几处终态
+
+这两处直接 `_transition`，没有父 run 需要通知：
+
+- API 取消 `queued`、`waiting_for_user`、`waiting_for_tasks`。被取消的 `waiting_for_tasks` 父 run 自己就是终态。`running` 只写 `cancel_requested_at`，终态由持有租约的 worker 写。
+- 合同内联导入成功，和合同写在同一个事务里，`_transition` 到 `succeeded`，不带 `output`。这条 run 没有父 run。它的租约过期走上面的租约清扫，失败且不写死信。
+
+队列里卡住的 run、worker 丢失重投用尽、容量等待超时先转到 `running`（`queued` 没有到 `failed` 的边），再经 `_fail_locked_run` → `_write_terminal` 写成 `failed` 并写死信。方法返回这次新终态的 run id，提交后调用方调 `after_terminal_row`。没人认领的 run 由 `republish_unclaimed` 重新投递，不另写终态。
+
+认领生成的 `lease_owner` 带随机后缀（`backend/celery/tasks.py` 的 `claim_owner`）。同一次执行把这个值传给 `finalize_run`，不在别处重拼。`finalize_run_row` 在调用方传入 `lease_owner` 时，这个值必须和行上的一致。

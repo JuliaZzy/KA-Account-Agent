@@ -81,6 +81,7 @@ def enqueue_chat_run(
         },
         max_model_calls=chat_budget.max_model_calls,
         max_tokens=chat_budget.max_tokens,
+        max_duration_seconds=chat_budget.max_duration_seconds,
     )
     dispatch_pending(db)
     return run

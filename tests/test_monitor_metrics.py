@@ -5,8 +5,10 @@ from __future__ import annotations
 from datetime import timedelta
 
 from backend.db import utcnow
+from backend.db.outcome import Outcome
 from backend.schemas.run import MonitorResponse
 from backend.services.monitor import metrics_text, monitor
+from backend.services.run_names import RunStatus
 
 _STAGES = {"queue", "claim", "plan", "child", "model", "tool", "answer", "history"}
 
@@ -64,7 +66,7 @@ def test_p99_is_null_without_samples_and_stays_with_p95(db):
 
     run, _created = db.create_agent_run("dist-1", "u-a", "chat", "metric-1", {"message": "hi"})
     assert db.claim_chat_turn(run["id"], "worker", utcnow() + timedelta(minutes=5)) is not None
-    assert db.complete_run(run["id"], {"text": "ok"}) is not None
+    assert db.finalize_run_row(run["id"], Outcome(kind="succeeded", output={"text": "ok"}), allowed_from=frozenset({RunStatus.RUNNING})) is not None
 
     facts = db.monitor_facts("dist-1")
     assert facts["duration"]["count"] == 1
@@ -74,7 +76,7 @@ def test_p99_is_null_without_samples_and_stays_with_p95(db):
 
     failed, _created = db.create_agent_run("dist-1", "u-a", "chat", "metric-failed", {"message": "no"})
     assert db.claim_chat_turn(failed["id"], "worker", utcnow() + timedelta(minutes=5)) is not None
-    assert db.fail_run(failed["id"], {"message": "no"}) is not None
+    assert db.finalize_run_row(failed["id"], Outcome(kind="failed", error={"message": "no"}, reason="permanent", dead_letter=True), allowed_from=frozenset({RunStatus.RUNNING})) is not None
     waiting, _created = db.create_agent_run("dist-1", "u-a", "chat", "metric-queued", {"message": "later"})
     assert waiting["status"] == "queued"
     after = db.monitor_facts("dist-1")

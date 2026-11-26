@@ -453,7 +453,7 @@ flowchart TD
 | `backend/services/sweeper.py` | 清扫编排：租约、补投、`dispatch_pending` |
 | `backend/services/run_worker.py` | `work_once`、`schedule_retry` 分流、`LeaseLost` |
 | `backend/services/entry_guard.py` | Redis 运行闸门 `acquire_run`、座位 renew |
-| `backend/db/database/queue.py` | `schedule_retry`、`mark_outbox_retry`、`fail_unclaimed_exhausted`、`record_worker_loss_redelivery` |
+| `backend/db/database/queue.py` | `schedule_retry`、`mark_outbox_retry`、`record_worker_loss_redelivery` |
 | `backend/db/database/run.py` | `touch_queue_heartbeat`、`claim_unclaimed_dispatches`、`sweep_expired_leases` |
 | `backend/llm/errors.py` | `ProviderError`、`Retry-After` 解析、SDK/HTTP 映射 |
 | `backend/llm/client.py` | 适配层，`max_retries=0` |

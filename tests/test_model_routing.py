@@ -74,6 +74,7 @@ def test_chat_and_open_runs_have_safety_net_budgets():
 
     assert chat.max_model_calls == 8
     assert chat.max_tokens == 32_000
+    assert chat.max_duration_seconds == 2 * 60 * 60
     assert opened.max_model_calls == 4
     assert opened.max_tokens == 8_000
     assert run_budget_for("po").max_model_calls is None

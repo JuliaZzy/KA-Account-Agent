@@ -66,6 +66,15 @@ class RunStatus(StrEnum):
     FAILED = "failed"
     CANCELLED = "cancelled"
 
+
+# A child in one of these still owns the wave. `waiting_for_user` does not:
+# the parent may be reconciled while that child waits on a person.
+LIVE_CHILD_STATUSES = (
+    RunStatus.QUEUED,
+    RunStatus.RUNNING,
+    RunStatus.WAITING_FOR_TASKS,
+)
+
 class OutboxStatus(StrEnum):
     PENDING = "pending"
     DISPATCHED = "dispatched"

@@ -103,6 +103,7 @@ class RecordMixin:
                 finished.append(task_id)
             orchestrator["results"] = results
             orchestrator["finished"] = finished
+            orchestrator["stale_wakes"] = 0
             state["orchestrator"] = orchestrator
             if self._write_checkpoint(s, owner_run_id, state, now) is None:
                 return None
@@ -115,11 +116,15 @@ class RecordMixin:
         """Count sweeps that woke this owner without a new child result.
 
         A new result resets the count. The sweeper uses the number to stop
-        re-dispatching the same unfinished tasks.
+        re-dispatching the same unfinished tasks. A run that is no longer
+        `waiting_for_tasks` is left alone, so this does not insert a checkpoint
+        over one the worker is writing.
         """
         now = utcnow()
         with self.tx() as s:
-            if self._lock_run(s, run_id) is None:
+            run = self._lock_run(s, run_id)
+            # A wake that already left `waiting_for_tasks` is writing its own checkpoint.
+            if run is None or run.status != RunStatus.WAITING_FOR_TASKS:
                 return 0
             previous = s.scalars(
                 select(orm.Checkpoint)

@@ -56,7 +56,7 @@ def test_a_chat_capacity_wait_fails_and_a_shorter_report_wait_does_not(db):
         utcnow() - timedelta(seconds=900),
         ("report", "review", "revise"),
     )
-    assert failed == 1
+    assert failed == [chat["id"]]
     assert db.find_agent_run_by_id(chat["id"])["error_json"]["code"] == "CAPACITY_TIMEOUT"
     assert db.find_agent_run_by_id(report["id"])["status"] == "queued"
 

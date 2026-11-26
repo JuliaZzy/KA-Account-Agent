@@ -22,6 +22,7 @@ from ..repositories.run_repository import (
     mark_outbox_retry,
 )
 from .entry_guard import limits
+from .run_finalize import after_terminal_row
 from .run_names import RunStatus, RunType
 from .session_title import DEFAULT_QUEUE, TITLE_QUEUE
 
@@ -54,7 +55,9 @@ def dispatch_pending(db: Database, limit: int = 100) -> int:
             try:
                 _publish(payload)
             except Exception as exc:
-                mark_outbox_retry(db, job["id"], str(exc))
+                _job, terminal = mark_outbox_retry(db, job["id"], str(exc))
+                for run_id in terminal:
+                    after_terminal_row(db, run_id)
                 moved = True
                 continue
             if mark_outbox_dispatched(db, job["id"]) is not None:

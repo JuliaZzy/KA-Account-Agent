@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import random
+import uuid
 
 from .worker import celery
 
@@ -114,10 +115,13 @@ def _execute_run(self, run_id: str) -> str:
     # existing dead-letter flow while transient worker loss remains recoverable.
     if (self.request.delivery_info or {}).get("redelivered"):
         from ..db.database.queue import WORKER_LOST_MAX_REDELIVERIES
+        from ..services.run_finalize import after_terminal_row
 
-        outcome = db.record_worker_loss_redelivery(
+        outcome, terminal = db.record_worker_loss_redelivery(
             run_id, max_attempts=WORKER_LOST_MAX_REDELIVERIES,
         )
+        for closed_id in terminal:
+            after_terminal_row(db, closed_id)
         if outcome == "dead_letter":
             return run_id
 
@@ -125,13 +129,13 @@ def _execute_run(self, run_id: str) -> str:
     is_open = row is not None and row.get("run_type") == RunType.OPEN
     if is_open and title_capacity_busy(db):
         if self.request.retries >= TITLE_BUSY_MAX_RETRIES:
-            _skip_open_keep_provisional(db, run_id, worker_id=f"celery:{os.getpid()}")
+            _skip_open_keep_provisional(db, run_id, worker_id=claim_owner())
             return run_id
         _heartbeat(db, run_id)
         raise self.retry(countdown=title_retry_countdown())
 
-    # worker 唯一标识，抢租约
-    worker_id = f"celery:{os.getpid()}"
+    # One token for this claim. A later claim in this process gets a different suffix.
+    worker_id = claim_owner()
 
     # SoftBusy (session / gate / queue) retries without ack so the run stays queued.
     try:
@@ -143,6 +147,11 @@ def _execute_run(self, run_id: str) -> str:
         _heartbeat(db, run_id)
         raise self.retry(countdown=e.countdown) from e
     return run_id
+
+
+def claim_owner() -> str:
+    """Lease token for one claim. The pid stays visible; the suffix makes the next claim differ."""
+    return f"celery:{os.getpid()}:{uuid.uuid4().hex[:8]}"
 
 
 def _heartbeat(db, run_id: str) -> None:
@@ -161,12 +170,9 @@ def _heartbeat(db, run_id: str) -> None:
 
 def _skip_open_keep_provisional(db, run_id: str, *, worker_id: str) -> None:
     """Give up refining under load. The sidebar keeps the first-message title."""
-    from ..repositories.run_repository import (
-        RunStatus,
-        claim_chat_turn,
-        complete_run,
-        find_agent_run_by_id,
-    )
+    from ..db.outcome import Outcome
+    from ..repositories.run_repository import RunStatus, claim_chat_turn, find_agent_run_by_id
+    from ..services.run_finalize import finalize_run
     from ..services.run_worker import _lease_deadline
 
     row = find_agent_run_by_id(db, run_id)
@@ -175,4 +181,8 @@ def _skip_open_keep_provisional(db, run_id: str, *, worker_id: str) -> None:
     claimed = claim_chat_turn(db, run_id, worker_id, _lease_deadline())
     if claimed is None:
         return
-    complete_run(db, run_id, {"ok": True, "skipped": "title_busy", "title": None, "tags": []})
+    finalize_run(
+        db, run_id,
+        Outcome(kind="succeeded", output={"ok": True, "skipped": "title_busy", "title": None, "tags": []}),
+        lease_owner=worker_id,
+    )

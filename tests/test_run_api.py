@@ -10,8 +10,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.db import InvalidRunTransition, utcnow
+from backend.db.outcome import Outcome
 from backend.main import create_app
 from backend.schemas import Partnership
+from backend.services.run_finalize import finalize_run
 from backend.services.run_names import RunStatus, ToolCallStatus
 
 HEADERS = {"X-Org-Id": "org-1", "X-User-Id": "user-1"}
@@ -66,6 +68,69 @@ def test_create_run_commits_the_event_and_hides_other_orgs(make_db):
     assert body["tool_calls"] == []
     assert body["checkpoints"] == []
     assert [e["sequence"] for e in body["events"]] == [1]
+def test_finalize_run_leaves_the_parent_alone_when_the_lease_does_not_match(make_db):
+    db = _db(make_db, "finalize-run-lease")
+    parent, _created = db.create_agent_run(
+        "org-1", "user-1", "chat", "finalize-run-parent", {"message": "hi"},
+    )
+    child, _created = db.create_agent_run(
+        "org-1", "user-1", "tool", "finalize-run-child",
+        {"task_id": "task-1", "session_id": "s1", "wave_id": "w1"},
+        owner_run_id=parent["id"],
+    )
+    assert db.claim_chat_turn(child["id"], "claim-a", utcnow() + timedelta(minutes=5)) is not None
+    assert finalize_run(
+        db, child["id"],
+        Outcome(kind="failed", error={"message": "no"}, reason="permanent", dead_letter=True),
+        lease_owner="claim-b",
+    ) is False
+    assert db.find_agent_run_by_id(child["id"])["status"] == "running"
+    assert db.latest_checkpoint(parent["id"]) is None
+
+
+def test_same_process_reclaim_keeps_the_first_lease_from_finishing(make_db):
+    import os
+
+    from backend.celery.tasks import claim_owner
+    from backend.services.run_worker import sweep_expired_leases
+
+    db = _db(make_db, "same-pid-lease")
+    first = claim_owner()
+    second = claim_owner()
+    assert first != second
+    assert first.startswith(f"celery:{os.getpid()}:")
+    assert second.startswith(f"celery:{os.getpid()}:")
+    run, _created = db.create_agent_run("org-1", "user-1", "po", "same-pid", {"message": "hi"})
+    assert db.claim_chat_turn(run["id"], first, utcnow() - timedelta(seconds=5)) is not None
+    sweep_expired_leases(db)
+    assert db.find_agent_run_by_id(run["id"])["status"] == "queued"
+    assert db.claim_chat_turn(run["id"], second, utcnow() + timedelta(minutes=5)) is not None
+    assert finalize_run(
+        db, run["id"], Outcome(kind="succeeded", output={"ok": True}), lease_owner=first,
+    ) is False
+    held = db.find_agent_run_by_id(run["id"])
+    assert held["status"] == "running"
+    assert held["lease_owner"] == second
+    assert finalize_run(
+        db, run["id"], Outcome(kind="succeeded", output={"ok": True}), lease_owner=second,
+    ) is True
+    assert db.find_agent_run_by_id(run["id"])["status"] == "succeeded"
+
+
+def test_finalize_run_row_rejects_a_different_lease_owner(make_db):
+    db = _db(make_db, "finalize-lease")
+    run, _created = db.create_agent_run("org-1", "user-1", "chat", "finalize-lease", {"message": "hi"})
+    assert db.claim_chat_turn(run["id"], "claim-a", utcnow() + timedelta(minutes=5)) is not None
+    assert db.finalize_run_row(
+        run["id"], Outcome(kind="succeeded", output={"ok": True}), lease_owner="claim-b",
+    ) is None
+    assert db.find_agent_run_by_id(run["id"])["status"] == "running"
+    finished = db.finalize_run_row(
+        run["id"], Outcome(kind="succeeded", output={"ok": True}), lease_owner="claim-a",
+    )
+    assert finished is not None and finished["status"] == "succeeded"
+
+
 def test_cancel_and_resume_append_the_next_sequence(make_db):
     db = _db(make_db, "run-status")
     client = TestClient(create_app(db))
@@ -267,6 +332,7 @@ def test_transient_error_retries_then_dead_letters(make_db):
     assert work_once(db, "worker-a", execute, immediate, run_id=run_id) is True
     failed = client.get(f"/runs/{run_id}", headers=HEADERS).json()
     assert failed["status"] == "failed"
+    assert failed["error_json"]["code"] == "TIMEOUT"
     events = client.get(f"/runs/{run_id}/trace", headers=HEADERS).json()["events"]
     assert [e["event_type"] for e in events if e["event_type"] == "run.retry_scheduled"] == [
         "run.retry_scheduled", "run.retry_scheduled", "run.retry_scheduled",
@@ -281,10 +347,11 @@ def test_worker_loss_redeliveries_eventually_dead_letter(make_db):
     dispatch_pending(db)
 
     for _ in range(3):
-        assert db.record_worker_loss_redelivery(run_id) == "continue"
-    assert db.record_worker_loss_redelivery(run_id) == "dead_letter"
+        assert db.record_worker_loss_redelivery(run_id) == ("continue", [])
+    status, terminal = db.record_worker_loss_redelivery(run_id)
+    assert status == "dead_letter" and terminal == [run_id]
     assert client.get(f"/runs/{run_id}", headers=HEADERS).json()["status"] == "failed"
-    letters = db.list_dead_letter_jobs(db.run_trace("org-1", run_id)["outbox"][0]["id"])
+    letters = db.list_dead_letter_jobs(run_id)
     assert len(letters) == 1
     assert letters[0]["error_json"]["code"] == "WORKER_LOST_REDELIVERY"
 def test_model_capacity_requeues_without_spending_execution_attempt(make_db):
@@ -450,7 +517,7 @@ def test_forbidden_run_transitions_do_not_commit(make_db):
 
     succeeded_id = open_run(3)
     assert db.claim_chat_turn(succeeded_id, "worker-a", utcnow() + timedelta(minutes=5)) is not None
-    assert db.complete_run(succeeded_id, {"answer": "ok"})["status"] == "succeeded"
+    assert db.finalize_run_row(succeeded_id, Outcome(kind="succeeded", output={"answer": "ok"}), allowed_from=frozenset({RunStatus.RUNNING}))["status"] == "succeeded"
     reject(
         succeeded_id,
         RunStatus.RUNNING,
@@ -799,25 +866,26 @@ def test_an_outbox_past_max_attempts_is_dead_lettered(make_db):
     assert pending[0]["max_attempts"] == 10
 
     for _ in range(10):
-        updated = db.mark_outbox_retry(outbox_id, "publish failed")
-        assert updated is not None
+        updated, terminal = db.mark_outbox_retry(outbox_id, "publish failed")
+        assert updated is not None and terminal == []
         assert updated["status"] == "pending"
 
-    db.mark_outbox_retry(outbox_id, "publish failed")
+    _updated, terminal = db.mark_outbox_retry(outbox_id, "publish failed")
+    assert terminal == [run_id]
     assert client.get(f"/runs/{run_id}", headers=HEADERS).json()["status"] == "failed"
     assert client.get(f"/runs/{run_id}", headers=HEADERS).json()["attempts"] == 1
     events = client.get(f"/runs/{run_id}/events", headers=HEADERS).json()
     assert [event["event_type"] for event in events] == ["run.created", "run.started", "run.failed"]
     assert events[-1]["payload_json"]["reason"] == "dead_letter"
 
-    letters = db.list_dead_letter_jobs(outbox_id)
+    letters = db.list_dead_letter_jobs(run_id)
     assert len(letters) == 1
     assert letters[0]["job_type"] == "execute_run"
     assert letters[0]["payload_json"]["run_id"] == run_id
     assert letters[0]["payload_json"]["trace_id"]
     assert letters[0]["attempts"] == 11
     assert letters[0]["error_json"] == {"kind": "dead_letter", "message": "publish failed"}
-    assert db.mark_outbox_retry(outbox_id, "publish failed") is None
+    assert db.mark_outbox_retry(outbox_id, "publish failed") == (None, [])
 def test_public_events_skip_the_cursor_and_drop_private_fields(make_db):
     db = _db(make_db, "public-events")
     client = TestClient(create_app(db))
@@ -891,7 +959,7 @@ def test_event_stream_wakes_when_the_run_is_notified(make_db, monkeypatch):
     thread = threading.Thread(target=read)
     thread.start()
     time.sleep(0.3)
-    assert db.complete_run(run_id, {"text": "ok"})["status"] == "succeeded"
+    assert db.finalize_run_row(run_id, Outcome(kind="succeeded", output={"text": "ok"}), allowed_from=frozenset({RunStatus.RUNNING}))["status"] == "succeeded"
     thread.join(timeout=5)
     assert thread.is_alive() is False
     text = held[0].decode()
@@ -1134,9 +1202,144 @@ def test_a_terminal_run_is_not_executed_again(make_db):
     client = TestClient(create_app(db))
     run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
     assert db.claim_chat_turn(run_id, "worker-a", utcnow() + timedelta(minutes=5)) is not None
-    assert db.complete_run(run_id, {"text": "done"}) is not None
+    assert db.finalize_run_row(run_id, Outcome(kind="succeeded", output={"text": "done"}), allowed_from=frozenset({RunStatus.RUNNING})) is not None
     assert work_once(db, "worker-b", execute, run_id=run_id) is True
     assert client.get(f"/runs/{run_id}", headers=HEADERS).json()["status"] == "succeeded"
+def test_sweep_terminal_child_reaches_the_parent_checkpoint(make_db):
+    from backend.services.run_worker import sweep_expired_leases
+    from backend.services.sweeper import close_attention
+
+    db = _db(make_db, "sweep-parent")
+    lease_parent, _created = db.create_agent_run(
+        "org-1", "user-1", "chat", "sweep-lease-parent", {"message": "hi"},
+    )
+    lease_child, _created = db.create_agent_run(
+        "org-1", "user-1", "tool", "sweep-lease-child",
+        {"task_id": "lease-task", "session_id": "s-lease", "wave_id": "w-lease"},
+        owner_run_id=lease_parent["id"],
+    )
+    for _ in range(3):
+        assert db.claim_chat_turn(
+            lease_child["id"], "worker-a", utcnow() - timedelta(seconds=5),
+        ) is not None
+        sweep_expired_leases(db)
+    lease_saved = db.latest_checkpoint(lease_parent["id"]) or {}
+    lease_results = ((lease_saved.get("state_json") or {}).get("orchestrator") or {}).get("results") or {}
+    assert lease_results["lease-task"]["ok"] is False
+
+    duration_parent, _created = db.create_agent_run(
+        "org-1", "user-1", "chat", "sweep-duration-parent", {"message": "hi"},
+    )
+    duration_child, _created = db.create_agent_run(
+        "org-1", "user-1", "tool", "sweep-duration-child",
+        {"task_id": "duration-task", "session_id": "s-duration", "wave_id": "w-duration"},
+        owner_run_id=duration_parent["id"], max_duration_seconds=0,
+    )
+    assert db.claim_chat_turn(
+        duration_child["id"], "worker-a", utcnow() + timedelta(minutes=5),
+    ) is not None
+    assert duration_child["id"] in close_attention(db)
+    duration_saved = db.latest_checkpoint(duration_parent["id"]) or {}
+    duration_results = ((duration_saved.get("state_json") or {}).get("orchestrator") or {}).get("results") or {}
+    assert duration_results["duration-task"]["ok"] is False
+
+
+def test_dead_letter_insert_is_ignored_the_second_time(make_db):
+    from backend.db.orm import AgentRun
+
+    db = _db(make_db, "dead-letter-once")
+    run, _created = db.create_agent_run("org-1", "user-1", "chat", "dead-letter-once", {"message": "hi"})
+    assert db.claim_chat_turn(run["id"], "worker-a", utcnow() + timedelta(minutes=5)) is not None
+    assert db.finalize_run_row(
+        run["id"], Outcome(kind="failed", error={"message": "no"}, reason="permanent", dead_letter=True),
+    ) is not None
+    with db.tx() as s:
+        row = s.get(AgentRun, run["id"])
+        db._dead_letter(s, row, {"message": "again"}, utcnow(), attempts=2)
+    assert len(db.list_dead_letter_jobs(run["id"])) == 1
+
+
+def test_over_duration_is_the_same_outcome_for_worker_and_sweeper(make_db):
+    from backend.db.outcome import over_duration_outcome
+    from backend.services.run_worker import work_once
+    from backend.services.sweeper import close_attention
+
+    failed = over_duration_outcome(False)
+    cancelled = over_duration_outcome(True)
+    assert failed == Outcome(
+        kind="failed", reason="over_duration", dead_letter=True,
+        error={"kind": "permanent", "code": "COST_BUDGET_EXCEEDED", "message": "run duration exceeded"},
+    )
+    assert cancelled.kind == "cancelled" and cancelled.dead_letter is False
+
+    db = _db(make_db, "over-duration-same")
+
+    def execute(_run):
+        raise AssertionError("execute must not run")
+
+    worker, _created = db.create_agent_run(
+        "org-1", "user-1", "po", "over-duration-worker", {"message": "hi"}, max_duration_seconds=0,
+    )
+    assert work_once(db, "worker-a", execute, run_id=worker["id"]) is True
+    swept, _created = db.create_agent_run(
+        "org-1", "user-1", "po", "over-duration-sweep", {"message": "hi"}, max_duration_seconds=0,
+    )
+    assert db.claim_chat_turn(swept["id"], "worker-a", utcnow() + timedelta(minutes=5)) is not None
+    assert swept["id"] in close_attention(db)
+    worker_row = db.find_agent_run_by_id(worker["id"])
+    swept_row = db.find_agent_run_by_id(swept["id"])
+    assert worker_row["error_json"] == swept_row["error_json"] == failed.error
+    assert len(db.list_dead_letter_jobs(worker["id"])) == 1
+    assert len(db.list_dead_letter_jobs(swept["id"])) == 1
+
+    asked, _created = db.create_agent_run(
+        "org-1", "user-1", "po", "over-duration-cancel", {"message": "hi"}, max_duration_seconds=0,
+    )
+    assert db.claim_chat_turn(asked["id"], "worker-a", utcnow() + timedelta(minutes=5)) is not None
+    assert db.request_run_cancel("org-1", asked["id"], "stop") is not None
+    assert asked["id"] in close_attention(db)
+    assert db.find_agent_run_by_id(asked["id"])["status"] == "cancelled"
+    assert db.list_dead_letter_jobs(asked["id"]) == []
+
+
+def test_redispatch_keeps_stale_wakes_until_a_new_result(make_db):
+    from backend.orchestrator.gather import checkpoint_state
+
+    db = _db(make_db, "stale-wakes")
+    owner, _created = db.create_agent_run(
+        "org-1", "user-1", "chat", "stale-owner", {"message": "hi"},
+    )
+    previous = checkpoint_state([], [], {}, wave_id="wave-old", wave_ids=["old"])
+    previous["orchestrator"]["stale_wakes"] = 2
+    db.append_checkpoint(owner["id"], previous)
+    assert db.claim_chat_turn(owner["id"], "worker-a", utcnow() + timedelta(minutes=5)) is not None
+    parked = db.commit_task_wave(
+        owner["id"],
+        [{
+            "run_type": "tool",
+            "idempotency_key": "stale-child",
+            "input": {"task_id": "task-1"},
+            "started": {"tool_name": "tool", "task_id": "task-1", "display": "tool"},
+        }],
+        checkpoint_state([], [], {}, wave_id="wave-new", wave_ids=["task-1"]),
+    )
+    assert parked is not None
+    carried = db.latest_checkpoint(owner["id"])["state_json"]["orchestrator"]
+    assert carried["wave_id"] == "wave-new"
+    assert carried["stale_wakes"] == 2
+    result = {"id": "task-1", "ok": False, "status": "failed", "error": "no"}
+    assert db.record_child_wave_result(
+        "org-1", owner["id"], "task-1", result, event_type=None, event_payload=None,
+    ) is True
+    assert db.latest_checkpoint(owner["id"])["state_json"]["orchestrator"]["stale_wakes"] == 0
+    db.note_stale_wake(owner["id"], progressed=False)
+    db.note_stale_wake(owner["id"], progressed=False)
+    assert db.record_child_wave_result(
+        "org-1", owner["id"], "task-1", result, event_type=None, event_payload=None,
+    ) is True
+    assert db.latest_checkpoint(owner["id"])["state_json"]["orchestrator"]["stale_wakes"] == 2
+
+
 def test_a_run_past_its_duration_fails_without_the_model(make_db):
     from backend.services.run_worker import work_once
 
@@ -1213,7 +1416,7 @@ def test_a_repair_writes_an_audit_row_and_leaves_the_status(make_db):
     client = TestClient(create_app(db))
     run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
     assert db.claim_chat_turn(run_id, "worker-a", utcnow() + timedelta(minutes=5)) is not None
-    assert db.fail_run(run_id, {"kind": "permanent", "message": "no"}) is not None
+    assert db.finalize_run_row(run_id, Outcome(kind="failed", error={"kind": "permanent", "message": "no"}, reason="permanent", dead_letter=True), allowed_from=frozenset({RunStatus.RUNNING})) is not None
     repaired = client.post(
         f"/runs/{run_id}/repair",
         json={"reason": "更正数量", "before": {"qty": 1}, "after": {"qty": 2}},
@@ -1316,7 +1519,7 @@ def test_the_monitor_lists_one_org_and_reads_the_ledger(make_db):
     assert all(item["signal"] != "run.failed 比例升高" for item in board.json()["alerts"])
 
     assert db.claim_chat_turn(run_id, "worker-a", utcnow() + timedelta(minutes=5)) is not None
-    assert db.fail_run(run_id, {"kind": "permanent", "code": "COST_BUDGET_EXCEEDED", "message": "no"}) is not None
+    assert db.finalize_run_row(run_id, Outcome(kind="failed", error={"kind": "permanent", "code": "COST_BUDGET_EXCEEDED", "message": "no"}, reason="permanent", dead_letter=True), allowed_from=frozenset({RunStatus.RUNNING})) is not None
     failed = client.get("/monitor", headers=HEADERS).json()
     assert failed["metrics"]["failed"] == 1
     assert any(item["signal"] == "run.failed 比例升高" for item in failed["alerts"])

@@ -10,7 +10,7 @@ from typing import Any
 
 from ..db import Database
 from ..llm.calls import ModelBudgetExceeded
-from ..llm.errors import ModelCapacityExceeded, ProviderError
+from ..llm.errors import classify, hands_off_to_worker
 from ..orchestrator.gather import checkpoint_state, finish_child, load_state
 from ..orchestrator.plan import PlanTask, tool_name_for
 from ..repositories.run_repository import latest_checkpoint
@@ -50,15 +50,15 @@ async def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str,
 
         try:
             return await execute_report(db, llm, run, session)
-        except (ModelCapacityExceeded, ProviderError):
-            raise
-        except ModelBudgetExceeded as exc:
-            result = _budget_result(payload, exc, name=name)
-            await asyncio.to_thread(finish_child, db, run, result)
-            return result
         except Exception as exc:
-            log.exception("report child failed")
-            result = _failed(payload, str(exc), name=name)
+            kind = classify(exc)
+            if hands_off_to_worker(kind):
+                raise
+            if kind.name == "budget":
+                result = _budget_result(payload, exc, name=name)
+            else:
+                log.exception("report child failed")
+                result = _failed(payload, str(exc), name=name)
             await asyncio.to_thread(finish_child, db, run, result)
             return result
     tool = registry.find(name)
@@ -113,18 +113,15 @@ async def execute_task(db: Database, llm: Any, run: dict[str, Any]) -> dict[str,
             _complete_planned_call(db, claimed_id, result, raw if ok else None)
         else:
             _record_tool(db, run, step_id, name, args, result, raw if ok else None)
-    except (ModelCapacityExceeded, ProviderError):
-        raise
-    except ModelBudgetExceeded as exc:
-        result = _budget_result(payload, exc, name=name)
-        if claimed_id:
-            _complete_planned_call(db, claimed_id, result, None)
-        else:
-            _record_tool(db, run, step_id, name, args, result, None)
-        return await _settle(db, run, result)
     except Exception as exc:
-        log.exception("child tool %s failed", name)
-        result = _failed(payload, str(exc), name=name)
+        kind = classify(exc)
+        if hands_off_to_worker(kind):
+            raise
+        if kind.name == "budget":
+            result = _budget_result(payload, exc, name=name)
+        else:
+            log.exception("child tool %s failed", name)
+            result = _failed(payload, str(exc), name=name)
         if claimed_id:
             _complete_planned_call(db, claimed_id, result, None)
         else:

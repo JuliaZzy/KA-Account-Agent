@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from ...llm.pricing import sum_usage_cost_cents
 from ...services.run_names import (
+    LIVE_CHILD_STATUSES,
     PROJECTED_CHILD_EVENTS,
     RUN_EVENT_CHANNEL,
     OutboxStatus,
@@ -29,6 +30,7 @@ from ...services.run_names import (
     event_display,
 )
 from .. import orm
+from ..outcome import Outcome, over_duration_outcome
 from .support import (
     ALLOWED_RUN_TRANSITIONS,
     RUN_TRANSITION_EVENTS,
@@ -175,6 +177,19 @@ def _wave_child(child: dict[str, Any]) -> tuple[str, str, dict[str, Any], dict[s
     if not isinstance(started, dict):
         raise ValueError("task wave child needs a started event")
     return key, run_type, run_input, started
+
+
+# Statuses from which a terminal write is legal. Copied from ALLOWED_RUN_TRANSITIONS.
+_ENTRY: dict[str, frozenset[RunStatus]] = {
+    "succeeded": frozenset({RunStatus.RUNNING}),
+    "failed": frozenset({RunStatus.RUNNING, RunStatus.WAITING_FOR_TASKS}),
+    "cancelled": frozenset({
+        RunStatus.RUNNING,
+        RunStatus.QUEUED,
+        RunStatus.WAITING_FOR_USER,
+        RunStatus.WAITING_FOR_TASKS,
+    }),
+}
 
 
 class RunMixin:
@@ -350,21 +365,6 @@ class RunMixin:
             if reason:
                 payload["reason"] = reason
             self._append_event(s, run_id, StepEvent.RUN_CANCEL_REQUESTED, payload, now)
-            s.flush()
-            return _row_dict(run)
-
-    def cancel_run(self, run_id: str) -> dict[str, Any] | None:
-        """Worker path: running to cancelled, plus `run.cancelled`. None unless the flag is set."""
-        now = utcnow()
-        with self.tx() as s:
-            run = s.scalars(
-                select(orm.AgentRun)
-                .where(orm.AgentRun.id == run_id, orm.AgentRun.status == RunStatus.RUNNING)
-                .with_for_update()
-            ).first()
-            if run is None or run.cancel_requested_at is None:
-                return None
-            self._transition(s, run, RunStatus.CANCELLED, {"status": RunStatus.CANCELLED}, now)
             s.flush()
             return _row_dict(run)
 
@@ -684,11 +684,13 @@ class RunMixin:
                 return "settled"
             return "lost"
 
-    def sweep_expired_leases(self, limit: int = 100) -> int:
+    def sweep_expired_leases(self, limit: int = 100) -> tuple[int, list[str]]:
         """Return expired running leases to queued and append a new execute outbox.
 
         This does not spend an execution attempt. A run that already asked to cancel
-        is cancelled and does not get another outbox row.
+        is cancelled and does not get another outbox row. The count is every expired
+        lease in this pass, including ones put back on the queue. The list is only
+        the runs just written to a terminal status.
         """
         now = utcnow()
         with self.tx() as s:
@@ -705,26 +707,37 @@ class RunMixin:
             ))
             from .queue import EXECUTION_MAX_ATTEMPTS
 
+            terminal: list[str] = []
             for run in runs:
+                # From RUNNING. An inline import has no worker to retry it.
                 if (run.input_json or {}).get("execution") == "inline_contract_import":
-                    self._transition(
-                        s, run, RunStatus.FAILED, {"reason": "inline_lease_expired"}, now,
-                        error={"kind": "timeout", "message": "inline import expired"},
-                        actor_type="sweeper", actor_id="lease-sweep",
+                    self._write_terminal(
+                        s, run, Outcome(
+                            kind="failed",
+                            reason="inline_lease_expired",
+                            error={"kind": "timeout", "message": "inline import expired"},
+                        ), now, actor_type="sweeper", actor_id="lease-sweep",
                     )
+                    terminal.append(run.id)
                     continue
+                # From RUNNING, and only after cancel was requested.
                 if run.cancel_requested_at is not None:
-                    self._transition(
-                        s, run, RunStatus.CANCELLED, {"reason": "lease_expired"}, now,
+                    self._write_terminal(
+                        s, run, Outcome(kind="cancelled", reason="lease_expired"), now,
                         actor_type="sweeper", actor_id="lease-sweep",
                     )
+                    terminal.append(run.id)
                     continue
+                # From RUNNING once the execution budget is spent. A live budget goes back to QUEUED.
                 if int(run.attempts) >= EXECUTION_MAX_ATTEMPTS:
-                    self._transition(
-                        s, run, RunStatus.FAILED, {"reason": "lease_expired"}, now,
-                        error={"kind": "transient", "message": "execution attempts exhausted"},
-                        actor_type="sweeper", actor_id="lease-sweep",
+                    self._write_terminal(
+                        s, run, Outcome(
+                            kind="failed",
+                            reason="lease_expired",
+                            error={"kind": "transient", "message": "execution attempts exhausted"},
+                        ), now, actor_type="sweeper", actor_id="lease-sweep",
                     )
+                    terminal.append(run.id)
                     continue
                 self._transition(
                     s, run, RunStatus.QUEUED, {"reason": "lease_expired"}, now,
@@ -735,7 +748,7 @@ class RunMixin:
                     s, run.id, StepEvent.RUN_REQUEUED_BY_SWEEPER, {"reason": "lease_expired"}, now,
                 )
             s.flush()
-            return len(runs)
+            return len(runs), terminal
 
     def list_stale_waiting_runs(
         self, limit: int = 100, stale_after: timedelta = timedelta(minutes=15),
@@ -776,12 +789,11 @@ class RunMixin:
                 .limit(limit)
                 .with_for_update()
             ))
-            busy = (RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_FOR_TASKS)
             for run in runs:
                 children = list(s.scalars(
                     select(orm.AgentRun).where(orm.AgentRun.owner_run_id == run.id)
                 ))
-                if any(child.status in busy for child in children):
+                if any(child.status in LIVE_CHILD_STATUSES for child in children):
                     continue
                 self._transition(s, run, RunStatus.QUEUED, {"reason": "waiting_tasks_stale"}, now)
                 woke += 1
@@ -795,17 +807,19 @@ class RunMixin:
         waiting_after: timedelta = timedelta(days=1),
         tool_after: timedelta = timedelta(seconds=90),
         limit: int = 100,
-    ) -> None:
+    ) -> list[str]:
         """Note stale queue and confirmation rows, and close side effects left running.
 
         Run status changes go through `_transition`. A reminder does not change status
         and does not confirm or skip a tool. `waiting_for_user` is left waiting.
+        The returned ids were just written to a terminal status by the duration pass.
         """
         now = utcnow()
         self._note_stale_queued(now - queue_after, limit)
         self._note_waiting(now - waiting_after, limit)
-        self._fail_over_duration(now, limit)
+        terminal = self._fail_over_duration(now, limit)
         self._lose_side_effects(now - tool_after, limit)
+        return terminal
 
     def unclaimed_dispatches(
         self,
@@ -1054,13 +1068,17 @@ class RunMixin:
         report_before: datetime,
         report_types: tuple[str, ...],
         limit: int = 100,
-    ) -> int:
-        """Fail queued runs whose capacity wait has passed its product budget."""
+    ) -> list[str]:
+        """Fail queued runs whose capacity wait has passed its product budget.
+
+        The list is the runs just written to `failed`. The caller notifies after this commit.
+        """
         now = utcnow()
         overdue = or_(
             and_(orm.AgentRun.run_type.in_(report_types), orm.AgentRun.capacity_wait_since < report_before),
             and_(orm.AgentRun.run_type.notin_(report_types), orm.AgentRun.capacity_wait_since < chat_before),
         )
+        terminal: list[str] = []
         with self.tx() as s:
             runs = list(s.scalars(
                 select(orm.AgentRun)
@@ -1083,8 +1101,11 @@ class RunMixin:
                     s, run, RunStatus.RUNNING, {"reason": "capacity_timeout"}, now,
                     actor_type="sweeper", actor_id="capacity",
                 )
-                self._fail_locked_run(s, run, error, "capacity_timeout", now)
-                self._dead_letter(s, run, error, now, attempts=int(run.attempts))
+                self._fail_locked_run(
+                    s, run, error, "capacity_timeout", now,
+                    actor_type="sweeper", actor_id="capacity",
+                )
+                terminal.append(run.id)
                 for box in s.scalars(
                     select(orm.OutboxJob).where(
                         orm.OutboxJob.job_type == "execute_run",
@@ -1095,7 +1116,7 @@ class RunMixin:
                     box.status = OutboxStatus.FAILED
                     box.last_error_json = error
             s.flush()
-            return len(runs)
+            return terminal
 
     def release_unclaimed_dispatch(self, run_id: str, claimed_at: datetime) -> None:
         """Release a failed publish claim without undoing a newer worker or sweeper claim."""
@@ -1163,12 +1184,20 @@ class RunMixin:
                 )
             s.flush()
 
-    def _fail_over_duration(self, now: datetime, limit: int) -> None:
+    def _fail_over_duration(self, now: datetime, limit: int) -> list[str]:
+        """Close runs past `max_duration_seconds`. Returns those run ids.
+
+        `waiting_for_tasks` is included: a parent parked on a wave is not `running`,
+        and its own duration would otherwise never fire. `queued` is not included.
+        A requeue keeps `started_at`, and this pass must not close a run that is
+        waiting for a worker.
+        """
+        terminal: list[str] = []
         with self.tx() as s:
             runs = list(s.scalars(
                 select(orm.AgentRun)
                 .where(
-                    orm.AgentRun.status == RunStatus.RUNNING,
+                    orm.AgentRun.status.in_((RunStatus.RUNNING, RunStatus.WAITING_FOR_TASKS)),
                     orm.AgentRun.max_duration_seconds.is_not(None),
                     orm.AgentRun.started_at.is_not(None),
                 )
@@ -1180,22 +1209,14 @@ class RunMixin:
                 started = run.started_at
                 if started is None or now < started + timedelta(seconds=cap):
                     continue
-                if run.cancel_requested_at is not None:
-                    self._transition(
-                        s, run, RunStatus.CANCELLED, {"reason": "duration"}, now,
-                        actor_type="sweeper", actor_id="duration",
-                    )
-                    continue
-                self._transition(
-                    s, run, RunStatus.FAILED, {"reason": "duration"}, now,
-                    error={
-                        "kind": "permanent",
-                        "code": "COST_BUDGET_EXCEEDED",
-                        "message": "run duration exceeded",
-                    },
-                    actor_type="sweeper", actor_id="duration",
+                # From RUNNING. Cancel and failure share one outcome with the worker.
+                outcome = over_duration_outcome(run.cancel_requested_at is not None)
+                self._write_terminal(
+                    s, run, outcome, now, actor_type="sweeper", actor_id="duration",
                 )
+                terminal.append(run.id)
             s.flush()
+            return terminal
 
     def _lose_side_effects(self, cutoff: datetime, limit: int) -> None:
         with self.tx() as s:
@@ -1381,20 +1402,60 @@ class RunMixin:
             dispatch_at=now,
         ))
 
-    def complete_run(self, run_id: str, output: dict[str, Any]) -> dict[str, Any] | None:
-        """Write `succeeded`, `output_json`, and `run.completed` together. None when the run is not running."""
+    def _write_terminal(
+        self,
+        s: Session,
+        run: orm.AgentRun,
+        outcome: Outcome,
+        now: datetime,
+        *,
+        actor_type: str = "worker",
+        actor_id: str | None = None,
+        attempts: int | None = None,
+    ) -> None:
+        """The only terminal-status writer. The caller already holds the row lock.
+
+        A missing `reason` stays off the event. Success and cancel record none today.
+        `attempts` overrides the run counter for a dead letter whose budget lives on the outbox.
+        """
+        to = RunStatus(outcome.kind)
+        payload: dict[str, Any] = {"status": to}
+        if outcome.reason is not None:
+            payload["reason"] = outcome.reason
+        self._transition(
+            s, run, to, payload, now,
+            output=outcome.output, error=outcome.error,
+            actor_type=actor_type, actor_id=actor_id,
+        )
+        if outcome.dead_letter:
+            counted = int(run.attempts) if attempts is None else attempts
+            self._dead_letter(s, run, outcome.error or {}, now, attempts=counted)
+
+    def finalize_run_row(
+        self,
+        run_id: str,
+        outcome: Outcome,
+        *,
+        lease_owner: str | None = None,
+        allowed_from: frozenset[RunStatus] | None = None,
+    ) -> dict[str, Any] | None:
+        """Close one run. None when the lease, status, or cancel flag rejects the write.
+
+        `lease_owner` is the worker's own claim. Sweepers omit it: they take back an expired lease.
+        """
         now = utcnow()
+        allowed = _ENTRY[outcome.kind] if allowed_from is None else allowed_from
         with self.tx() as s:
-            run = s.scalars(
-                select(orm.AgentRun)
-                .where(orm.AgentRun.id == run_id, orm.AgentRun.status == RunStatus.RUNNING)
-                .with_for_update()
-            ).first()
-            if run is None:
+            run = self._lock_run(s, run_id)
+            if run is None or run.status not in allowed:
                 return None
-            if run.cancel_requested_at is not None:
+            if lease_owner is not None and run.lease_owner != lease_owner:
                 return None
-            self._transition(s, run, RunStatus.SUCCEEDED, {"status": RunStatus.SUCCEEDED}, now, output=output)
+            if outcome.kind == "succeeded" and run.cancel_requested_at is not None:
+                return None
+            if outcome.kind == "cancelled" and run.cancel_requested_at is None:
+                return None
+            self._write_terminal(s, run, outcome, now)
             s.flush()
             return _row_dict(run)
 
@@ -1463,6 +1524,39 @@ class RunMixin:
             s.flush()
             return _row_dict(run)
 
+    def _carry_stale_wakes(self, s: Session, owner_run_id: str, checkpoint: dict[str, Any]) -> None:
+        """Keep the idle count when this wave commit does not add a result.
+
+        A new `wave_id` is not progress. A new result or a newly finished task resets the count.
+        """
+        blob = checkpoint.get("orchestrator")
+        if not isinstance(blob, dict):
+            return
+        previous = s.scalars(
+            select(orm.Checkpoint)
+            .where(orm.Checkpoint.run_id == owner_run_id)
+            .order_by(orm.Checkpoint.checkpoint_index.desc())
+            .limit(1)
+        ).first()
+        prev = None
+        if previous is not None and isinstance(previous.state_json, dict):
+            raw = previous.state_json.get("orchestrator")
+            prev = raw if isinstance(raw, dict) else None
+        prev_results = prev.get("results") if isinstance(prev, dict) else None
+        prev_finished = prev.get("finished") if isinstance(prev, dict) else None
+        no_progress = (
+            isinstance(prev, dict)
+            and set(prev_results or {}) == set(blob.get("results") or {})
+            and set(prev_finished or []) == set(blob.get("finished") or [])
+        )
+        if no_progress:
+            try:
+                blob["stale_wakes"] = int(prev.get("stale_wakes") or 0)
+            except (TypeError, ValueError):
+                blob["stale_wakes"] = 0
+        else:
+            blob["stale_wakes"] = 0
+
     def commit_task_wave(
         self,
         owner_run_id: str,
@@ -1491,6 +1585,7 @@ class RunMixin:
             if run is None or run.cancel_requested_at is not None or not specs:
                 return None
             self._require_checkpoint_state(checkpoint)
+            self._carry_stale_wakes(s, run.id, checkpoint)
             keys = [key for key, _run_type, _run_input, _started in specs]
             existing = s.scalars(
                 select(orm.AgentRun).where(

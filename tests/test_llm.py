@@ -119,7 +119,7 @@ def test_assemble_stream_drains_async_generator():
         del reasoning
         seen.append(text)
 
-    assembled = _assemble_stream(_chunks(), on_text)
+    assembled = asyncio.run(_assemble_stream(_chunks(), on_text))
     assert assembled.choices[0].message.content == "你好"
     assert seen == ["你", "你好"]
 
@@ -134,7 +134,7 @@ def test_assemble_stream_keeps_sync_iterator():
             content="hi", reasoning_content=None,
         ))]),
     ]
-    assembled = _assemble_stream(chunks, lambda *_a, **_k: None)
+    assembled = asyncio.run(_assemble_stream(chunks, lambda *_a, **_k: None))
     assert assembled.choices[0].message.content == "hi"
 
 

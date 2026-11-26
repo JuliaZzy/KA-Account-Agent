@@ -212,7 +212,9 @@ def test_expired_inline_contract_is_failed_without_replay(db, monkeypatch):
 
     run = db.create_inline_contract_run("dist-1", "u-a", "agreement.pdf")
     monkeypatch.setattr(import_module("backend.db.database.run"), "utcnow", lambda: utcnow() + timedelta(hours=2))
-    assert db.sweep_expired_leases() == 1
+    handled, terminal = db.sweep_expired_leases()
+    assert handled == 1
+    assert terminal == [run["id"]]
     trace = db.run_trace("dist-1", run["id"])
     assert trace["run"]["status"] == "failed"
     assert trace["outbox"] == []

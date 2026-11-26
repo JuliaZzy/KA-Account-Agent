@@ -34,9 +34,6 @@ def transition_run(db: Database, org_id: str, run_id: str, to_status: str, paylo
 def request_run_cancel(db: Database, org_id: str, run_id: str, reason: str | None) -> dict[str, Any] | None:
     return db.request_run_cancel(org_id, run_id, reason)
 
-def cancel_run(db: Database, run_id: str) -> dict[str, Any] | None:
-    return db.cancel_run(run_id)
-
 def list_run_events(db: Database, org_id: str, run_id: str, after: int = 0) -> list[dict[str, Any]] | None:
     return db.list_run_events(org_id, run_id, after)
 
@@ -85,7 +82,7 @@ def find_pending_outbox_jobs(db: Database, limit: int = 100) -> list[dict[str, A
 def mark_outbox_dispatched(db: Database, outbox_id: str) -> dict[str, Any] | None:
     return db.mark_outbox_dispatched(outbox_id)
 
-def mark_outbox_retry(db: Database, outbox_id: str, error: str) -> dict[str, Any] | None:
+def mark_outbox_retry(db: Database, outbox_id: str, error: str) -> tuple[dict[str, Any] | None, list[str]]:
     return db.mark_outbox_retry(outbox_id, error)
 
 
@@ -103,7 +100,7 @@ def renew_run_lease(db: Database, run_id: str, worker_id: str, lease_expires_at:
     """`renewed` when this worker still holds a live lease, else `settled` or `lost`."""
     return db.renew_run_lease(run_id, worker_id, lease_expires_at)
 
-def sweep_expired_leases(db: Database, limit: int = 100) -> int:
+def sweep_expired_leases(db: Database, limit: int = 100) -> tuple[int, list[str]]:
     return db.sweep_expired_leases(limit)
 
 
@@ -114,17 +111,11 @@ def sweep_waiting_for_tasks(
         return db.sweep_waiting_for_tasks(limit)
     return db.sweep_waiting_for_tasks(limit, stale_after=stale_after)
 
-def complete_run(db: Database, run_id: str, output: dict[str, Any]) -> dict[str, Any] | None:
-    return db.complete_run(run_id, output)
-
 def note_running_reply(
     db: Database, run_id: str, text: str, *, generation_id: str | None = None,
     reasoning: str | None = None,
 ) -> dict[str, Any] | None:
     return db.note_running_reply(run_id, text, generation_id=generation_id, reasoning=reasoning)
-
-def fail_run(db: Database, run_id: str, error: dict[str, Any]) -> dict[str, Any] | None:
-    return db.fail_run(run_id, error)
 
 def schedule_retry(
     db: Database,
@@ -134,8 +125,12 @@ def schedule_retry(
     *,
     spend_attempt: bool = True,
     delay: timedelta | None = None,
+    attempt_limit: int | None = None,
 ) -> str | None:
-    return db.schedule_retry(run_id, error, delays, spend_attempt=spend_attempt, delay=delay)
+    return db.schedule_retry(
+        run_id, error, delays,
+        spend_attempt=spend_attempt, delay=delay, attempt_limit=attempt_limit,
+    )
 
 def latest_checkpoint(db: Database, run_id: str) -> dict[str, Any] | None:
     return db.latest_checkpoint(run_id)

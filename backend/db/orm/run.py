@@ -220,6 +220,7 @@ class OutboxJob(Base):
 
 class DeadLetterJob(Base):
     __tablename__ = "dead_letter_jobs"
+    __table_args__ = (UniqueConstraint("original_job_id", name="uq_dead_letter_original_job"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     original_job_id: Mapped[str] = mapped_column(String(64), nullable=False)

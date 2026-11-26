@@ -29,7 +29,7 @@ from ..codefix.fix import with_reflection_async
 from ..db import Database, utcnow
 from ..llm import calls as model_calls
 from ..llm.calls import JsonRepairExhausted, tool_limit
-from ..llm.errors import ModelCapacityExceeded, ProviderError
+from ..llm.errors import ModelCapacityExceeded, ProviderError, classify, hands_off_to_worker
 from ..memory import actor_id, attach, prompt_turns
 from ..text2sql import QueryResult
 from ..text2sql.table_metadata import catalog_text, scope_views
@@ -887,6 +887,14 @@ async def _draw_charts_async(
 
 
 
+def _unwrap_task_group(errors: BaseException) -> BaseException:
+    """The first failure inside a TaskGroup. A plain exception is returned as itself."""
+    grouped = getattr(errors, "exceptions", None)
+    if grouped:
+        return grouped[0]
+    return errors
+
+
 async def _charts_and_insights_async(
     llm: Any, message: str, planned: list[SectionPlan], by_section: dict[str, list[_Ask]],
     query_results: list[dict[str, Any]], trace: _RunTrace | None = None,
@@ -904,8 +912,8 @@ async def _charts_and_insights_async(
             insights_task = group.create_task(
                 _code_wizards_async(llm, insight_sections, query_results, trace=trace),
             )
-    except BaseExceptionGroup as errors:
-        raise errors.exceptions[0] from errors
+    except BaseException as errors:
+        raise _unwrap_task_group(errors) from errors
     charts, charts_for, chart_failures, decisions = charts_task.result()
     insights_by_section, insight_errors, insight_failures = insights_task.result()
     return charts, charts_for, chart_failures, insights_by_section, insight_errors, insight_failures, decisions
@@ -1148,9 +1156,9 @@ async def _code_wizard_async(
             messages=[{"role": "user", "content": "只为当前章节写 analyze(datasets)。"}],
             schema=code_wizard_schema(), temperature=0, trace=trace,
         )
-    except (ModelCapacityExceeded, ProviderError):
-        raise
     except Exception as err:
+        if hands_off_to_worker(classify(err)):
+            raise
         return [], str(err).split("\n", 1)[0][:200], []
     code = raw.get("code") if isinstance(raw, dict) else ""
     return await _run_analyze_async(llm, str(code or ""), query_results, trace=trace)
@@ -1297,8 +1305,8 @@ async def _write_body_sections_async(
         try:
             async with asyncio.TaskGroup() as group:
                 tasks = [group.create_task(write_one(section)) for section in sections]
-        except BaseExceptionGroup as errors:
-            raise errors.exceptions[0] from errors
+        except BaseException as errors:
+            raise _unwrap_task_group(errors) from errors
         return dict(task.result() for task in tasks)
 
     return await write_all()

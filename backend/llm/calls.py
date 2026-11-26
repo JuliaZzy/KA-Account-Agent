@@ -23,7 +23,7 @@ import os
 import re
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from types import SimpleNamespace
 from typing import Any, Literal
@@ -32,7 +32,15 @@ from ..services.entry_guard import acquire_model, org_budget
 from ..services.run_names import EntryErrorCode, StepEvent, StepStatus
 from . import breaker
 from .client import VENDORS, client_for
-from .errors import BREAKER_KINDS, ModelCapacityExceeded, ProviderError, translate_provider_error
+from .errors import (
+    KIND_CAPACITY,
+    KIND_INVALID_JSON,
+    KIND_PROVIDER,
+    ModelCapacityExceeded,
+    ProviderError,
+    classify,
+    translate_provider_error,
+)
 from .json_check import repair_json_async
 from .parse import parse_json_loose
 from .routing import (
@@ -596,28 +604,6 @@ async def _call_double(
     return result
 
 
-def _iter_stream_chunks(chunks: Any) -> Iterator[Any]:
-    """把模型一段一段返回的内容收成可以逐条读取的普通迭代。
-
-    Qwen 的流一般在 `_call_qwen` 里就读完了。这里只处理还漏到 `_assemble_stream` 的异步流。
-    只有当前没有事件循环时才能走这里。循环已经在跑的话，必须在协程里用 async for 自己读。
-    """
-    if inspect.isasyncgen(chunks) or (
-        hasattr(chunks, "__aiter__") and not hasattr(chunks, "__iter__")
-    ):
-        async def _drain() -> list[Any]:
-            return [item async for item in chunks]
-
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return iter(asyncio.run(_drain()))
-        raise RuntimeError(
-            "async stream reached the sync assembler while an event loop is already running"
-        )
-    return iter(chunks)
-
-
 class _Assembled:
     """A stream already folded into one response while its event loop was still open."""
 
@@ -655,10 +641,15 @@ class _StreamAssembler:
         return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
 
-def _assemble_stream(chunks: Any, on_text: Callable[..., None]) -> Any:
+async def _assemble_stream(chunks: Any, on_text: Callable[..., None]) -> Any:
+    """Fold a sync or async chunk stream on the caller's loop."""
     assembler = _StreamAssembler(on_text)
-    for chunk in _iter_stream_chunks(chunks):
-        assembler.feed(chunk)
+    if _is_async_stream(chunks):
+        async for chunk in chunks:
+            assembler.feed(chunk)
+    else:
+        for chunk in chunks:
+            assembler.feed(chunk)
     return assembler.result()
 
 
@@ -862,7 +853,7 @@ async def _invoke(
     if isinstance(response, _Assembled):
         return _Transport(response=response.response, client=client, tool_alias=alias)
     if stream and _is_async_stream(response):
-        # Drain here. `_assemble_stream` would call `asyncio.run` on this loop.
+        # Drain on this loop. The assembler below does the same for a sync stream.
         assembler = _StreamAssembler(on_text) if on_text is not None else None
         folded: list[Any] = []
         async for item in response:
@@ -873,7 +864,7 @@ async def _invoke(
         body = assembler.result() if assembler is not None else folded
         return _Transport(response=body, client=client, tool_alias=alias)
     if stream:
-        return _Transport(response=_assemble_stream(response, on_text), client=client, tool_alias=alias)
+        return _Transport(response=await _assemble_stream(response, on_text), client=client, tool_alias=alias)
     return _Transport(response=response, client=client, tool_alias=alias)
 
 
@@ -1442,15 +1433,15 @@ async def call_model_async(*args: Any, **kwargs: Any) -> ModelResult:
                     })
                     raise ValueError(f"route quality gate failed: {quality_reason}")
             return result
-        except (ProviderError, ModelCapacityExceeded, ValueError) as exc:
+        except Exception as exc:
             failure_kind = _route_failure_kind(exc)
             if index + 1 >= len(candidates) or failure_kind not in policy.fallback_on:
                 raise
             reason_map = {
-                "provider_error": RouteReason.PROVIDER_ERROR,
-                "model_capacity": RouteReason.MODEL_CAPACITY,
+                KIND_PROVIDER: RouteReason.PROVIDER_ERROR,
+                KIND_CAPACITY: RouteReason.MODEL_CAPACITY,
                 "quality_gate_failed": RouteReason.QUALITY_GATE_FAILED,
-                "invalid_json": RouteReason.INVALID_JSON,
+                KIND_INVALID_JSON: RouteReason.INVALID_JSON,
             }
             fallback_reason = (
                 reason_map[failure_kind],
@@ -1461,15 +1452,9 @@ async def call_model_async(*args: Any, **kwargs: Any) -> ModelResult:
 
 def _route_failure_kind(exc: Exception) -> str:
     """Which fallback allowlist entry this error is. `internal` is on none of them."""
-    if isinstance(exc, ProviderError):
-        if exc.kind in ("internal", "event_loop"):
-            return "internal"
-        return "provider_error"
-    if isinstance(exc, ModelCapacityExceeded):
-        return "model_capacity"
     if "route quality gate failed" in str(exc):
         return "quality_gate_failed"
-    return "invalid_json"
+    return classify(exc).name
 
 
 def _unwrap(result: ModelResult) -> Any:
@@ -1504,9 +1489,12 @@ def _transport_error(exc: Exception, *, brand: str, model_name: str, client: Any
 
 
 def _record_breaker(brand: str, error: Exception) -> None:
-    if brand == "fake" or not isinstance(error, ProviderError):
+    if brand == "fake":
         return
-    if error.kind in BREAKER_KINDS:
+    kind = classify(error)
+    if kind.name != KIND_PROVIDER:
+        return
+    if kind.retryable:
         breaker.record_failure(brand)
     else:
         breaker.release_probe(brand)

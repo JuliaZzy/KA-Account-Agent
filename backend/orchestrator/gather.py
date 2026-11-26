@@ -338,6 +338,13 @@ def finish_child(
         )
 
 
+def settle_terminal_child(db: Database, child: dict[str, Any]) -> dict[str, Any]:
+    """Write one finished child's envelope onto its owner. The first result wins."""
+    result = child_terminal_result(child)
+    finish_child(db, child, result)
+    return result
+
+
 def child_terminal_result(child: dict[str, Any]) -> dict[str, Any]:
     """Envelope for a child the worker already finished without `finish_child`.
 
@@ -440,8 +447,7 @@ def _drop_terminal_children(
         if existing is None or existing.get("status") not in RUN_TERMINAL_STATUSES:
             live.append(task)
             continue
-        result = child_terminal_result(existing)
-        finish_child(db, existing, result)
+        result = settle_terminal_child(db, existing)
         results[task.id] = result
         if task.id not in finished:
             finished.append(task.id)

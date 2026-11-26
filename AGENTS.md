@@ -4,6 +4,8 @@
 > 每个模块顶部的 docstring 说明了它自己的职责和设计取舍——改一个模块前先读它的 docstring。
 >
 > 本文件只放**读代码推断不出来、但会改变你怎么动手**的东西。
+>
+> 改 `backend/` 之前先读 [docs/INVARIANTS.md](docs/INVARIANTS.md)，并在回复里说明改动涉及哪几条。
 
 ## 命令
 

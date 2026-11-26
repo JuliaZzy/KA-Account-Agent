@@ -33,6 +33,7 @@ def test_a_turn_enqueues_and_the_worker_records_the_loop(db):
     chat_budget = run_budget_for("chat")
     assert queued["max_model_calls"] == chat_budget.max_model_calls
     assert queued["max_tokens"] == chat_budget.max_tokens
+    assert queued["max_duration_seconds"] == chat_budget.max_duration_seconds == 2 * 60 * 60
 
     assert work_chat(db, llm, run_id) is True
     run = db.find_agent_run("dist-1", run_id)

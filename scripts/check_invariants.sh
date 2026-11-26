@@ -49,58 +49,100 @@ check_empty() {
   fi
 }
 
-# I-1. Each allowlisted file has exactly one asyncio.run(. No other file has one.
-i1_hits=$(grep -rn "asyncio.run(" backend/ | strip_comments || true)
-i1_counts=$(printf '%s\n' "$i1_hits" | awk -F: 'NF {print $1}' | sort | uniq -c)
-i1_bad=$(printf '%s\n' "$i1_counts" | awk 'NF && $1 != 1 {print}')
-i1_paths=$(printf '%s\n' "$i1_counts" | awk 'NF {print $2}' | sort)
-allow_paths=$(grep -v '^#' "$allowlist" | grep -v '^[[:space:]]*$' | sort)
-extra=$(comm -23 <(printf '%s\n' "$i1_paths") <(printf '%s\n' "$allow_paths") || true)
-missing=$(comm -13 <(printf '%s\n' "$i1_paths") <(printf '%s\n' "$allow_paths") || true)
-if [[ -n "$i1_bad" || -n "$extra" || -n "$missing" ]]; then
-  detail=""
-  if [[ -n "$i1_bad" ]]; then
-    detail="${detail}计数不是 1:
-${i1_bad}
+# Paths under one [section] in the allowlist. Comment lines are dropped.
+section_paths() {
+  local section=$1
+  awk -v section="$section" '
+    /^#/ { next }
+    /^\[/ {
+      current = $0
+      gsub(/[][]/, "", current)
+      next
+    }
+    NF && current == section { print }
+  ' "$allowlist" | sort
+}
+
+# Each allowlisted file has exactly one hit. No file outside the section.
+check_file_set() {
+  local label=$1
+  local section=$2
+  local hits=$3
+  local counts bad paths allow extra missing detail
+  counts=$(printf '%s\n' "$hits" | awk -F: 'NF {print $1}' | sort | uniq -c)
+  bad=$(printf '%s\n' "$counts" | awk 'NF && $1 != 1 {print}')
+  paths=$(printf '%s\n' "$counts" | awk 'NF {print $2}' | sort)
+  allow=$(section_paths "$section")
+  extra=$(comm -23 <(printf '%s\n' "$paths") <(printf '%s\n' "$allow") || true)
+  missing=$(comm -13 <(printf '%s\n' "$paths") <(printf '%s\n' "$allow") || true)
+  if [[ -n "$bad" || -n "$extra" || -n "$missing" ]]; then
+    detail=""
+    if [[ -n "$bad" ]]; then
+      detail="${detail}计数不是 1:
+${bad}
 "
-  fi
-  if [[ -n "$extra" ]]; then
-    detail="${detail}不在白名单:
+    fi
+    if [[ -n "$extra" ]]; then
+      detail="${detail}不在白名单:
 ${extra}
 "
-  fi
-  if [[ -n "$missing" ]]; then
-    detail="${detail}白名单里有、代码里没有:
+    fi
+    if [[ -n "$missing" ]]; then
+      detail="${detail}白名单里有、代码里没有:
 ${missing}
 "
+    fi
+    detail="${detail}命中:
+${hits}"
+    fail "$label" "$detail"
+  else
+    pass "$label"
   fi
-  detail="${detail}命中:
-${i1_hits}"
-  fail "I-1 asyncio.run( 每个白名单文件一处" "$detail"
-else
-  pass "I-1 asyncio.run( 每个白名单文件一处"
-fi
+}
+
+asyncio_hits=$(grep -rn "asyncio.run(" backend/ | strip_comments || true)
+check_file_set "I-1 asyncio.run( 每个入口文件一处" "asyncio.run" "$asyncio_hits"
+
+loop_hits=$(grep -rnw "new_event_loop" backend/ | strip_comments || true)
+check_file_set "I-1 new_event_loop 只在专用线程" "new_event_loop" "$loop_hits"
 
 check_empty "I-1" "run_until_complete"
-check_empty "I-1" "new_event_loop"
 check_empty "I-1" "_await"
 check_empty "I-1" "_background_loop"
 
-# I-3. Public fail_run is gone. _fail_run stays in the file that defines finalize_run.
+# I-3. The name fail_run is gone. Terminal status writes go through _write_terminal.
 check_empty "I-3" "fail_run"
-fail_hits=$(grep -rnw "_fail_run" backend/ | strip_comments || true)
-finalize_file=$(grep -rl "def finalize_run" backend/ || true)
-if [[ -z "$fail_hits" ]]; then
-  pass "I-3 _fail_run 尚未出现"
-elif [[ -z "$finalize_file" ]]; then
-  fail "I-3 _fail_run 出现时 finalize_run 还不存在" "$fail_hits"
+write_defs=$(grep -rn "def _write_terminal" backend/ | strip_comments || true)
+write_files=$(printf '%s\n' "$write_defs" | awk -F: 'NF {print $1}' | sort -u)
+if [[ "$write_files" == "backend/db/database/run.py" ]]; then
+  pass "I-3 _write_terminal 只在 backend/db/database/run.py"
 else
-  outside=$(printf '%s\n' "$fail_hits" | awk -F: 'NF {print $1}' | sort -u | grep -vxF "$finalize_file" || true)
-  if [[ -n "$outside" ]]; then
-    fail "I-3 _fail_run 只允许在 ${finalize_file}" "$fail_hits"
-  else
-    pass "I-3 _fail_run 只在 ${finalize_file}"
-  fi
+  fail "I-3 _write_terminal 只允许定义在 backend/db/database/run.py" "$write_defs"
+fi
+
+# A call that names a terminal status within eight lines of _transition( or transition_run(.
+terminal_hits=$(python3 - <<'PY'
+import re
+from pathlib import Path
+pat = re.compile(r"RunStatus\.(SUCCEEDED|FAILED|CANCELLED)")
+call = re.compile(r"_transition\(|transition_run\(")
+root = Path("backend")
+for path in root.rglob("*.py"):
+    lines = path.read_text().splitlines()
+    for index, line in enumerate(lines):
+        if line.lstrip().startswith("#"):
+            continue
+        if not call.search(line):
+            continue
+        window = "\n".join(lines[index:index + 8])
+        if pat.search(window):
+            print(f"{path}:{index + 1}:{line.strip()}")
+PY
+)
+if [[ -n "$terminal_hits" ]]; then
+  check_file_set "I-3 直接写成终态的调用只在白名单" "terminal_transition" "$terminal_hits"
+else
+  pass "I-3 没有直接写成终态的调用"
 fi
 
 # I-4. These except clauses live only in the classify module.
@@ -113,6 +155,18 @@ elif [[ -n "$except_hits" ]]; then
   pass "I-4 except 只在 backend/llm/errors.py"
 else
   pass "I-4 没有这些 except"
+fi
+
+# Route labels. The old names exist only as comments or constants in errors.py.
+literal_hits=$(grep -rnE '"provider_error"|"model_capacity"' backend/ | strip_comments || true)
+literal_files=$(printf '%s\n' "$literal_hits" | awk -F: 'NF {print $1}' | sort -u)
+literal_outside=$(printf '%s\n' "$literal_files" | grep -vxF 'backend/llm/errors.py' || true)
+if [[ -n "$literal_outside" ]]; then
+  fail "I-4 provider_error / model_capacity 字面量只允许在 backend/llm/errors.py" "$literal_hits"
+elif [[ -n "$literal_hits" ]]; then
+  pass "I-4 路由字面量只在 backend/llm/errors.py"
+else
+  pass "I-4 没有旧的路由字面量"
 fi
 
 # I-6. Sync defs of these names, including methods indented inside a class.

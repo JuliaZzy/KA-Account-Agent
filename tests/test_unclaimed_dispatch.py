@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import text
 
 from backend.db import utcnow
+from backend.db.outcome import Outcome
 from backend.services.dispatcher import dispatch_pending, republish_unclaimed
 from backend.services.run_names import RunStatus
 
@@ -61,7 +62,7 @@ def test_unclaimed_dispatches_filters_runs_before_limit(db):
     for index in range(105):
         run_id = _create_dispatched_run(db, f"terminal-{index}")
         db.transition_run("dist-1", run_id, RunStatus.RUNNING)
-        assert db.complete_run(run_id, {"ok": True}) is not None
+        assert db.finalize_run_row(run_id, Outcome(kind="succeeded", output={"ok": True}), allowed_from=frozenset({RunStatus.RUNNING})) is not None
         _age_run_and_outbox(db, run_id, stale)
 
     queued_ids = []
@@ -99,7 +100,7 @@ def test_dispatched_outbox_cleanup_keeps_queued_runs(db):
     stale = utcnow() - timedelta(days=8)
     terminal_id = _create_dispatched_run(db, "cleanup-terminal")
     db.transition_run("dist-1", terminal_id, RunStatus.RUNNING)
-    db.complete_run(terminal_id, {"ok": True})
+    db.finalize_run_row(terminal_id, Outcome(kind="succeeded", output={"ok": True}), allowed_from=frozenset({RunStatus.RUNNING}))
     _age_run_and_outbox(db, terminal_id, stale)
 
     queued_id = _create_dispatched_run(db, "cleanup-queued")
@@ -116,7 +117,7 @@ def test_cleanup_filters_active_runs_before_limit(db):
     _age_run_and_outbox(db, queued, stale)
     terminal = _create_dispatched_run(db, "cleanup-after-blocker")
     db.transition_run("dist-1", terminal, RunStatus.RUNNING)
-    db.complete_run(terminal, {})
+    db.finalize_run_row(terminal, Outcome(kind="succeeded", output={}), allowed_from=frozenset({RunStatus.RUNNING}))
     _age_run_and_outbox(db, terminal, stale + timedelta(seconds=1))
     assert db.purge_dispatched_outbox(utcnow() - timedelta(days=7), limit=1) == 1
     assert db.run_trace("dist-1", terminal)["outbox"] == []

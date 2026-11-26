@@ -16,12 +16,14 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, false, or_, select
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from ...services.run_names import OutboxStatus, RunStatus, StepEvent
 from .. import orm
-from .support import _open_scope, _queue_last_seen, _row_dict, utcnow
+from ..outcome import Outcome
+from .support import _row_dict, utcnow
 
 # How many times `work_once` may enter a run before a transient error is dead-lettered.
 EXECUTION_MAX_ATTEMPTS = 3
@@ -71,86 +73,14 @@ class QueueMixin:
             s.flush()
             return removed
 
-    def fail_unclaimed_exhausted(
-        self,
-        older_than: datetime,
-        limit: int = 100,
-        *,
-        max_redispatches: int | None = 3,
-        max_age: timedelta | None = None,
-        open_only: bool | None = None,
-        not_before: datetime | None = None,
-    ) -> int:
-        """Fail queued runs that sweeper redispatch can no longer help.
-
-        Two cases, both terminal because re-running would only produce a stale reply:
-
-        - exhausted: still unclaimed after `max_redispatches` redispatches. Pass `None` to
-          switch this case off, and `open_only` to restrict it to one queue. The caller
-          must only enable it for a queue it has seen empty: a run waiting behind a deep
-          backlog is slow, not lost.
-        - expired: no sign of life for `max_age`. Sign of life is the later of `queued_at`
-          (entry or redispatch) and `queue_heartbeat_at` (a worker retrying a SoftBusy run),
-          so a run that is merely waiting for capacity never expires, while one orphaned
-          before the redispatch columns existed, or during a sweeper outage, does. It is
-          never restricted by queue: Redis cannot say anything about a message that was lost.
-        """
-        now = utcnow()
-        dispatched = select(orm.OutboxJob.id).where(
-            orm.OutboxJob.job_type == "execute_run",
-            orm.OutboxJob.status == OutboxStatus.DISPATCHED,
-            orm.OutboxJob.payload_json["run_id"].as_string() == orm.AgentRun.id,
-            orm.OutboxJob.dispatch_at < older_than,
-        ).exists()
-        exhausted = (
-            and_(orm.AgentRun.redispatch_count >= max_redispatches, _open_scope(open_only), dispatched)
-            if max_redispatches is not None
-            else false()
-        )
-        expired = _queue_last_seen() < now - max_age if max_age is not None else false()
-        with self.tx() as s:
-            runs = list(s.scalars(
-                select(orm.AgentRun)
-                .where(
-                    orm.AgentRun.status == RunStatus.QUEUED,
-                    orm.AgentRun.queued_at < older_than,
-                    _queue_last_seen() < older_than,
-                    _queue_last_seen() >= not_before if not_before is not None else True,
-                    or_(exhausted, expired),
-                )
-                .order_by(orm.AgentRun.queued_at, orm.AgentRun.id)
-                .limit(limit)
-                .with_for_update(skip_locked=True)
-            ))
-            for run in runs:
-                last_seen = max(t for t in (run.queued_at, run.queue_heartbeat_at) if t is not None)
-                is_expired = max_age is not None and last_seen < now - max_age
-                code = "STUCK_QUEUE_EXPIRED" if is_expired else "STUCK_REDISPATCH_EXHAUSTED"
-                reason = code.lower()
-                error = {
-                    "kind": "permanent",
-                    "code": code,
-                    "message": (
-                        "run stayed queued past the maximum queue age"
-                        if is_expired
-                        else "run stayed queued after the maximum sweeper redispatches"
-                    ),
-                }
-                # QUEUED has no edge to FAILED in the state machine; the run passes through
-                # RUNNING (which bumps `attempts`) so the transition table stays unchanged.
-                self._transition(
-                    s, run, RunStatus.RUNNING, {"reason": reason}, now,
-                    actor_type="sweeper", actor_id="queue-sweep",
-                )
-                self._fail_locked_run(s, run, error, reason, now)
-                self._dead_letter(s, run, error, now, attempts=int(run.attempts))
-            s.flush()
-            return len(runs)
-
     def record_worker_loss_redelivery(
         self, run_id: str, *, max_attempts: int = WORKER_LOST_MAX_REDELIVERIES,
-    ) -> str:
-        """Count a broker redelivery and dead-letter a repeatedly lost run."""
+    ) -> tuple[str, list[str]]:
+        """Count a broker redelivery and dead-letter a repeatedly lost run.
+
+        The list is empty unless this call wrote the run to `failed`. The caller
+        notifies after this commit.
+        """
         now = utcnow()
         with self.tx() as s:
             run = s.scalars(
@@ -159,7 +89,7 @@ class QueueMixin:
             if run is None or run.status in (
                 RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED, RunStatus.WAITING_FOR_USER,
             ):
-                return "ack"
+                return "ack", []
             boxes = list(s.scalars(
                 select(orm.OutboxJob)
                 .where(
@@ -196,17 +126,21 @@ class QueueMixin:
                 run.error_json = error
             if count <= max_attempts:
                 s.flush()
-                return "continue"
+                return "continue", []
             if run.status == RunStatus.QUEUED:
                 self._transition(
                     s, run, RunStatus.RUNNING, {"reason": "worker_lost_dead_letter"}, now,
                     actor_type="sweeper", actor_id="worker-loss",
                 )
+            terminal: list[str] = []
             if run.status in (RunStatus.RUNNING, RunStatus.WAITING_FOR_TASKS):
-                self._fail_locked_run(s, run, error, "dead_letter", now)
-            self._dead_letter(s, run, error, now, attempts=count)
+                self._fail_locked_run(
+                    s, run, error, "dead_letter", now,
+                    actor_type="sweeper", actor_id="worker-loss", attempts=count,
+                )
+                terminal.append(run.id)
             s.flush()
-            return "dead_letter"
+            return "dead_letter", terminal
 
     def defer_pending_outbox(self, outbox_id: str, seconds: int = 5) -> None:
         """Move one pending row out of the head of the scan without starting its wait over."""
@@ -233,59 +167,57 @@ class QueueMixin:
             )
             return [_row_dict(row) for row in rows]
 
-    def mark_outbox_retry(self, outbox_id: str, error: str) -> dict[str, Any] | None:
+    def mark_outbox_retry(self, outbox_id: str, error: str) -> tuple[dict[str, Any] | None, list[str]]:
         """Push a pending outbox row forward after a failed publish.
 
-        Past `max_attempts` the outbox row is `failed` and one `dead_letter_jobs` row is written,
-        and a still-queued run is moved running then failed in this transaction.
+        Past `max_attempts` the outbox row is `failed`. A still-queued run moves
+        `queued` to `running`, then `_write_terminal` writes `failed` and the dead
+        letter. The list is those run ids. The caller notifies after this commit.
         """
         now = utcnow()
         cap_seconds = timedelta(minutes=15).total_seconds()
         with self.tx() as s:
+            # Run, then outbox. `schedule_retry` and `mark_outbox_dispatched` use this order.
+            peeked = s.get(orm.OutboxJob, outbox_id)
+            if peeked is None or peeked.status != OutboxStatus.PENDING:
+                return None, []
+            payload = peeked.payload_json if isinstance(peeked.payload_json, dict) else {}
+            run_id = payload.get("run_id")
+            run = None
+            if isinstance(run_id, str):
+                run = s.scalars(
+                    select(orm.AgentRun).where(orm.AgentRun.id == run_id).with_for_update()
+                ).first()
             job = s.scalars(
-                select(orm.OutboxJob)
-                .where(orm.OutboxJob.id == outbox_id)
-                .with_for_update()
+                select(orm.OutboxJob).where(orm.OutboxJob.id == outbox_id).with_for_update()
             ).first()
             if job is None or job.status != OutboxStatus.PENDING:
-                return None
+                return None, []
             attempts = int(job.attempts) + 1
             job.attempts = attempts
             job.last_error_json = {"message": error}
             if attempts > int(job.max_attempts):
                 job.status = OutboxStatus.FAILED
-                payload = job.payload_json if isinstance(job.payload_json, dict) else {}
-                run_id = payload.get("run_id")
-                run = s.scalars(
-                    select(orm.AgentRun)
-                    .where(orm.AgentRun.id == run_id)
-                    .with_for_update()
-                ).first() if isinstance(run_id, str) else None
-                failure = {"kind": "dead_letter", "message": error}
+                terminal: list[str] = []
+                # From QUEUED. There is no queued → failed edge, so the run passes through RUNNING.
                 if run is not None and run.status == RunStatus.QUEUED:
+                    failure = {"kind": "dead_letter", "message": error}
                     self._transition(
                         s, run, RunStatus.RUNNING, {"reason": "outbox_dead_letter"}, now,
                         actor_type="dispatcher", actor_id="outbox",
                     )
-                    self._transition(
-                        s, run, RunStatus.FAILED, {"reason": "dead_letter"}, now, error=failure,
-                        actor_type="dispatcher", actor_id="outbox",
+                    self._write_terminal(
+                        s, run, Outcome(
+                            kind="failed", error=failure, reason="dead_letter", dead_letter=True,
+                        ), now, actor_type="dispatcher", actor_id="outbox", attempts=attempts,
                     )
-                s.add(orm.DeadLetterJob(
-                    id=f"dlj_{uuid.uuid4().hex}",
-                    original_job_id=job.id,
-                    job_type=job.job_type,
-                    payload_json=job.payload_json or {},
-                    attempts=attempts,
-                    error_json=failure,
-                    created_at=now,
-                ))
+                    terminal.append(run.id)
                 s.flush()
-                return _row_dict(job)
+                return _row_dict(job), terminal
             delay_seconds = min(cap_seconds, 2 ** (attempts - 1))
             job.next_attempt_at = now + timedelta(seconds=delay_seconds)
             s.flush()
-            return _row_dict(job)
+            return _row_dict(job), []
 
     def list_dead_letter_jobs(self, original_job_id: str) -> list[dict[str, Any]]:
         """Dead-letter rows for one outbox id or run id, oldest first."""
@@ -328,18 +260,6 @@ class QueueMixin:
             s.flush()
             return _row_dict(job)
 
-    def fail_run(self, run_id: str, error: dict[str, Any]) -> dict[str, Any] | None:
-        """Permanent failure: fail the run, fail its outbox, and keep one dead letter."""
-        now = utcnow()
-        with self.tx() as s:
-            run = self._lock_running_run(s, run_id)
-            if run is None:
-                return None
-            self._fail_locked_run(s, run, error, "permanent", now)
-            self._dead_letter(s, run, error, now, attempts=int(run.attempts))
-            s.flush()
-            return _row_dict(run)
-
     def schedule_retry(
         self,
         run_id: str,
@@ -348,6 +268,7 @@ class QueueMixin:
         *,
         spend_attempt: bool = True,
         delay: timedelta | None = None,
+        attempt_limit: int | None = None,
     ) -> str | None:
         """Count one transient failure. `retry` queues the run again; `dead_letter` stops it.
 
@@ -390,11 +311,16 @@ class QueueMixin:
                 s.flush()
                 return "retry"
             attempts = (int(box.attempts) if box is not None else 0) + 1
-            if attempts > EXECUTION_MAX_ATTEMPTS:
+            # From RUNNING. The outbox counter is already past this failure's cap.
+            limit = EXECUTION_MAX_ATTEMPTS if attempt_limit is None else attempt_limit
+            if attempts > limit:
                 if box is not None:
                     box.attempts = attempts
-                self._fail_locked_run(s, run, error, "dead_letter", now)
-                self._dead_letter(s, run, error, now, attempts=attempts)
+                self._write_terminal(
+                    s, run, Outcome(
+                        kind="failed", error=error, reason="dead_letter", dead_letter=True,
+                    ), now, attempts=attempts,
+                )
                 s.flush()
                 return "dead_letter"
             when = now + delays[min(attempts, len(delays)) - 1]
@@ -490,21 +416,20 @@ class QueueMixin:
         box = self._latest_execute_outbox(s, run.id)
         if box is not None and isinstance(box.payload_json, dict):
             payload = dict(box.payload_json)
-            original = box.id
             box.status = OutboxStatus.FAILED
             box.last_error_json = error
         else:
             payload = self._execute_payload(run)
-            original = run.id
-        s.add(orm.DeadLetterJob(
+        # One letter per run. The key is the run id, not whichever outbox was latest.
+        s.execute(pg_insert(orm.DeadLetterJob).values(
             id=f"dlj_{uuid.uuid4().hex}",
-            original_job_id=original,
+            original_job_id=run.id,
             job_type="execute_run",
             payload_json=payload,
             attempts=attempts,
             error_json=error,
             created_at=now,
-        ))
+        ).on_conflict_do_nothing(constraint="uq_dead_letter_original_job"))
 
     @staticmethod
     def _latest_failed_model_call(s: Session, run_id: str) -> str | None:
@@ -518,8 +443,20 @@ class QueueMixin:
         return None if row is None else row.id
 
     def _fail_locked_run(
-        self, s: Session, run: orm.AgentRun, error: dict[str, Any], reason: str, now: datetime,
+        self,
+        s: Session,
+        run: orm.AgentRun,
+        error: dict[str, Any],
+        reason: str,
+        now: datetime,
+        *,
+        actor_type: str = "worker",
+        actor_id: str | None = None,
+        attempts: int | None = None,
     ) -> None:
-        self._transition(
-            s, run, RunStatus.FAILED, {"status": RunStatus.FAILED, "reason": reason}, now, error=error,
+        """Fail a row this transaction already locked. The dead letter is part of `_write_terminal`."""
+        self._write_terminal(
+            s, run, Outcome(
+                kind="failed", error=error, reason=reason, dead_letter=True,
+            ), now, actor_type=actor_type, actor_id=actor_id, attempts=attempts,
         )
