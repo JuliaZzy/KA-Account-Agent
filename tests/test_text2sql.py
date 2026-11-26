@@ -395,8 +395,30 @@ def test_chat_quotes_the_rows_and_a_report_uses_them(db, monkeypatch):
         {"content": "Report: 1000.", "key_points": ["1000"]},
         {"content": "Report: 1000.", "key_points": ["1000"]},
         {"content": "Report: 1000.", "key_points": ["1000"]},
-        {"score": 90, "ok": True, "issues": []},
-        {"score": 90, "ok": True, "issues": []},
+        {
+            "chapters": [
+                {"section": "关键指标", "score": 20},
+                {"section": "摘要", "score": 20},
+                {"section": "业绩表现", "score": 20},
+                {"section": "库存情况", "score": 20},
+                {"section": "下一周期计划", "score": 20},
+            ],
+            "risks_penalty": 0,
+            "ok": True,
+            "issues": [],
+        },
+        {
+            "chapters": [
+                {"section": "关键指标", "score": 20},
+                {"section": "摘要", "score": 20},
+                {"section": "业绩表现", "score": 20},
+                {"section": "库存情况", "score": 20},
+                {"section": "下一周期计划", "score": 20},
+            ],
+            "risks_penalty": 0,
+            "ok": True,
+            "issues": [],
+        },
     ], tool_replies=[AssistantTurn(tool_calls=[ToolCall(id="r1", name="report.draft", arguments={})])],
         text_reply="Report: 1000.")
     _models(monkeypatch, [
