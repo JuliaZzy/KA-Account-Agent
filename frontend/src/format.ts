@@ -1,10 +1,23 @@
 /** Pure desk formatting. The page renders these; it does not recompute prices or rules. */
 
+/** Parent runs only. A tool or MCP failure on a finished run is a warning; a failed run is an error. */
+export function runNoticeCounts(runs: { owner_run_id?: string | null; status?: string; alerts?: { level?: string }[] }[]): { warnings: number; errors: number } {
+  let warnings = 0;
+  let errors = 0;
+  for (const run of runs) {
+    if (run.owner_run_id) continue;
+    const alerts = run.alerts ?? [];
+    if (run.status === "failed" || alerts.some((alert) => alert.level === "error")) errors += 1;
+    if (alerts.some((alert) => alert.level === "warning")) warnings += 1;
+  }
+  return { warnings, errors };
+}
+
 export type Activity = {
   id: string;
   title: string;
   detail: string;
-  state: "running" | "done";
+  state: "running" | "done" | "failed";
 };
 
 function textField(raw: unknown, key: string): string {
@@ -36,7 +49,8 @@ export function activitiesFromEvents(raw: unknown, status?: string): Activity[] 
     );
     if (!Number.isInteger(sequence) || sequence <= 0 || !title) return [];
     return [{
-      id: String(sequence), title, detail: "", state: "done" as const, sequence,
+      id: String(sequence), title, detail: "", sequence,
+      failed: eventType === "tool.failed",
       terminal: eventType === "tool.completed" || eventType === "tool.failed",
     }];
   });
@@ -46,7 +60,9 @@ export function activitiesFromEvents(raw: unknown, status?: string): Activity[] 
     id: row.id,
     title: row.title,
     detail: row.detail,
-    state: moving && index === rows.length - 1 && !row.terminal ? "running" as const : "done" as const,
+    state: row.failed
+      ? "failed" as const
+      : moving && index === rows.length - 1 && !row.terminal ? "running" as const : "done" as const,
   }));
 }
 
@@ -80,7 +96,7 @@ export function stepsFromTrace(raw: unknown): Activity[] {
       title,
       detail,
       index: Number.isInteger(index) ? index : 0,
-      state: status === "running" ? "running" as const : "done" as const,
+      state: status === "running" ? "running" as const : status === "failed" ? "failed" as const : "done" as const,
     }];
   });
   rows.sort((a, b) => a.index - b.index);

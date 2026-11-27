@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +17,20 @@ class CreateRunRequest(BaseModel):
 class RerunRunRequest(BaseModel):
     idempotency_key: str
     input: dict[str, Any] | None = None
+
+class RunAlert(BaseModel):
+    """A failure inside this run or one of its child runs. The run status can still be succeeded.
+
+    `warning` is a tool or MCP call that failed while the run itself finished.
+    `error` is the run's own failure.
+    """
+
+    code: str
+    message: str
+    tool_name: str | None = None
+    run_id: str
+    level: Literal["warning", "error"] = "warning"
+
 
 class RunResponse(BaseModel):
     id: str
@@ -46,6 +60,7 @@ class RunResponse(BaseModel):
     max_tool_calls: int | None = None
     max_duration_seconds: int | None = None
     queue_ahead: int | None = None
+    alerts: list[RunAlert] = Field(default_factory=list)
 
 
 class RepairRunRequest(BaseModel):

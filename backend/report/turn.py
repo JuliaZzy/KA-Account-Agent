@@ -29,8 +29,8 @@ from ..codefix.fix import with_reflection_async
 from ..db import Database, utcnow
 from ..llm import calls as model_calls
 from ..llm.calls import ModelBudgetExceeded, tool_limit
-from ..llm.errors import classify, hands_off_to_worker
 from ..memory import actor_id, attach, prompt_turns
+from ..resilience import classify, hands_off_to_worker
 from ..text2sql import QueryResult
 from ..text2sql.table_metadata import catalog_text, scope_views
 from ..text2sql.text2sql import _json_rows, llm_result_view, prompt_view

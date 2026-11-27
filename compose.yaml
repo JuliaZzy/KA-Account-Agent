@@ -34,6 +34,8 @@ x-python: &python
     # Experiment switch for the SQL row cap (default 200).
     KA_SQL_ROW_LIMIT: ${KA_SQL_ROW_LIMIT:-200}
     WATCHFILES_FORCE_POLLING: "true"
+    # Open-WebSearch daemon on the compose network. Not 127.0.0.1.
+    WEB_SEARCH_URL: http://web-search:3210
   extra_hosts:
     - "host.docker.internal:host-gateway"
   volumes:
@@ -89,6 +91,25 @@ services:
       start_period: 40s
     # Not published. The API uses http://milvus:19530 on the compose network.
     # First start is slow: the image is large and standalone embeds etcd.
+
+  web-search:
+    image: ${WEB_SEARCH_IMAGE:-ghcr.io/aas-ee/open-web-search:latest}
+    # The image default is the MCP server. `serve` is the HTTP API (POST /search).
+    command: ["node", "build/index.js", "serve", "--host", "0.0.0.0", "--port", "3210"]
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3210/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    # Not published. The API and worker use http://web-search:3210.
 
   api:
     <<: *python

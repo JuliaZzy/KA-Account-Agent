@@ -1676,6 +1676,32 @@ class RunMixin:
             query = query.order_by(orm.AgentRun.created_at.desc(), orm.AgentRun.id.desc()).limit(limit)
             return [_row_dict(row) for row in s.scalars(query)]
 
+    def tool_calls_under_runs(self, org_id: str, run_ids: list[str]) -> list[dict[str, Any]]:
+        """Tool rows on these runs and on runs they own. The list uses them for alerts."""
+        if not run_ids:
+            return []
+        with self.tx() as s:
+            rows = s.execute(
+                select(
+                    orm.ToolCall.run_id,
+                    orm.ToolCall.tool_name,
+                    orm.ToolCall.status,
+                    orm.ToolCall.error_json,
+                    orm.ToolCall.result_json,
+                    orm.AgentRun.owner_run_id,
+                )
+                .join(orm.AgentRun, orm.AgentRun.id == orm.ToolCall.run_id)
+                .where(
+                    orm.AgentRun.org_id == org_id,
+                    or_(
+                        orm.AgentRun.id.in_(run_ids),
+                        orm.AgentRun.owner_run_id.in_(run_ids),
+                    ),
+                )
+                .order_by(orm.ToolCall.created_at, orm.ToolCall.id)
+            ).mappings().all()
+            return [dict(row) for row in rows]
+
     def monitor_facts(self, org_id: str) -> dict[str, Any]:
         """Counts and latency distributions already stored for this distributor.
 

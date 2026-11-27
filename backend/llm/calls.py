@@ -28,19 +28,21 @@ from dataclasses import asdict, dataclass, field
 from types import SimpleNamespace
 from typing import Any, Literal
 
-from ..services.entry_guard import acquire_model, org_budget
-from ..services.run_names import EntryErrorCode, StepEvent, StepStatus
-from . import breaker
-from .client import VENDORS, client_for
-from .errors import (
+from ..resilience import (
     KIND_CAPACITY,
     KIND_INVALID_JSON,
     KIND_PROVIDER,
     ModelCapacityExceeded,
     ProviderError,
+    breaker,
     classify,
+    fallback_group,
+    kind_policy,
     translate_provider_error,
 )
+from ..services.entry_guard import acquire_model, org_budget
+from ..services.run_names import EntryErrorCode, StepEvent, StepStatus
+from .client import VENDORS, client_for
 from .json_check import repair_json_async
 from .parse import parse_json_loose
 from .routing import (
@@ -95,7 +97,7 @@ class ModelOutputError(ValueError):
 class JsonRepairExhausted(ModelOutputError):
     """JSON 修复次数用完了，对象还是不能用。
 
-    子任务把它收成失败结果交给 answer。没有上层接住时，Worker 把这次 Run 判失败并写死信，不再排下一次业务重试。
+    子任务把它收成失败结果交给 answer。没有上层接住时，Worker 按 `invalid_json` 扣次数重试，最多 3 次，用尽再写死信。
     `message` 是交给用户的那句。
     """
 
@@ -914,7 +916,10 @@ def _interpret(expect: Expect, raw: Any, alias: dict[str, str] | None = None) ->
     # 结构化 JSON：直接返回
     if isinstance(raw, dict) and "choices" not in raw and not hasattr(raw, "output_text"): # 没有 `choices` 键、也没有 `output_text` 属性：说明调用方直接拿到了已解析的对象，不用再解析
         return raw, json.dumps(raw, ensure_ascii=False)
-    text = str(raw.output_text or "") if hasattr(raw, "output_text") else _message_text(raw)
+    try:
+        text = str(raw.output_text or "") if hasattr(raw, "output_text") else _message_text(raw)
+    except ValueError as err:
+        raise ModelOutputError("model did not return a message") from err
     try:
         parsed = parse_json_loose(text)
     except json.JSONDecodeError as err:
@@ -1195,7 +1200,7 @@ async def _call_model_once(
     started = time.perf_counter()
     ticket = None if brand == "fake" else breaker.acquire(brand)
     if ticket is not None and not ticket.allowed:
-        # The Redis TTL decides when the next probe may run. This request does not wait it out.
+        # 下一次能不能探测由 Redis 的 TTL 决定。这一次请求不等。
         closed = ProviderError(brand, model_name, "circuit_open")
         _capacity_failed(
             ledger, brand=brand, model_name=model_name, purpose=purpose, error=closed,
@@ -1227,7 +1232,7 @@ async def _call_model_once(
         ))
     except Exception as exc:
         error = _transport_error(exc, brand=brand, model_name=model_name, client=used)
-        _record_breaker(brand, error)
+        _record_breaker(brand, error, ticket)
         _fail(
             ledger, brand=brand, model_name=model_name, system=system, messages=messages,
             schema=schema, tools=tools, client=used, started=started, error=error, purpose=purpose,
@@ -1238,6 +1243,8 @@ async def _call_model_once(
         held.release()
 
     if held.lost:
+        # 调用已经发出，但本地租约丢了。这不是厂商故障，只放开自己的探测票。
+        breaker.release(ticket)
         lost = ModelCapacityExceeded(brand, model_name, "model lease was lost while calling the provider")
         _fail(
             ledger, brand=brand, model_name=model_name, system=system, messages=messages,
@@ -1435,7 +1442,7 @@ async def call_model_async(*args: Any, **kwargs: Any) -> ModelResult:
             return result
         except Exception as exc:
             failure_kind = _route_failure_kind(exc)
-            if index + 1 >= len(candidates) or failure_kind not in policy.fallback_on:
+            if index + 1 >= len(candidates) or not failure_kind or failure_kind not in policy.fallback_on:
                 raise
             reason_map = {
                 KIND_PROVIDER: RouteReason.PROVIDER_ERROR,
@@ -1450,11 +1457,11 @@ async def call_model_async(*args: Any, **kwargs: Any) -> ModelResult:
             continue
     raise RuntimeError(f"no model route available for {purpose or requested_model}")
 
-def _route_failure_kind(exc: Exception) -> str:
-    """Which fallback allowlist entry this error is. `internal` is on none of them."""
+def _route_failure_kind(exc: Exception) -> str | None:
+    """Which `fallback_on` group this error is. `unknown` matches none."""
     if "route quality gate failed" in str(exc):
         return "quality_gate_failed"
-    return classify(exc).name
+    return fallback_group(classify(exc).name)
 
 
 def _unwrap(result: ModelResult) -> Any:
@@ -1488,16 +1495,14 @@ def _transport_error(exc: Exception, *, brand: str, model_name: str, client: Any
     return exc
 
 
-def _record_breaker(brand: str, error: Exception) -> None:
+def _record_breaker(brand: str, error: Exception, ticket: breaker.CircuitTicket | None) -> None:
+    """按策略表记熔断。不计入熔断时，只释放自己持有的探测票。"""
     if brand == "fake":
         return
-    kind = classify(error)
-    if kind.name != KIND_PROVIDER:
-        return
-    if kind.retryable:
+    if kind_policy(classify(error).name).breaker:
         breaker.record_failure(brand)
     else:
-        breaker.release_probe(brand)
+        breaker.release(ticket)
 
 
 def _note_exhausted_call(db: Any | None, run_id: str | None, exc: JsonRepairExhausted) -> None:

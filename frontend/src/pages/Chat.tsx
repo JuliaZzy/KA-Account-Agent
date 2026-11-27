@@ -1086,12 +1086,14 @@ function ChatDesk() {
 }
 
 function StepMark({ state }: { state: Activity["state"] }) {
-  if (state === "done") {
+  if (state === "done" || state === "failed") {
     return (
-      <span className="step-mark done" aria-hidden="true">
+      <span className={`step-mark ${state}`} aria-hidden="true">
         <svg viewBox="0 0 16 16">
           <circle cx="8" cy="8" r="6.25" />
-          <path d="M4.7 8.15 7 10.35 11.3 5.7" />
+          {state === "failed"
+            ? <path d="M5.5 5.5 10.5 10.5 M10.5 5.5 5.5 10.5" />
+            : <path d="M4.7 8.15 7 10.35 11.3 5.7" />}
         </svg>
       </span>
     );

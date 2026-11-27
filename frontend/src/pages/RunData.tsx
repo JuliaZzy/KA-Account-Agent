@@ -3,8 +3,16 @@ import { useSearchParams } from "react-router-dom";
 
 import { api } from "../api";
 import { useDesk } from "../desk";
-import { clip } from "../format";
+import { clip, runNoticeCounts } from "../format";
 import { Badge, DataTable, PageHead, Tabs } from "../ui";
+
+type RunAlert = {
+  code: string;
+  message: string;
+  tool_name: string | null;
+  run_id: string;
+  level?: "warning" | "error";
+};
 
 type RunRow = {
   id: string;
@@ -16,6 +24,8 @@ type RunRow = {
   created_at: string;
   ended_at: string | null;
   input_json: Record<string, unknown> | null;
+  error_json?: Record<string, unknown> | null;
+  alerts?: RunAlert[];
 };
 
 type ListedRun = {
@@ -32,6 +42,7 @@ type ListedRun = {
   createdLabel: string;
   endedLabel: string;
   ownerRunId: string;
+  alerts: RunAlert[];
 };
 
 type Trace = {
@@ -136,6 +147,7 @@ function listRun(
     createdLabel: stamp(run.created_at),
     endedLabel: stamp(run.ended_at),
     ownerRunId: run.owner_run_id ?? "",
+    alerts: Array.isArray(run.alerts) ? run.alerts : [],
   };
 }
 
@@ -174,6 +186,25 @@ function tableColumns(rows: Record<string, unknown>[]) {
   }));
 }
 
+function AlertList({ alerts, onOpen }: { alerts: RunAlert[]; onOpen: (id: string) => void }) {
+  if (!alerts.length) return "—";
+  return (
+    <div className="run-alerts">
+      {alerts.map((alert) => (
+        <button
+          key={`${alert.run_id}:${alert.code}:${alert.tool_name ?? ""}`}
+          type="button"
+          className={alert.level === "error" ? "badge bad" : "badge warn"}
+          title={alert.message}
+          onClick={() => onOpen(alert.run_id)}
+        >
+          {alert.code}{alert.tool_name ? ` · ${alert.tool_name}` : ""}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function matches(row: ListedRun, query: string): boolean {
   if (!query) return true;
   const haystack = [
@@ -187,6 +218,7 @@ function matches(row: ListedRun, query: string): boolean {
     row.orgName,
     row.userName,
     row.ownerRunId,
+    ...row.alerts.flatMap((alert) => [alert.code, alert.message, alert.tool_name ?? ""]),
   ].join(" ").toLowerCase();
   return haystack.includes(query);
 }
@@ -245,6 +277,12 @@ export function RunDataPage() {
       .filter((row) => matches(row, needle));
   }, [runs, includeChildren, titles, userNames, desk.distributor?.name, query]);
 
+  const notices = runNoticeCounts(listed.map((row) => ({
+    owner_run_id: row.ownerRunId || null,
+    status: row.status,
+    alerts: row.alerts,
+  })));
+  const openAlerts = runs.find((run) => run.id === runId)?.alerts ?? [];
   const activeTab = TAB_META.find((item) => item.label === tab) ?? TAB_META[0];
   const rows = useMemo(() => (trace ? activeTab.rows(trace) : []), [trace, activeTab]);
   const columns = useMemo(() => tableColumns(rows), [rows]);
@@ -270,7 +308,7 @@ export function RunDataPage() {
     <>
       <PageHead
         title="Run 表数据"
-        caption="按 run 查看原始行。列表默认只放对话本身的 run；子任务（data、tool、report、open）勾选后才出现。点 run id 进入这张 run 的各表。"
+        caption="对话 run 写成 succeeded 只说明回复写完了。工具失败记在子 run 的 tool_calls 上，告警列给出错误类型。点错误码打开那条工具 run。"
       />
       {error && <div className="error">{error}</div>}
       {!userId && <div className="empty">先在左侧选一个用户。</div>}
@@ -295,13 +333,21 @@ export function RunDataPage() {
               包含子任务
             </label>
           </div>
-          <p className="muted">{listed.length} 条 · 接口最多返回最近 100 条 run</p>
+          <p className="muted">
+            {listed.length} 条 · {notices.warnings} 条警告 · {notices.errors} 条报错 · 接口最多返回最近 100 条 run
+          </p>
           {listed.length === 0 && <p className="empty">没有匹配的 run。</p>}
           {listed.length > 0 && (
             <DataTable
               columns={[
                 { key: "id", label: "Run ID", render: (row: ListedRun) => idButton(row.id) },
                 { key: "status", label: "状态", render: (row: ListedRun) => <Badge status={row.status} /> },
+                {
+                  key: "alerts",
+                  label: "告警",
+                  wrap: true,
+                  render: (row: ListedRun) => <AlertList alerts={row.alerts} onOpen={chooseRun} />,
+                },
                 { key: "runType", label: "类型" },
                 {
                   key: "sessionId",
@@ -351,6 +397,11 @@ export function RunDataPage() {
                 <Badge status={String(trace.run.status)} /> {String(trace.run.run_type)} · 用户 {String(trace.run.user_id)} · trace{" "}
                 <span className="mono">{String(trace.run.trace_id || "—")}</span>
               </p>
+              {openAlerts.length > 0 && (
+                <div className="error">
+                  <AlertList alerts={openAlerts} onOpen={chooseRun} />
+                </div>
+              )}
               <Tabs labels={[...TAB_META.map((item) => item.label)]} value={tab} onChange={setTab} />
               <p className="muted">{rows.length} 行</p>
               {rows.length === 0 && <p className="empty">这张表里没有行。</p>}

@@ -332,7 +332,7 @@ def test_task_wave_leaves_a_running_owner_when_the_checkpoint_is_invalid(db):
 
 
 def test_a_failed_chat_turn_stays_in_the_session(db):
-    from backend.llm.errors import ProviderError
+    from backend.resilience import ProviderError
     from backend.services.run_worker import PermanentRunError, work_once
 
     db.upsert_user("u-a", "dist-1", "Ada")
@@ -372,8 +372,8 @@ def test_a_failed_chat_turn_stays_in_the_session(db):
 
 
 def test_worker_hands_a_provider_failure_to_the_owner(db):
-    from backend.llm.errors import ProviderError
     from backend.orchestrator.gather import load_state
+    from backend.resilience import ProviderError
     from backend.services.run_worker import work_once
 
     db.upsert_user("u-a", "dist-1", "Ada")

@@ -23,6 +23,7 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
 from ..config import REPO_ROOT, env
+from ..services.run_names import ToolErrorCode
 
 _SERVERS_PATH = Path(__file__).resolve().parent / "servers.json"
 _ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -76,6 +77,24 @@ def mcp_tool_to_openai_schema(tool: Any, *, prefix: str = "") -> dict[str, Any]:
             "parameters": params,
         },
     }
+
+
+def mcp_call_result(text: str, *, is_error: bool) -> dict[str, Any]:
+    """Turn one MCP tool result into the same `{ok, data, error, code}` shape as native tools.
+
+    A JSON-RPC failure sometimes comes back as ordinary text with `isError` left false.
+    Recording `ok: false` makes the child tool call failed, so the run list uses the same alert as any other tool.
+    """
+    body = (text or "").strip()
+    if is_error or body.lower().startswith("mcp error"):
+        validation = "32602" in body or "invalid arguments" in body.lower() or "validation" in body.lower()
+        code = ToolErrorCode.VALIDATION if validation else ToolErrorCode.UPSTREAM
+        return {"ok": False, "data": None, "error": body or "MCP tool failed", "code": str(code)}
+    try:
+        data: Any = json.loads(body) if body else {}
+    except json.JSONDecodeError:
+        data = {"text": body}
+    return {"ok": True, "data": data, "error": None}
 
 
 def _content_to_text(result: Any) -> str:
@@ -174,14 +193,7 @@ class _McpServer:
         assert self._session is not None
         try:
             result = await self._session.call_tool(tool_name, arguments or {})
-            text = _content_to_text(result)
-            if getattr(result, "isError", False):
-                return {"ok": False, "data": None, "error": text}
-            try:
-                data: Any = json.loads(text)
-            except json.JSONDecodeError:
-                data = {"text": text}
-            return {"ok": True, "data": data, "error": None}
+            return mcp_call_result(_content_to_text(result), is_error=bool(getattr(result, "isError", False)))
         except Exception as err:
             return {"ok": False, "data": None, "error": str(err)}
 

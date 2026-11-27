@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ..llm import calls as model_calls
-from ..llm.errors import classify, hands_off_to_worker
+from ..resilience import classify, hands_off_to_worker
 from .prompt import CODE_FIX_PROMPT
 
 MAX_ATTEMPTS = 3

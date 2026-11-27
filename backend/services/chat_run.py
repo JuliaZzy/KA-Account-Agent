@@ -17,7 +17,6 @@ from typing import Any
 
 from ..db import Database
 from ..llm.calls import ModelBudgetExceeded
-from ..llm.errors import classify
 from ..llm.routing import run_budget_for
 from ..repositories.run_repository import (
     RunStatus,
@@ -26,6 +25,7 @@ from ..repositories.run_repository import (
     find_runs_by_owner,
     latest_checkpoint,
 )
+from ..resilience import classify
 from .dispatcher import dispatch_pending
 from .entry_guard import admit_backlog, admit_create, org_budget
 from .run_names import RunType, ToolCallStatus

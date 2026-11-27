@@ -3,9 +3,8 @@
 Celery 送来 `run_id`。租约和 `run.started` 在 `execute` 之前提交。
 Run 进入终态、`waiting_for_user`，或已经排上下一条 outbox 之后，任务才返回。这次返回就是 ack。
 
-`classify` 判成不可重试的异常直接失败并写入 `dead_letter_jobs`。
-内部错误（`INTERNAL_ERROR_RETRIES`）只重试一次。`TimeoutError` 按
-`TIMEOUT_ERROR_RETRIES` 重试。容量和可重试的供应商错误把 Run 放回队列，不扣这次执行次数。
+分流只看 `classify` 读到的 kind，再查 `resilience.policy`。基础设施错误把 Run 放回队列，
+不扣执行次数。`invalid_json` 扣次数，最多 3 次。`unknown` 和其余 kind 直接失败。
 """
 
 from __future__ import annotations
@@ -16,6 +15,7 @@ import logging
 import random
 import threading
 import time
+import traceback
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -26,16 +26,6 @@ from sqlalchemy.exc import OperationalError
 from ..db import Database, utcnow
 from ..db.database import ChatTurnBusy
 from ..db.outcome import Outcome, over_duration_outcome
-from ..llm.errors import (
-    INTERNAL_ERROR_RETRIES,
-    KIND_CAPACITY,
-    KIND_PROVIDER,
-    TIMEOUT_ERROR_RETRIES,
-    ErrorKind,
-    ModelCapacityExceeded,
-    ProviderError,
-    classify,
-)
 from ..repositories.run_repository import (
     RUN_TERMINAL_STATUSES,
     RunStatus,
@@ -52,6 +42,13 @@ from ..repositories.run_repository import (
 from ..repositories.run_repository import (
     sweep_waiting_for_tasks as _sweep_waiting_for_tasks,
 )
+from ..resilience import (
+    ErrorKind,
+    ModelCapacityExceeded,
+    ProviderError,
+    classify,
+    kind_policy,
+)
 from .entry_guard import acquire_run, queue_enabled
 from .run_finalize import _maybe_schedule_title, after_terminal, after_terminal_row, finalize_run
 from .run_names import LIVE_CHILD_STATUSES
@@ -63,8 +60,6 @@ from .run_names import LIVE_CHILD_STATUSES
 LEASE_FOR = timedelta(minutes=5)
 LEASE_BEAT = LEASE_FOR / 5
 RETRY_AFTER = timedelta(minutes=1), timedelta(minutes=5), timedelta(minutes=15)
-INFRASTRUCTURE_AFTER = (timedelta(seconds=5),)
-PROVIDER_AFTER = (timedelta(seconds=1),)
 RETRY_AFTER_CAP = 300.0
 
 log = logging.getLogger(__name__)
@@ -150,7 +145,7 @@ def _finish_claimed(
             return True
         schedule_retry(
             db, run_id, {"kind": "infrastructure", "message": str(exc)},
-            INFRASTRUCTURE_AFTER, spend_attempt=False,
+            (timedelta(seconds=5),), spend_attempt=False,
         )
         return True
     except LeaseLost:
@@ -159,41 +154,11 @@ def _finish_claimed(
         if not _still_held(db, run_id, worker_id, run_lease, pg_lease):
             return True
         kind = classify(exc)
-        if kind.name == KIND_CAPACITY and isinstance(exc, ModelCapacityExceeded):
-            _abandon_running_reply(db, run_id)
-            schedule_retry(
-                db, run_id, {
-                    "kind": "infrastructure",
-                    "code": exc.code,
-                    "brand": exc.brand,
-                    "model": exc.model,
-                    "message": str(exc),
-                },
-                INFRASTRUCTURE_AFTER, spend_attempt=False,
-            )
-            db.note_capacity_wait(run_id)
-            return True
-        if kind.name == KIND_PROVIDER and kind.retryable and isinstance(exc, ProviderError):
-            _abandon_running_reply(db, run_id)
-            schedule_retry(
-                db, run_id, {
-                    "kind": "infrastructure",
-                    "code": exc.code,
-                    "brand": exc.provider,
-                    "model": exc.model,
-                    "provider_kind": exc.kind,
-                    "status_code": exc.status_code,
-                    "retry_after_seconds": exc.retry_after_seconds,
-                    "request_id": exc.request_id,
-                    "message": str(exc),
-                },
-                PROVIDER_AFTER, spend_attempt=False, delay=_provider_delay(exc),
-            )
-            return True
-        limits = {"internal": INTERNAL_ERROR_RETRIES, "timeout": TIMEOUT_ERROR_RETRIES}
+        policy = kind_policy(kind.name)
+        if policy.mode == "infrastructure":
+            return _requeue_infrastructure(db, run_id, exc, kind)
         return _settle(
             db, run_id, exc, kind=kind, retry_after=retry_after, worker_id=worker_id,
-            attempt_limit=limits.get(kind.name),
         )
     row = find_agent_run_by_id(db, run_id)
     if row is None or row["status"] in RUN_TERMINAL_STATUSES or row["status"] in (
@@ -272,6 +237,39 @@ def serve_worker(
             time.sleep(exc.countdown)
 
 
+def _requeue_infrastructure(db: Database, run_id: str, exc: Exception, kind: ErrorKind) -> bool:
+    """Put the run back on the outbox. This does not spend an execution attempt."""
+    policy = kind_policy(kind.name)
+    base = timedelta(seconds=policy.base_seconds if policy.base_seconds is not None else 1)
+    delay = None
+    error: dict[str, Any] = {
+        "kind": "infrastructure",
+        "code": kind.code,
+        "message": str(exc),
+    }
+    if isinstance(exc, ModelCapacityExceeded):
+        error["brand"] = exc.brand
+        error["model"] = exc.model
+        _abandon_running_reply(db, run_id)
+        schedule_retry(db, run_id, error, (base,), spend_attempt=False)
+        db.note_capacity_wait(run_id)
+        return True
+    if isinstance(exc, ProviderError):
+        error.update({
+            "brand": exc.provider,
+            "model": exc.model,
+            "provider_kind": exc.kind,
+            "status_code": exc.status_code,
+            "retry_after_seconds": exc.retry_after_seconds,
+            "request_id": exc.request_id,
+        })
+        if policy.honor_retry_after:
+            delay = _provider_delay(exc)
+        _abandon_running_reply(db, run_id)
+    schedule_retry(db, run_id, error, (base,), spend_attempt=False, delay=delay)
+    return True
+
+
 def _settle(
     db: Database,
     run_id: str,
@@ -293,6 +291,9 @@ def _settle(
     scope = getattr(exc, "scope", None)
     if scope:
         error["scope"] = str(scope)
+    if kind.name == "unknown":
+        error["exc_type"] = str(getattr(exc, "cause_type", None) or type(exc).__name__)
+        error["traceback"] = "".join(traceback.format_exception(exc))[-4000:]
     if not run_id:
         return True
     if permanent:

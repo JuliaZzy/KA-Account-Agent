@@ -3,7 +3,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 
 import { api, withUser } from "./api";
 import { chatPresence, forgetChat, isForgotten, useChatPresence } from "./chat-live";
-import { chatTitle, tagLabel, type Partnership } from "./format";
+import { chatTitle, runNoticeCounts, tagLabel, type Partnership } from "./format";
 
 export type DeskUser = {
   id: string;
@@ -108,6 +108,16 @@ const NAV = [
   { to: "/monitor", label: "Monitor", hint: "系统监控", icon: "monitoring" },
   { to: "/run-data", label: "Run data", hint: "Run 表数据", icon: "table_chart" },
 ] as const;
+
+function RunNotices({ warnings, errors }: { warnings: number; errors: number }) {
+  if (!warnings && !errors) return null;
+  return (
+    <span className="nav-notices">
+      {warnings > 0 && <span className="nav-count warn" title={`${warnings} 条警告`}>{warnings}</span>}
+      {errors > 0 && <span className="nav-count bad" title={`${errors} 条报错`}>{errors}</span>}
+    </span>
+  );
+}
 
 function initials(name: string): string {
   const trimmed = name.trim();
@@ -396,6 +406,29 @@ export function Shell({ children }: { children: ReactNode }) {
   const presence = useChatPresence();
   const { pathname } = useLocation();
   const page = NAV.find((item) => item.to === pathname);
+  const userId = desk.user?.id ?? "";
+  const [notices, setNotices] = useState({ warnings: 0, errors: 0 });
+
+  useEffect(() => {
+    if (!userId) {
+      setNotices({ warnings: 0, errors: 0 });
+      return;
+    }
+    let cancelled = false;
+    api<{ owner_run_id: string | null; status: string; alerts?: { level?: string }[] }[]>(
+      "/api/runs?limit=100",
+      { headers: { "X-User-Id": userId } },
+    )
+      .then((rows) => {
+        if (!cancelled) setNotices(runNoticeCounts(rows));
+      })
+      .catch(() => {
+        if (!cancelled) setNotices({ warnings: 0, errors: 0 });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -440,6 +473,7 @@ export function Shell({ children }: { children: ReactNode }) {
               <NavLink key={item.to} to={item.to} end={item.to === "/"} className={({ isActive }) => (isActive ? "on" : "")}>
                 <span className="material-symbols-outlined" aria-hidden="true">{item.icon}</span>
                 <span className="nav-copy">{item.label} <span className="nav-hint">{item.hint}</span></span>
+                {item.to === "/run-data" && <RunNotices warnings={notices.warnings} errors={notices.errors} />}
               </NavLink>
             ))}
           </nav>

@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-from backend.llm.breaker import acquire, record_failure, record_success, release
+import pytest
+
+from backend.llm import calls
+from backend.llm.calls import ModelCapacityExceeded
 from backend.llm.client import DeepSeekClient, GLMClient, QwenClient
-from backend.llm.errors import (
+from backend.redis_store import client
+from backend.resilience import (
     ProviderError,
     parse_retry_after,
     provider_error_from_http,
     translate_provider_error,
 )
+from backend.resilience.breaker import CircuitTicket, acquire, record_failure, record_success, release
 
 
 def test_parse_retry_after_seconds():
@@ -194,5 +200,83 @@ def test_circuit_opens_after_consecutive_vendor_failures_and_allows_one_probe(mo
         assert first.allowed is True and first.probing is True
         assert second.allowed is False
         release(first)
+    finally:
+        record_success(brand)
+
+
+def _arm_half_open(brand: str, monkeypatch) -> None:
+    monkeypatch.setenv("KA_ACCOUNT_CIRCUIT_FAILURES", "5")
+    monkeypatch.setenv("KA_ACCOUNT_CIRCUIT_COOLDOWN_SECONDS", "30")
+    for _ in range(5):
+        record_failure(brand)
+    client().delete(f"circuit:{brand}:open")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("local fault"),
+        ProviderError("qwen", "qwen3.7-flash", "bad_request"),
+        ProviderError("qwen", "qwen3.7-flash", "authentication"),
+    ],
+    ids=["unknown", "bad_request", "authentication"],
+)
+def test_probe_outside_the_breaker_lets_the_next_request_probe(monkeypatch, error):
+    brand = f"test-{uuid.uuid4().hex}"
+    try:
+        _arm_half_open(brand, monkeypatch)
+        ticket = acquire(brand)
+        assert ticket.probing is True
+        calls._record_breaker(brand, error, ticket)
+        nxt = acquire(brand)
+        assert nxt.allowed is True and nxt.probing is True
+        assert int(client().get(f"circuit:{brand}:failures") or 0) == 5
+        release(nxt)
+    finally:
+        record_success(brand)
+
+
+def test_non_probe_failure_does_not_drop_another_holders_probe(monkeypatch):
+    brand = f"test-{uuid.uuid4().hex}"
+    try:
+        _arm_half_open(brand, monkeypatch)
+        holder = acquire(brand)
+        assert holder.probing is True
+        for error in (
+            RuntimeError("local fault"),
+            ProviderError(brand, "m", "bad_request"),
+            ProviderError(brand, "m", "authentication"),
+        ):
+            bystander = CircuitTicket(brand=brand, allowed=True, probing=False)
+            calls._record_breaker(brand, error, bystander)
+        blocked = acquire(brand)
+        assert blocked.allowed is False
+        assert client().get(f"circuit:{brand}:probe") is not None
+        release(holder)
+    finally:
+        record_success(brand)
+
+
+def test_lost_model_lease_releases_the_probe(monkeypatch):
+    brand = f"test-{uuid.uuid4().hex}"
+    monkeypatch.setattr(calls, "client_for", lambda _brand, injected: injected or SimpleNamespace())
+    monkeypatch.setattr(
+        calls, "acquire_model", lambda _brand: SimpleNamespace(lost=True, release=lambda: None),
+    )
+
+    async def ok(**_kwargs):
+        return SimpleNamespace()
+
+    monkeypatch.setattr(calls, "_invoke", ok)
+    try:
+        _arm_half_open(brand, monkeypatch)
+        with pytest.raises(ModelCapacityExceeded):
+            asyncio.run(calls._call_model_once(
+                "qwen3.7-flash", brand=brand, kind="chat_completion", client=SimpleNamespace(),
+            ))
+        nxt = acquire(brand)
+        assert nxt.allowed is True and nxt.probing is True
+        assert int(client().get(f"circuit:{brand}:failures") or 0) == 5
+        release(nxt)
     finally:
         record_success(brand)

@@ -214,7 +214,9 @@ def test_permanent_error_fails_the_run_without_a_retry(make_db):
     assert db.find_pending_outbox_jobs() == []
 
 
-def test_exhausted_json_repair_fails_once_and_dead_letters(make_db):
+def test_invalid_json_retries_then_dead_letters(make_db):
+    from datetime import timedelta
+
     from backend.llm.calls import JsonRepairExhausted
     from backend.llm.json_check import JSON_FAILURE_MESSAGE
     from backend.services.dispatcher import dispatch_pending
@@ -224,11 +226,16 @@ def test_exhausted_json_repair_fails_once_and_dead_letters(make_db):
     client = TestClient(create_app(db))
     run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
     dispatch_pending(db)
+    immediate = (timedelta(0), timedelta(0), timedelta(0))
 
     def execute(_run):
         raise JsonRepairExhausted(JSON_FAILURE_MESSAGE)
 
-    assert work_once(db, "worker-a", execute, run_id=run_id) is True
+    for _ in range(3):
+        assert work_once(db, "worker-a", execute, immediate, run_id=run_id) is True
+        body = client.get(f"/runs/{run_id}", headers=HEADERS).json()
+        assert body["status"] == "queued"
+    assert work_once(db, "worker-a", execute, immediate, run_id=run_id) is True
     body = client.get(f"/runs/{run_id}", headers=HEADERS).json()
     assert body["status"] == "failed"
     assert body["error_json"]["code"] == "JSON_REPAIR_EXHAUSTED"
@@ -310,9 +317,7 @@ def test_a_model_budget_failure_does_not_retry(make_db):
     assert db.find_pending_outbox_jobs() == []
 
 
-def test_transient_error_retries_then_dead_letters(make_db):
-    from datetime import timedelta
-
+def test_unknown_error_fails_without_a_retry(make_db):
     from backend.services.dispatcher import dispatch_pending
     from backend.services.run_worker import work_once
 
@@ -320,24 +325,17 @@ def test_transient_error_retries_then_dead_letters(make_db):
     client = TestClient(create_app(db))
     run_id = client.post("/runs", json=BODY, headers=HEADERS).json()["id"]
     dispatch_pending(db)
-    immediate = (timedelta(0), timedelta(0), timedelta(0))
 
     def execute(_run):
         raise TimeoutError("订单系统超时")
 
-    for _ in range(3):
-        assert work_once(db, "worker-a", execute, immediate, run_id=run_id) is True
-        body = client.get(f"/runs/{run_id}", headers=HEADERS).json()
-        assert body["status"] == "queued"
-    assert work_once(db, "worker-a", execute, immediate, run_id=run_id) is True
+    assert work_once(db, "worker-a", execute, run_id=run_id) is True
     failed = client.get(f"/runs/{run_id}", headers=HEADERS).json()
     assert failed["status"] == "failed"
-    assert failed["error_json"]["code"] == "TIMEOUT"
-    events = client.get(f"/runs/{run_id}/trace", headers=HEADERS).json()["events"]
-    assert [e["event_type"] for e in events if e["event_type"] == "run.retry_scheduled"] == [
-        "run.retry_scheduled", "run.retry_scheduled", "run.retry_scheduled",
-    ]
-    assert events[-1]["payload_json"]["reason"] == "dead_letter"
+    assert failed["error_json"]["code"] == "UNKNOWN"
+    assert failed["error_json"]["exc_type"] == "TimeoutError"
+    assert "TimeoutError" in failed["error_json"]["traceback"]
+    assert db.find_pending_outbox_jobs() == []
 def test_worker_loss_redeliveries_eventually_dead_letter(make_db):
     from backend.services.dispatcher import dispatch_pending
 
@@ -355,7 +353,7 @@ def test_worker_loss_redeliveries_eventually_dead_letter(make_db):
     assert len(letters) == 1
     assert letters[0]["error_json"]["code"] == "WORKER_LOST_REDELIVERY"
 def test_model_capacity_requeues_without_spending_execution_attempt(make_db):
-    from backend.llm.errors import ModelCapacityExceeded
+    from backend.resilience import ModelCapacityExceeded
     from backend.services.dispatcher import dispatch_pending
     from backend.services.run_worker import work_once
 
@@ -380,7 +378,7 @@ def test_model_capacity_requeues_without_spending_execution_attempt(make_db):
     assert pending[0]["last_error_json"]["code"] == "MODEL_CAPACITY_EXCEEDED"
     assert pending[0]["last_error_json"]["infrastructure_attempts"] == 1
 def test_provider_rate_limit_requeues_with_retry_after(make_db, monkeypatch):
-    from backend.llm.errors import ProviderError
+    from backend.resilience import ProviderError
     from backend.services.dispatcher import dispatch_pending
     from backend.services.run_worker import work_once
 
@@ -411,7 +409,7 @@ def test_provider_rate_limit_requeues_with_retry_after(make_db, monkeypatch):
     wait = (pending[0]["next_attempt_at"] - before).total_seconds()
     assert 11 <= wait <= 13
 def test_provider_timeout_requeues_without_spending_an_attempt(make_db, monkeypatch):
-    from backend.llm.errors import ProviderError
+    from backend.resilience import ProviderError
     from backend.services.dispatcher import dispatch_pending
     from backend.services.run_worker import work_once
 
@@ -439,7 +437,7 @@ def test_provider_timeout_requeues_without_spending_an_attempt(make_db, monkeypa
     wait = (pending[0]["next_attempt_at"] - before).total_seconds()
     assert 0.9 <= wait <= 1.2
 def test_circuit_open_fails_the_run_instead_of_waiting_out_the_cooldown(make_db):
-    from backend.llm.errors import ProviderError
+    from backend.resilience import ProviderError
     from backend.services.dispatcher import dispatch_pending
     from backend.services.run_worker import work_once
 
@@ -464,7 +462,7 @@ def test_circuit_open_fails_the_run_instead_of_waiting_out_the_cooldown(make_db)
     ]
     assert pending == []
 def test_provider_authentication_fails_the_run(make_db):
-    from backend.llm.errors import ProviderError
+    from backend.resilience import ProviderError
     from backend.services.dispatcher import dispatch_pending
     from backend.services.run_worker import work_once
 

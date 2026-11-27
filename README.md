@@ -81,7 +81,7 @@ API 文档：<http://127.0.0.1:8000/docs>
 | `EMBEDDING_BASE_URL`、`EMBEDDING_API_KEY`、`EMBEDDING_MODEL`、`EMBEDDING_DIMENSIONS` | 品牌资料 embedding，与聊天模型分开配置 |
 | `RERANK_BASE_URL`、`RERANK_API_KEY`、`RERANK_MODEL` | 可选的检索重排；URL 为空时跳过重排 |
 | `GLM_API_KEY`、`GLM_BASE_URL` | PDF OCR |
-| `BOCHA_API_KEY` | 网页搜索 |
+| `WEB_SEARCH_URL` | 网页搜索。Compose 注入 Open-WebSearch（`http://web-search:3210`），不要写成 `127.0.0.1` |
 | `SOCIALCRAWL_API_KEY` | 可选 SocialCrawl MCP |
 | `SMTP_*`、`EMAIL_DRY_RUN` | 邮件发送配置及 dry run |
 | `KA_ACCOUNT_OUTBOX_RETENTION_DAYS`、`KA_ACCOUNT_OUTBOX_CLEANUP_BATCH` | sweeper 保留已派发 outbox 的天数（默认 7）及每轮清理批量（默认 1000） |

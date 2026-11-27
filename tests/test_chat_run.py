@@ -107,8 +107,9 @@ def test_a_model_error_fails_the_run_on_the_worker(db):
     assert events[0]["type"] == "run"
     assert work_chat(db, llm, events[0]["run_id"]) is True
     run = db.find_agent_run("dist-1", events[0]["run_id"])
-    assert run["status"] == "queued"
-    assert run["error_json"]["kind"] == "transient"
+    assert run["status"] == "failed"
+    assert run["error_json"]["code"] == "UNKNOWN"
+    assert run["error_json"]["exc_type"] == "RuntimeError"
 
 def test_po_extract_is_recorded_on_the_chat_run(db):
     llm = FakeLLM(

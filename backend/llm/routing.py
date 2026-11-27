@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from .errors import KIND_CAPACITY, KIND_INVALID_JSON, KIND_PROVIDER
+from ..resilience import KIND_CAPACITY, KIND_INVALID_JSON, KIND_PROVIDER
 
 log = logging.getLogger(__name__)
 

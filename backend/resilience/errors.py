@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any, Literal
+from typing import Any
 
 # Vendor failures only. `circuit_open` is not here: the cooldown gates the next
 # probe, and this request falls back or fails immediately. `internal` is a local
@@ -222,64 +222,98 @@ def _status_of(exc: BaseException) -> int | None:
     return None
 
 
-# Names routing and the breaker compare against. String literals for the old
-# route labels stay in this module so other files reference these constants.
+# Route groups. `fallback_on` still lists these names, not each fine kind.
 KIND_CAPACITY = "capacity"
 KIND_PROVIDER = "provider"
-KIND_BUDGET = "budget"
 KIND_INVALID_JSON = "invalid_json"
-KIND_PERMANENT = "permanent"
-KIND_INTERNAL = "internal"
-KIND_TIMEOUT = "timeout"
-INTERNAL_ERROR_CODE = "INTERNAL"
-TIMEOUT_ERROR_CODE = "TIMEOUT"
-# One retry. A second failure is the same local bug, not a vendor outage.
-INTERNAL_ERROR_RETRIES = 1
-# A slow external call keeps the execution budget. This is not a local bug.
-TIMEOUT_ERROR_RETRIES = 3
-# A ProviderError with one of these kinds was wrapped around a local fault.
-_LOCAL_PROVIDER_KINDS = frozenset({"internal", "event_loop"})
+UNKNOWN_CODE = "UNKNOWN"
+
+
+class ClassifiedError(Exception):
+    """A failure whose kind was declared where it was raised.
+
+    `classify` reads `kind`. It does not look at the exception type to guess.
+    """
+
+    def __init__(self, kind: str, message: str = "", *, code: str | None = None) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.code = code
 
 
 @dataclass(frozen=True)
 class ErrorKind:
-    name: Literal["capacity", "provider", "budget", "invalid_json", "permanent", "internal", "timeout"]
-    retryable: bool
+    """The declared kind and the code written on the run. Policy lives in `policy`."""
+
+    name: str
     code: str
+
+    @property
+    def retryable(self) -> bool:
+        from .policy import kind_policy
+
+        return kind_policy(self.name).mode != "none"
 
 
 def classify(exc: BaseException) -> ErrorKind:
-    """One mapping from an exception to the retry, fallback, and breaker decision.
+    """Read the kind a boundary already declared. Undeclared exceptions are `unknown`.
 
-    A `ProviderError` whose own kind is `internal` or `event_loop` is a local
-    fault that the transport wrapper already caught. It is `internal` here, so
-    it does not switch models or open the vendor breaker.
+    `ProviderError.kind` of `internal` or `event_loop` is a local fault the
+    transport already wrapped. Those names are not in the policy table, so
+    they are `unknown`: no retry, no model switch, no breaker.
     """
+    from .policy import POLICIES
+
     if isinstance(exc, ModelCapacityExceeded):
-        return ErrorKind(KIND_CAPACITY, True, str(exc.code))
+        return ErrorKind(KIND_CAPACITY, str(exc.code))
     if isinstance(exc, ProviderError):
-        if exc.kind in _LOCAL_PROVIDER_KINDS:
-            return ErrorKind(KIND_INTERNAL, True, INTERNAL_ERROR_CODE)
-        return ErrorKind(KIND_PROVIDER, bool(exc.retryable), exc.code)
+        if exc.kind in POLICIES:
+            return ErrorKind(exc.kind, exc.code)
+        return ErrorKind("unknown", UNKNOWN_CODE)
+    if isinstance(exc, ClassifiedError):
+        if exc.kind not in POLICIES:
+            return ErrorKind("unknown", UNKNOWN_CODE)
+        return ErrorKind(exc.kind, str(exc.code or _code_for(exc.kind)))
+
+    from ..llm.calls import JsonRepairExhausted, ModelBudgetExceeded, ModelOutputError
     from ..services.run_worker import PermanentRunError
-    from .calls import JsonRepairExhausted, ModelBudgetExceeded, ModelOutputError
 
     if isinstance(exc, ModelBudgetExceeded):
-        return ErrorKind(KIND_BUDGET, False, "QUOTA_EXCEEDED")
+        # The model row uses `exc.code` (`COST_BUDGET_EXCEEDED`). The run row
+        # keeps the older quota code so a spent cap is distinct in `error_json`.
+        return ErrorKind("budget", "QUOTA_EXCEEDED")
     if isinstance(exc, (JsonRepairExhausted, ModelOutputError)):
         code = getattr(exc, "code", None) or "INVALID_JSON"
-        return ErrorKind(KIND_INVALID_JSON, False, str(code))
+        return ErrorKind(KIND_INVALID_JSON, str(code))
     if isinstance(exc, PermanentRunError):
         code = getattr(exc, "code", None) or "PERMANENT"
-        return ErrorKind(KIND_PERMANENT, False, str(code))
-    if isinstance(exc, TimeoutError):
-        return ErrorKind(KIND_TIMEOUT, True, TIMEOUT_ERROR_CODE)
-    return ErrorKind(KIND_INTERNAL, True, INTERNAL_ERROR_CODE)
+        return ErrorKind("permanent", str(code))
+    return ErrorKind("unknown", UNKNOWN_CODE)
+
+
+def _code_for(kind: str) -> str:
+    if kind == "invalid_json":
+        return "INVALID_JSON"
+    if kind == "capacity":
+        return "MODEL_CAPACITY_EXCEEDED"
+    if kind == "budget":
+        return "QUOTA_EXCEEDED"
+    if kind == "permanent":
+        return "PERMANENT"
+    if kind == "unknown":
+        return UNKNOWN_CODE
+    return kind.upper()
 
 
 def hands_off_to_worker(kind: ErrorKind) -> bool:
-    """The worker retries these. Every other kind is a local failure result."""
-    return kind.name == KIND_CAPACITY or (kind.name == KIND_PROVIDER and kind.retryable)
+    """Infrastructure failures leave the handler and requeue. Business retries do not.
+
+    A child tool turns `invalid_json` into `{ok: false}` for the parent. The
+    same exception fails and business-retries only when nothing caught it.
+    """
+    from .policy import kind_policy
+
+    return kind_policy(kind.name).mode == "infrastructure"
 
 
 def _headers_of(exc: BaseException) -> Any:

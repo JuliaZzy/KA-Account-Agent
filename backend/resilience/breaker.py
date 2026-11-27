@@ -1,11 +1,10 @@
-"""Per-provider circuit breaker in Redis.
+"""按供应商放在 Redis 里的熔断器。
 
-Counts vendor `rate_limited` / `server_error` / `timeout` / `network` only.
-A full local seat, an `internal` bug, and `circuit_open` itself are not vendor
-failures and must not open this circuit. While open, every request is refused
-immediately. After the cooldown, one probe may call the vendor; every other
-request is still refused. Redis errors fail open so a broken breaker does not
-block calls.
+只累计策略表里 `breaker` 为真的 kind（`rate_limited`、`server_error`、`timeout`、`network`）。
+本地槽满、`unknown`、`circuit_open` 本身不是厂商故障，不能打开熔断。
+打开期间每个请求立刻拒绝。冷却结束后允许一次探测打到厂商，其余请求仍然拒绝。
+探测若以不计入熔断的错误结束，或调用期间租约丢失，只释放自己这张探测票。
+Redis 出错时放行，避免熔断器自己坏了把所有调用挡住。
 """
 
 from __future__ import annotations
@@ -39,7 +38,7 @@ def cooldown_seconds() -> int:
 
 
 def acquire(brand: str) -> CircuitTicket:
-    """May this process call the vendor? A denied ticket is `kind=circuit_open`."""
+    """这一次能不能打到厂商。被拒绝的票对应 `kind=circuit_open`。"""
     name = brand or "unknown"
     threshold = failure_threshold()
     if threshold <= 0:
@@ -83,14 +82,13 @@ def record_failure(brand: str) -> None:
 
 
 def release(ticket: CircuitTicket | None) -> None:
-    """Drop a half-open probe that never reached the vendor."""
+    """丢掉这一张半开探测票。票是空的，或者这次不是探测，就什么都不做。
+
+    只删自己持有的钥匙，不会清掉别人正在探测的那把。
+    """
     if ticket is None or not ticket.probing:
         return
     _delete(ticket.brand, _PROBE)
-
-
-def release_probe(brand: str) -> None:
-    _delete(brand, _PROBE)
 
 
 def _delete(brand: str, *templates: str) -> None:

@@ -18,7 +18,7 @@
 
 发信和 MCP 的用户确认是工具上的 `requires_approval`，不是这轮审核。
 
-网页搜索把 query 原样发给博查，`freshness` 固定为 `noLimit`，不做关键词拆解，也不做相关度乘时间的过滤。见 `backend/tools/web_search.py`。
+网页搜索把 query 原样发给本机 Open-WebSearch（百度 + 必应），不做关键词拆解，也不做相关度乘时间的过滤。见 `backend/tools/web_search.py`。
 
 报表里的图是模型写出的 ECharts `echarts_option`，前端渲染。子进程执行的是 `analyze(datasets)`，用来算洞察，不画图。见 `backend/report/wizard.py`。
 

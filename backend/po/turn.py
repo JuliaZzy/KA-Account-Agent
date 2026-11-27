@@ -14,9 +14,9 @@ from typing import Any
 
 from ..contract import contract_discount_for_next_order
 from ..db import Database
-from ..llm.errors import classify, hands_off_to_worker
 from ..memory import prompt_context, recall, summary_block, with_memory
 from ..orchestrator.status import status
+from ..resilience import classify, hands_off_to_worker
 from ..schemas import AgentSettings, CommercialRule, Partnership
 from .catalog import Catalog
 from .check import CheckResult, run_code_check, typed_in

@@ -401,7 +401,9 @@ async def read_agreement(
                     db=db, run_id=run_id, step_id=step_id, purpose="contract.extract",
                 )
             if not isinstance(raw, dict):
-                raise ValueError(f"Extraction for {chunk['id']} was not a JSON object.")
+                raise model_calls.ModelOutputError(
+                    f"Extraction for {chunk['id']} was not a JSON object.",
+                )
             parts.append(sanitize_extraction(raw, pages, image_pages))
 
     first = await _select_chunks(llm, index, db=db, run_id=run_id)

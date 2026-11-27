@@ -12,7 +12,7 @@ from typing import Any
 
 from ..db import Database
 from ..llm import calls as model_calls
-from ..llm.errors import classify, hands_off_to_worker
+from ..resilience import classify, hands_off_to_worker
 from ..services.chat_run import enqueue_chat_run
 from ..services.run_names import StepStatus, StepType, step_name
 from .prompt import OPEN

@@ -23,11 +23,12 @@
 
 ---
 
-## 0. 三条原则与全景图
+## 0. 四条原则与全景图
 
 1. **先分类，再处理**：入口限流、本地槽满、厂商故障名字不同、`code` 不同、处理者不同。
 2. **只让一层负责等**：client 和 `call_model` 只抛错，不 sleep、不重试，统一由 worker 决定等多久。
 3. **基础设施重试不扣次数，用时长封顶**：业务重试才扣次数、进死信。
+4. **错误性质在抛出处声明**：外部边界（厂商适配、JSON 解析、预算、永久失败）抛出时写好 kind。`classify` 只读这个声明，再查策略表，不根据异常类型猜测。没声明的就是 `unknown`。
 
 ```mermaid
 flowchart TD
@@ -84,8 +85,9 @@ flowchart TD
 | ④ 执行 | Run 级 token/调用顶 `ModelBudgetExceeded` | `call_model` | 本步 `model.failed`，**不**走基础设施排队 | — | 循环继续或 Run 失败（见 `run.md`） |
 | ④ 执行 | Redis 运行座位丢失 `LeaseLost` | worker | ack 结束，Run 仍 `running` 交给租约清扫 | 否 | sweeper 回 `queued` |
 | ④ 执行 | `running` 租约过期（worker 挂/卡住） | sweeper | 回 `queued` + 新 outbox（见 3.6） | 否 | `attempts≥3` 则 `failed` |
-| ④ 执行 | 401/403/400/422/响应非对象 | worker | 不重试 | — | Run `failed` |
-| ④ 执行 | 模型输出 JSON 解析失败（`ValueError`）等普通异常 | worker | 业务重试，默认 3 次 | **是** | 超次数进 `dead_letter_jobs`，Run `failed` |
+| ④ 执行 | 401/403、`quota`、400/422、`content_filter`、`bad_response`、`circuit_open`、`config`、`tool_error`、`permanent` | worker | 不重试 | — | Run `failed`。401/403、`quota`、`config` 同时出现在运行列表的告警里 |
+| ④ 执行 | 模型输出 JSON 解析失败（`invalid_json`） | worker | 业务重试，默认 3 次 | **是** | 超次数进 `dead_letter_jobs`，Run `failed` |
+| ④ 执行 | 未声明的异常（`unknown`） | worker | 不重试 | — | Run `failed`。`error_json` 写 `exc_type` 和 `traceback` |
 | ⑥ 续跑 | 租约回收 / broker 重投后再次执行 | worker 循环 | checkpoint + 工具幂等键（见 3.7） | — | 已完成的工具不重复副作用 |
 | ⑤ 丢失 | worker 丢失导致 broker 重投 | `record_worker_loss_redelivery` | 在 outbox `last_error_json` 计数，最多 **3** | 单独计 | `WORKER_LOST_REDELIVERY` → 死信；`waiting_for_user` 直接 ack |
 
@@ -105,22 +107,43 @@ flowchart TD
 
 对外码不改，因为前端已经认入口的 `RATE_LIMITED`。内部拆开，是因为“本地槽满”和“厂商 429”的监控含义不同。
 
-### 2.2 `ProviderError.kind`
+### 2.2 策略表
 
-| kind | 典型来源 | 可重试 | 进熔断器 |
-|---|---|---|---|
-| `rate_limited` | HTTP 429 | ✅ | ✅ |
-| `server_error` | 500 / 502 / 503 / 504 | ✅ | ✅ |
-| `timeout` | 连接 / 读超时 | ✅ | ✅ |
-| `network` | 断连、DNS | ✅ | ✅ |
-| `circuit_open` | 熔断器打开 | ❌ 立刻降级或 Run 失败 | ❌（避免自己把自己重新打开） |
-| `authentication` | 401 / 403 | ❌ Run 失败 | ❌ |
-| `bad_request` | 400 / 422 | ❌ | ❌ |
-| `bad_response` | 200 但响应不是对象 | ❌ | ❌ |
-| `internal` | 不认识的异常，含本地 bug | ❌ Run 失败，不降级 | ❌ |
-| `event_loop` | 已经在跑的事件循环里又调用了 `asyncio.run`（`EVENT_LOOP_REENTERED`） | ❌ Run 失败，不降级、不换模型 | ❌ |
+kind 是细名字，不是以前的粗分组 `provider` / `internal`。换模型看 `fallback_group` 是否写在这条路由的 `fallback_on` 里。组名仍是 `provider`、`capacity`、`invalid_json`。`invalid_json` 只在 `data.react` 和未登记的 purpose 上换模型。
 
-`ValueError`（模型输出 JSON 解析失败）不算厂商故障，走业务重试，见 §5。
+`authentication`、`quota`、`bad_response` 的组是 `provider`，所以会换模型。`bad_request` 不换。
+
+| kind | 重试方式 | 换模型 | 熔断 | 终局 |
+|---|---|---|---|---|
+| `rate_limited` / `server_error` / `timeout` / `network` | 基础设施：有 Retry-After 按它（≤300s，再乘 0.9–1.1）；否则等待上限从 1 秒起按 `min(60, base × 2^(n-1))` 加倍，在 0 到上限之间随机 | 是（组 `provider`） | 是 | 超 `max_duration_seconds` → `COST_BUDGET_EXCEEDED` |
+| `capacity` | 基础设施：同一公式，base 为 5 秒 | 是（组 `capacity`） | 否 | 同上 |
+| `circuit_open` | 不重试，立刻降级或失败 | 是（组 `provider`） | 否 | 失败 |
+| `authentication` / `quota` | 不重试 | 是（组 `provider`） | 否 | 失败。运行列表按 `error_json` 告警 |
+| `bad_response` | 不重试 | 是（组 `provider`） | 否 | 失败 |
+| `invalid_json` | 业务：扣次数，上限 3，间隔 1 / 5 / 15 分钟 | 仅路由列出 `invalid_json` 时 | 否 | 超次数 → 死信 |
+| `bad_request` / `content_filter` | 不重试 | 否 | 否 | 失败 |
+| `config` | 不重试 | 否 | 否 | 失败。运行列表告警 |
+| `tool_error` | 不重试 | 否 | 否 | 失败 |
+| `budget` | 不重试 | 否 | 否 | 本步 `model.failed` / `COST_BUDGET_EXCEEDED`（I-5）。Run 的 `error_json.code` 仍是 `QUOTA_EXCEEDED` |
+| `permanent` | 不重试 | 否 | 否 | 失败 |
+| `unknown` | 不重试 | 否 | 否 | 失败。`error_json` 写 `exc_type` 和 `traceback` |
+
+厂商适配层仍可能抛出 `ProviderError.kind` 为 `internal` 或 `event_loop`。这两个名字不在表里，`classify` 读成 `unknown`，码是 `UNKNOWN`，不是 `PROVIDER_INTERNAL`。
+
+### 2.3 边界翻译
+
+抛出点声明 kind，`classify` 只读。规则见 [INVARIANTS.md](../INVARIANTS.md) 的 I-4。
+
+| 边界 | 声明成 |
+|---|---|
+| 厂商 HTTP / SDK（`translate_provider_error`） | `ProviderError.kind`：`rate_limited`、`server_error`、`timeout`、`network`、`authentication`、`bad_request`、`bad_response`、`circuit_open` |
+| 适配层不认识的异常、事件循环重入 | `ProviderError` 上仍标 `internal` / `event_loop`，分类时变成 `unknown` |
+| 本地模型槽满 | `ModelCapacityExceeded` → `capacity` |
+| 模型输出不是可用 JSON（`_interpret`、合同抽取） | `ModelOutputError` / `JsonRepairExhausted` → `invalid_json` |
+| Run 级 token / 调用顶 | `ModelBudgetExceeded` → `budget` |
+| 输入或权限再试也不会过 | `PermanentRunError` → `permanent` |
+| `ClassifiedError(kind, …)` | 调用方写的 kind，必须在策略表里 |
+| 其余 `Exception` | `unknown` |
 
 ---
 
@@ -206,17 +229,15 @@ SoftBusy 指 Run 本身没问题，只是“现在不该跑”。处理方式一
 
 ```mermaid
 flowchart TD
-    X["执行中抛出异常"] --> T{"类型？"}
-    T -->|"OperationalError<br/>PG 拒绝连接"| D1["同一 Celery 任务里退避重试<br/>约 2–6s → 4–12s → …，最多 5 次"]
+    X["执行中抛出异常"] --> T{"策略表的重试方式？"}
+    T -->|"OperationalError<br/>PG 拒绝连接，不在表内"| D1["同一 Celery 任务里退避重试<br/>约 2–6s → 4–12s → …，最多 5 次"]
     D1 -->|"用完"| D2["抛出，由 sweeper 补投兜底"]
-    T -->|"ModelCapacityExceeded"| I1["Run 回队列再排期<br/>随机等 0–5s 起，每次等待时间的上限 + 10 秒，封顶 60s"]
-    T -->|"ProviderError 可重试"| I2["Run 回队列再排期<br/>有 Retry-After 按厂商；否则 0–1s 起，每次等待时间的上限 + 2s 封顶 60s"]
-    T -->|"ProviderError 不可重试<br/>authentication / bad_request / bad_response / internal / event_loop / circuit_open"| F["Run failed"]
+    T -->|"基础设施<br/>rate_limited / server_error / timeout / network / capacity"| I2["Run 回队列再排期<br/>见 §4"]
+    T -->|"不重试<br/>含 unknown"| F["Run failed"]
     F -->|"子 run"| F2["finish_child 把 ok:false 写入父 checkpoint<br/>父 run 进 ANSWER，而不是停在 waiting_for_tasks"]
-    T -->|"ValueError / 普通 Exception"| B1["业务重试：扣 attempt，默认 3 次"]
+    T -->|"业务<br/>invalid_json"| B1["业务重试：扣 attempt，默认 3 次"]
     B1 -->|"超次数"| DL["dead_letter_jobs，Run failed"]
-    I1 --> Q["schedule_retry(spend_attempt=False)<br/>Run 回 queued，写 next_attempt_at"]
-    I2 --> Q
+    I2 --> Q["schedule_retry(spend_attempt=False)<br/>Run 回 queued，写 next_attempt_at"]
     Q -->|"超过 max_duration_seconds"| CB["failed / COST_BUDGET_EXCEEDED"]
 ```
 
@@ -226,7 +247,7 @@ flowchart TD
 - 采购、合同、报表、查数、子任务里**对 `ModelCapacityExceeded` 的放行同样适用于 `ProviderError`**，避免厂商 503 被收成工具 `ok: false`。
 - 子 run 一旦进入终态（不可重试，或业务重试耗尽进死信），worker 在 `fail_run` 之后调用 `finish_child`。这条和 handler 自己收成 `{ok: false}` 的那条出口汇合：父 checkpoint 记下失败，ANSWER 能说出来。`finish_child` 对同一个 task 只保留第一次结果。
 - 顶层 chat run 自己失败时，问题和一句「这次没有完成」写入 `sessions.history`（带 `run_id`）。页面重开从这里读，失败的那一轮还在。可重试的失败先不写，等这轮真正结束。同一个 `run_id` 不写第二次。
-- `event_loop`（`EVENT_LOOP_REENTERED`）是本地又开了一层事件循环，不是厂商故障。不重试、不进熔断、不换模型。流式响应要在当前循环里 `await` 读完，不能落到 `_assemble_stream` 的 `asyncio.run`。
+- 分流只查策略表的重试方式，不看「是不是 `ValueError` / 普通 `Exception`」。`unknown`（含事件循环重入、适配层不认识的异常）直接失败，`error_json` 带 `exc_type` 和 `traceback`。流式响应仍要在当前循环里 `await` 读完，不能落到 `_assemble_stream` 的 `asyncio.run`。
 - **`ModelBudgetExceeded`**：本条 Run 的 `max_model_calls` / `max_tokens` 已用尽，**不调厂商**，记 `model.failed` / `COST_BUDGET_EXCEEDED`。这是 Run 级预算，不是本地槽满，**不走** `schedule_retry` 基础设施排队；与 org 日预算（`org_budget`）是另一层闸门。
 - 基础设施路径在 `run_worker._finish_claimed` 里 `schedule_retry` 后 **`return True` → Celery ack**；下次执行靠 §3.2.1 的 outbox 通道，不是 broker 里挂着同一条任务。
 
@@ -270,11 +291,11 @@ broker / sweeper 可能让**同一条 `run_id` 再次被领取**，或 worker �
 
 **等多久**（精确公式在 `tasks.db_retry_countdown`、`queue.schedule_retry`）：
 
-| 情况 | 人话 |
+| kind | 人话 |
 |---|---|
-| **PG 连不上** | 还在**同一条 Celery 任务**里重试，不进 outbox。第 1 次大约等 **2–6 秒**，第 2 次大约 **4–12 秒**……（每次都是「2–6 秒」× 第几次）。**最多 5 次**，仍连不上就抛错，靠 sweeper 补投。 |
-| **本地模型座满** | Run 先变 `queued`，到期再发新 Celery。在 **0–5 秒**里随机挑一个时刻再跑；若老失败，等待上限逐步涨到 **最多 60 秒**。不扣 3 次业务 attempt。 |
-| **厂商可重试（429/5xx 等）** | 同上，Run 回队列再排期。响应头有 **Retry-After** 就按厂商建议等（略加随机，**最长 5 分钟**）。没有的话从 **0–1 秒**起同样「越等越久」，**单次最多 60 秒**。 |
+| **PG `OperationalError`**（不在策略表里） | 还在**同一条 Celery 任务**里重试，不进 outbox。第 1 次大约等 **2–6 秒**，第 2 次大约 **4–12 秒**……（每次都是「2–6 秒」× 第几次）。**最多 5 次**，仍连不上就抛错，靠 sweeper 补投。 |
+| **`capacity`** | Run 先变 `queued`，到期再发新 Celery。等待上限从 **5 秒**起，按 `min(60, 5 × 2^(n-1))` 加倍（5、10、20、40、60），再在 0 到这个上限之间随机。不扣业务 attempt。 |
+| **`rate_limited` / `server_error` / `timeout` / `network`** | 同上。响应头有 **Retry-After** 就按厂商建议等（乘 0.9–1.1，**最长 5 分钟**）。没有的话上限从 **1 秒**起按 `min(60, 1 × 2^(n-1))` 加倍。 |
 
 `schedule_retry(..., spend_attempt=False)` 把等待写在 outbox 的 `next_attempt_at`；传入 `delay` 可覆盖计算出的等待。
 
@@ -292,7 +313,7 @@ broker / sweeper 可能让**同一条 `run_id` 再次被领取**，或 worker �
 
 | | 业务重试 | 基础设施重试 |
 |---|---|---|
-| 包括 | 普通 `Exception`、模型输出解析失败 | 本地槽满、厂商可重试错误、DB `OperationalError` |
+| 包括 | `invalid_json`（`ModelOutputError`、`JsonRepairExhausted`） | 本地槽满、厂商可重试错误（`rate_limited` / `server_error` / `timeout` / `network`）。DB `OperationalError` 在 Celery 任务内另计，不进这张表 |
 | 扣 execution outbox `attempts` | ✅ | ❌ |
 | 次数上限 | 默认 **3** 次（`EXECUTION_MAX_ATTEMPTS`） | 暂无（靠 `max_duration_seconds`） |
 | 推 Celery 失败 | 另一套：`mark_outbox_retry`，最多 **10** 次（§3.2.2） | — |
@@ -313,11 +334,11 @@ broker / sweeper 可能让**同一条 `run_id` 再次被领取**，或 worker �
 | 项 | 说明 |
 |---|---|
 | 粒度 | 按 **brand**（`qwen` / `deepseek` / `glm`）一把 Redis 钥匙，不按模型名 |
-| 计入 | 429、5xx、timeout、network |
-| 不计入 | 本地槽满、401、400、解析失败、`internal`、`circuit_open` 本身 |
+| 计入 | 策略表里熔断列为「是」的 kind：`rate_limited`、`server_error`、`timeout`、`network` |
+| 不计入 | 表中熔断列为「否」的 kind，包括本地槽满、401、400、解析失败、`unknown`、`circuit_open` 本身 |
 | 打开条件 | **连续 5 次**上述错误 |
 | 打开后 | 冷却 **30 秒**内一个请求都不打这家供应商。`call_model` 抛 `ProviderError(kind=circuit_open)`，有备用模型就立刻降级，没有就这次 Run 失败。冷却时间不变成用户等待 |
-| 冷却结束 | 允许**一次** half-open 探测。探测成功则关闭，这次请求用探测拿回的结果。探测失败再打开 30 秒。探测进行中的其他请求仍然立刻降级或失败 |
+| 冷却结束 | 允许**一次** half-open 探测。探测成功则关闭，这次请求用探测拿回的结果。探测以计入熔断的错误结束，清掉探测钥匙并再打开 30 秒。探测以不计入熔断的错误结束（`unknown`、`bad_request`、`authentication` 等），或调用期间本地租约丢失，只释放自己这张探测票，下一个请求可以立刻再探测。没拿到探测票的请求失败，不会删掉别人持有的钥匙。探测进行中的其他请求仍然立刻降级或失败 |
 | 熔断器自己坏了（Redis 报错） | **放行**，避免闸门把所有模型调用挡住 |
 
 ```mermaid
@@ -326,7 +347,8 @@ stateDiagram-v2
     Closed --> Open: 连续 5 次厂商错误
     Open --> HalfOpen: 冷却 30 秒后
     HalfOpen --> Closed: 探测成功
-    HalfOpen --> Open: 探测失败
+    HalfOpen --> Open: 探测以计入熔断的错误结束
+    HalfOpen --> HalfOpen: 不计入熔断的错误或租约丢失，释放自己的探测票
 ```
 
 环境变量：
@@ -423,10 +445,10 @@ flowchart TD
 |---|---|---|
 | `KA_ACCOUNT_CIRCUIT_FAILURES` | 5 | 熔断阈值，0 关闭 |
 | `KA_ACCOUNT_CIRCUIT_COOLDOWN_SECONDS` | 30 | 熔断冷却 |
-| `KA_ACCOUNT_REDISPATCH_AFTER_SECONDS` | 120 | 补投宽限期 |
+| `KA_ACCOUNT_REDISPATCH_AFTER_SECONDS` | 60 | 补投宽限期。`dispatcher.redispatch_grace_seconds` 的默认值，与 §7.2 一致 |
 | `KA_ACCOUNT_QUEUED_MAX_AGE_SECONDS` | 7200（2 小时） | 排队超龄关闭 |
 | Retry-After 上限 | 300 秒 | 写死在 worker |
-| 补投上限 | 3 次 / Run | — |
+| 补投上限 | 不设上限 | 与 §7.2 一致。`redispatch_count` 只计数，不因此进死信 |
 | 业务执行重试 | 3 次 | `EXECUTION_MAX_ATTEMPTS` |
 | 推 Celery 失败重试 | 10 次 | `OutboxJob.max_attempts` 默认 |
 | Celery PG 连接重试 | 5 次 / 任务 | `DB_CONNECT_MAX_RETRIES` |
@@ -439,7 +461,15 @@ flowchart TD
 |---|---|---|
 | `RATE_LIMITED` | 入口限流 | — |
 | `MODEL_CAPACITY_EXCEEDED` | 本地模型槽满（内部，会重试） | ❌ |
-| `PROVIDER_RATE_LIMITED` 等 | 厂商错误（内部，会重试） | ❌ |
+| `PROVIDER_RATE_LIMITED` / `PROVIDER_SERVER_ERROR` / `PROVIDER_TIMEOUT` / `PROVIDER_NETWORK` | 厂商可重试错误（基础设施，会重试） | ❌ |
+| `PROVIDER_AUTHENTICATION` | 401 / 403 | ✅ |
+| `PROVIDER_QUOTA` | 额度或套餐不够（`quota`） | ✅ |
+| `PROVIDER_BAD_REQUEST` | 400 / 422 | ✅ |
+| `PROVIDER_BAD_RESPONSE` | 200 但响应不是对象 | ✅ |
+| `PROVIDER_CIRCUIT_OPEN` | 熔断打开且没有备用模型 | ✅ |
+| `INVALID_JSON` / `JSON_REPAIR_EXHAUSTED` | 模型输出 JSON 不能用，业务重试用尽 | ✅ |
+| `UNKNOWN` | 未声明的异常。`error_json` 另有 `exc_type`、`traceback` | ✅ |
+| `QUOTA_EXCEEDED` | Run 级模型预算用尽（本步事件里的码是 `COST_BUDGET_EXCEEDED`） | ✅ |
 | `COST_BUDGET_EXCEEDED` | Run 超过 `max_duration_seconds` | — |
 | `CAPACITY_TIMEOUT` | 等座位超过聊天 120 秒或月报 900 秒 | ✅ |
 | `WORKER_LOST_REDELIVERY` | broker 因 worker 丢失反复重投同一任务 | ✅（Run 已 `waiting_for_user` 时直接 ack，不进此计数） |
@@ -455,10 +485,9 @@ flowchart TD
 | `backend/services/entry_guard.py` | Redis 运行闸门 `acquire_run`、座位 renew |
 | `backend/db/database/queue.py` | `schedule_retry`、`mark_outbox_retry`、`record_worker_loss_redelivery` |
 | `backend/db/database/run.py` | `touch_queue_heartbeat`、`claim_unclaimed_dispatches`、`sweep_expired_leases` |
-| `backend/llm/errors.py` | `ProviderError`、`Retry-After` 解析、SDK/HTTP 映射 |
+| `backend/resilience/` | 兜底规则：`errors.py` 分类，`policy.py` 策略表，`breaker.py` 熔断 |
 | `backend/llm/client.py` | 适配层，`max_retries=0` |
-| `backend/llm/calls.py` | `call_model`：熔断 → 占座 → 调用；`ModelBudgetExceeded` |
-| `backend/llm/breaker.py` | Redis 熔断器 |
+| `backend/llm/calls.py` | `call_model`：按策略熔断 → 占座 → 调用，并按 `fallback_group` 换模型 |
 | `frontend/src/chat-live.ts` | `liveFromRun`：generation_id 变了就清空 live |
 
 ---

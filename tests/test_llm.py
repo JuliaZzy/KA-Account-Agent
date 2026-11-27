@@ -212,7 +212,7 @@ def _qwen_call(client):
 
 
 def test_qwen_stream_that_goes_silent_times_out_as_a_retryable_provider_error(monkeypatch):
-    from backend.llm.errors import translate_provider_error
+    from backend.resilience import translate_provider_error
 
     monkeypatch.setenv("KA_ACCOUNT_QWEN_TIMEOUT_SECONDS", "5")
     monkeypatch.setenv("KA_ACCOUNT_QWEN_CHUNK_IDLE_SECONDS", "0.05")
@@ -271,7 +271,7 @@ def _deepseek_call(client, *, stream=True):
 
 
 def test_deepseek_stream_that_goes_silent_times_out_as_a_retryable_provider_error(monkeypatch):
-    from backend.llm.errors import translate_provider_error
+    from backend.resilience import translate_provider_error
 
     monkeypatch.setenv("KA_ACCOUNT_DEEPSEEK_TIMEOUT_SECONDS", "5")
     monkeypatch.setenv("KA_ACCOUNT_DEEPSEEK_CHUNK_IDLE_SECONDS", "0.05")

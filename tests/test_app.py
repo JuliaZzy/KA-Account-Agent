@@ -111,8 +111,9 @@ def test_model_failure_leaves_the_stream_open_and_fails_on_the_worker(db):
     assert all(e.get("type") != "error" for e in ev)
     assert work_chat(db, llm, run_id) is True
     run = db.find_agent_run("dist-1", run_id)
-    assert run["status"] == "queued"
-    assert run["error_json"]["kind"] == "transient"
+    assert run["status"] == "failed"
+    assert run["error_json"]["code"] == "UNKNOWN"
+    assert run["error_json"]["exc_type"] == "RuntimeError"
 
 
 def test_a_long_chat_folds_after_the_worker_saves(db, monkeypatch):

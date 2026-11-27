@@ -4,6 +4,7 @@
 call and one assistant turn. `fake` is the test double.
 """
 
+from ..resilience import ModelCapacityExceeded, ProviderError
 from .client import (
     DeepSeekClient,
     GLMClient,
@@ -15,7 +16,6 @@ from .client import (
     open_client,
     qwen_client,
 )
-from .errors import ModelCapacityExceeded, ProviderError
 from .fake import FakeLLM
 from .parse import parse_json_loose
 from .types import AssistantTurn, Message, ToolCall

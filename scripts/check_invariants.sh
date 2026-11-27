@@ -148,22 +148,22 @@ fi
 # I-4. These except clauses live only in the classify module.
 except_hits=$(grep -rnE 'except [(]ModelCapacityExceeded, ProviderError[)]|except ProviderError|except ModelCapacityExceeded' backend/ | strip_comments || true)
 except_files=$(printf '%s\n' "$except_hits" | awk -F: 'NF {print $1}' | sort -u)
-except_outside=$(printf '%s\n' "$except_files" | grep -vxF 'backend/llm/errors.py' || true)
+except_outside=$(printf '%s\n' "$except_files" | grep -vxF 'backend/resilience/errors.py' || true)
 if [[ -n "$except_outside" ]]; then
-  fail "I-4 except ProviderError / ModelCapacityExceeded 只允许在 backend/llm/errors.py" "$except_hits"
+  fail "I-4 except ProviderError / ModelCapacityExceeded 只允许在 backend/resilience/errors.py" "$except_hits"
 elif [[ -n "$except_hits" ]]; then
-  pass "I-4 except 只在 backend/llm/errors.py"
+  pass "I-4 except 只在 backend/resilience/errors.py"
 else
   pass "I-4 没有这些 except"
 fi
 
 named_hits=$(grep -rnE 'except .*(JsonRepairExhausted|ModelBudgetExceeded)' backend/ | strip_comments || true)
 named_files=$(printf '%s\n' "$named_hits" | awk -F: 'NF {print $1}' | sort -u)
-named_outside=$(printf '%s\n' "$named_files" | grep -vxF 'backend/llm/errors.py' || true)
+named_outside=$(printf '%s\n' "$named_files" | grep -vxF 'backend/resilience/errors.py' || true)
 if [[ -n "$named_outside" ]]; then
-  fail "I-4 except JsonRepairExhausted / ModelBudgetExceeded 只允许在 backend/llm/errors.py" "$named_hits"
+  fail "I-4 except JsonRepairExhausted / ModelBudgetExceeded 只允许在 backend/resilience/errors.py" "$named_hits"
 elif [[ -n "$named_hits" ]]; then
-  pass "I-4 这两个 except 只在 backend/llm/errors.py"
+  pass "I-4 这两个 except 只在 backend/resilience/errors.py"
 else
   pass "I-4 没有 JsonRepairExhausted / ModelBudgetExceeded 的 except"
 fi
@@ -171,11 +171,11 @@ fi
 # Route labels. The old names exist only as comments or constants in errors.py.
 literal_hits=$(grep -rnE '"provider_error"|"model_capacity"' backend/ | strip_comments || true)
 literal_files=$(printf '%s\n' "$literal_hits" | awk -F: 'NF {print $1}' | sort -u)
-literal_outside=$(printf '%s\n' "$literal_files" | grep -vxF 'backend/llm/errors.py' || true)
+literal_outside=$(printf '%s\n' "$literal_files" | grep -vxF 'backend/resilience/errors.py' || true)
 if [[ -n "$literal_outside" ]]; then
-  fail "I-4 provider_error / model_capacity 字面量只允许在 backend/llm/errors.py" "$literal_hits"
+  fail "I-4 provider_error / model_capacity 字面量只允许在 backend/resilience/errors.py" "$literal_hits"
 elif [[ -n "$literal_hits" ]]; then
-  pass "I-4 路由字面量只在 backend/llm/errors.py"
+  pass "I-4 路由字面量只在 backend/resilience/errors.py"
 else
   pass "I-4 没有旧的路由字面量"
 fi

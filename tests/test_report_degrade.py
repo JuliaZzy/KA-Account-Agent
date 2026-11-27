@@ -95,7 +95,7 @@ def test_a_failed_insight_keeps_the_chart_and_marks_the_section(monkeypatch):
     )
     assert seen.count("report_charts") == 1
     assert charts and charts_for["performance"]
-    assert any(row["step"] == "code_wizards" and row["code"] == "INTERNAL" for row in degraded)
+    assert any(row["step"] == "code_wizards" and row["code"] == "UNKNOWN" for row in degraded)
     draft = _draft(
         sections,
         {"performance": "销售额 10。", "metrics": "目标 1。", "inventory": "库存 1。", "next": "下月备货。"},
@@ -213,11 +213,10 @@ def test_a_failed_outline_fails_the_report_and_the_parent_answers(db, monkeypatc
 
     immediate = (timedelta(0),)
     assert work_once(db, "w-child", run_child, immediate, run_id=child["id"]) is True
-    assert db.find_agent_run_by_id(child["id"])["status"] == "queued"
-    assert work_once(db, "w-child", run_child, immediate, run_id=child["id"]) is True
     failed = db.find_agent_run_by_id(child["id"])
     assert failed["status"] == "failed"
-    assert failed["error_json"]["code"] == "INTERNAL"
+    assert failed["error_json"]["code"] == "UNKNOWN"
+    assert failed["error_json"]["exc_type"] == "RuntimeError"
     state = load_state(db.latest_checkpoint(parent["id"])) or {}
     assert state["results"]["1"]["ok"] is False
     if db.find_agent_run_by_id(parent["id"])["status"] == "waiting_for_tasks":

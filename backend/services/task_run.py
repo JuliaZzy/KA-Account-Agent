@@ -10,10 +10,10 @@ from typing import Any
 
 from ..db import Database
 from ..llm.calls import ModelBudgetExceeded
-from ..llm.errors import classify, hands_off_to_worker
 from ..orchestrator.gather import checkpoint_state, finish_child, load_state
 from ..orchestrator.plan import PlanTask, tool_name_for
 from ..repositories.run_repository import latest_checkpoint
+from ..resilience import classify, hands_off_to_worker
 from ..services.run_names import StepStatus, StepType, ToolCallStatus, step_name, tool_error
 from ..services.session_tools import tools as turn_tools
 

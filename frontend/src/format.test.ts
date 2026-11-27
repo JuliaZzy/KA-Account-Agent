@@ -20,6 +20,7 @@ import {
   sumBy,
   unitsLabel,
   activitiesFromEvents,
+  runNoticeCounts,
   queueLine,
   stepsFromTrace,
 } from "./format";
@@ -147,6 +148,16 @@ describe("desk formatters", () => {
     expect(rows).toEqual([{ sku: "FO-100", product: "Fish Oil", ordered: 120, sold: 60, sellThrough: 0.5 }]);
   });
 
+  it("counts warnings and errors on parent runs", () => {
+    expect(runNoticeCounts([
+      { status: "succeeded", alerts: [{ level: "warning" }] },
+      { status: "succeeded", alerts: [{ level: "warning" }] },
+      { status: "failed", alerts: [{ level: "error" }] },
+      { owner_run_id: "parent", status: "succeeded", alerts: [{ level: "warning" }] },
+      { status: "cancelled", alerts: [] },
+    ])).toEqual({ warnings: 2, errors: 1 });
+  });
+
   it("paints a run timeline from event display text", () => {
     expect(activitiesFromEvents([
       { sequence: 2, event_type: "model.started", payload_json: { display: "正在思考", purpose: "hidden" } },
@@ -167,6 +178,11 @@ describe("desk formatters", () => {
     ], "running")).toEqual([
       { id: "4", title: "已完成 report.draft", detail: "", state: "done" },
     ]);
+    expect(activitiesFromEvents([
+      { sequence: 5, event_type: "tool.failed", payload_json: { display: "authentication HTTP 403 from bocha web-search", tool_name: "web_search" } },
+    ])).toEqual([
+      { id: "5", title: "authentication HTTP 403 from bocha web-search", detail: "", state: "failed" },
+    ]);
     expect(activitiesFromEvents(null)).toEqual([]);
   });
 
@@ -179,7 +195,7 @@ describe("desk formatters", () => {
     ])).toEqual([
       { id: "step_a", title: "model", detail: "", state: "running" },
       { id: "step_b", title: "echo", detail: "", state: "done" },
-      { id: "step_d", title: "send_email", detail: "失败", state: "done" },
+      { id: "step_d", title: "send_email", detail: "失败", state: "failed" },
     ]);
     expect(stepsFromTrace([{
       id: "step_plan",

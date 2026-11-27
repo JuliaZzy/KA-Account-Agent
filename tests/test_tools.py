@@ -1,4 +1,4 @@
-"""Tools return a typed envelope. Translate uses the official Qwen path; search does not hit Bocha."""
+"""Tools return a typed envelope. Translate uses the official Qwen path; search does not hit the network."""
 
 from __future__ import annotations
 
@@ -77,12 +77,21 @@ def test_translate_uses_the_session_report_and_fails_if_missing(monkeypatch):
     assert asyncio.run(translate_run({"target_language": "English", "source": "report"}, llm=FakeLLM(), context={}))["ok"] is False
 
 
-def test_web_search_parses_bocha_pages(monkeypatch):
+def test_web_search_parses_open_websearch_pages(monkeypatch):
     payload = {
-        "data": {"webPages": {"value": [
-            {"name": "Nordic Beauty", "snippet": "Distributor in Stockholm", "url": "https://example.com"},
-        ]}},
+        "status": "ok",
+        "data": {"results": [
+            {
+                "title": "Nordic Beauty",
+                "description": "Distributor in Stockholm",
+                "url": "https://example.com",
+                "engine": "baidu",
+            },
+            "skip-me",
+        ]},
+        "error": None,
     }
+    seen: list = []
 
     class _Resp:
         def __enter__(self):
@@ -94,23 +103,47 @@ def test_web_search_parses_bocha_pages(monkeypatch):
         def read(self):
             return json.dumps(payload).encode()
 
-    monkeypatch.setenv("BOCHA_API_KEY", "test-key")
-    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: _Resp())
+    def fake_open(req, timeout=0):
+        seen.append((req.full_url, json.loads(req.data.decode()), timeout))
+        return _Resp()
+
+    monkeypatch.setenv("WEB_SEARCH_URL", "http://web-search:3210")
+    monkeypatch.setattr("urllib.request.urlopen", fake_open)
     rows = search("Nordic Beauty")
     assert rows == [{"title": "Nordic Beauty", "snippet": "Distributor in Stockholm", "url": "https://example.com"}]
+    assert seen[0][0] == "http://web-search:3210/search"
+    assert seen[0][1] == {
+        "query": "Nordic Beauty", "limit": 5, "engines": ["baidu", "bing"], "searchMode": "request",
+    }
     assert search_run({"query": "Nordic Beauty"})["ok"] is True
+
+
+def test_web_search_empty_results_are_success(monkeypatch):
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return json.dumps({"status": "ok", "data": {"results": []}, "error": None}).encode()
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: _Resp())
+    assert search("nothing") == []
+    assert search_run({"query": "nothing"}) == {"ok": True, "data": {"results": []}, "error": None}
 
 
 def test_web_search_403_is_a_permanent_provider_error(monkeypatch):
     import io
     import urllib.error
 
-    monkeypatch.setenv("BOCHA_API_KEY", "test-key")
+    monkeypatch.setenv("WEB_SEARCH_URL", "http://web-search:3210")
 
     def boom(*_args, **_kwargs):
         raise urllib.error.HTTPError(
-            "https://api.bocha.cn/v1/web-search", 403, "Forbidden", hdrs=None,
-            fp=io.BytesIO(b'{"message":"You do not have enough money or package quota"}'),
+            "http://web-search:3210/search", 403, "Forbidden", hdrs=None,
+            fp=io.BytesIO(b'{"status":"error"}'),
         )
 
     monkeypatch.setattr("urllib.request.urlopen", boom)
@@ -118,6 +151,13 @@ def test_web_search_403_is_a_permanent_provider_error(monkeypatch):
     assert out["ok"] is False
     assert out["code"] == "PROVIDER_AUTHENTICATION"
     assert "403" in out["error"]
+    assert "web-search" in out["error"]
+
+
+def test_web_search_requires_a_url(monkeypatch):
+    monkeypatch.delenv("WEB_SEARCH_URL", raising=False)
+    with pytest.raises(RuntimeError, match="WEB_SEARCH_URL"):
+        search("红牛", base_url="")
 
 
 def test_orchestrator_runs_translate_then_answers(monkeypatch):

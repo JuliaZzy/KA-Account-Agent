@@ -1,6 +1,8 @@
-"""通过博查做公开网页检索。只给报告添一层只读的背景——不是我们账本的来源。
+"""Public web search through the local Open-WebSearch daemon.
 
-https://api.bocha.cn/v1/web-search  （`BOCHA_API_KEY`）
+Compose runs `node build/index.js serve` and injects `WEB_SEARCH_URL`
+(`http://web-search:3210`). This is the daemon HTTP API, not the image's
+default MCP server. Engines stay Baidu and Bing; the query is sent as-is.
 """
 
 from __future__ import annotations
@@ -11,10 +13,12 @@ import urllib.request
 from typing import Any
 
 from ..config import env
-from ..llm.errors import ProviderError, classify, classify_status
+from ..resilience import ProviderError, classify, classify_status
 
-BOCHA_URL = "https://api.bocha.cn/v1/web-search"
+DEFAULT_URL = "http://web-search:3210"
+ENGINES = ("baidu", "bing")
 MAX_COUNT = 5
+PROVIDER = "web-search"
 
 SCHEMA: dict[str, Any] = {
     "type": "function",
@@ -32,33 +36,41 @@ SCHEMA: dict[str, Any] = {
 }
 
 
-def search(query: str, *, count: int = MAX_COUNT, api_key: str | None = None) -> list[dict[str, str]]:
-    key = (api_key if api_key is not None else env("BOCHA_API_KEY")).strip()
-    if not key:
-        raise RuntimeError("BOCHA_API_KEY is not set")
+def search(query: str, *, count: int = MAX_COUNT, base_url: str | None = None) -> list[dict[str, str]]:
+    root = (base_url if base_url is not None else env("WEB_SEARCH_URL", DEFAULT_URL)).strip().rstrip("/")
+    if not root:
+        raise RuntimeError("WEB_SEARCH_URL is not set")
+    limit = max(1, min(count, MAX_COUNT))
     body = json.dumps({
-        "query": query, "freshness": "noLimit", "summary": True, "count": max(1, min(count, MAX_COUNT)),
+        "query": query,
+        "limit": limit,
+        "engines": list(ENGINES),
+        "searchMode": "request",
     }).encode()
     req = urllib.request.Request(
-        BOCHA_URL, data=body, method="POST",
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        f"{root}/search", data=body, method="POST",
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
     )
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             payload = json.loads(resp.read().decode())
     except urllib.error.HTTPError as err:
         kind, _retryable = classify_status(err.code)
-        raise ProviderError("bocha", "web-search", kind, status_code=err.code) from err
-    pages = (((payload.get("data") or {}).get("webPages") or {}).get("value")) or []
+        raise ProviderError(PROVIDER, "search", kind, status_code=err.code) from err
+    if not isinstance(payload, dict) or payload.get("status") != "ok":
+        raise ProviderError(PROVIDER, "search", "server_error")
+    pages = (payload.get("data") or {}).get("results") or []
     out: list[dict[str, str]] = []
     for page in pages:
         if not isinstance(page, dict):
             continue
         out.append({
-            "title": str(page.get("name") or "").strip(),
-            "snippet": str(page.get("snippet") or page.get("summary") or "").strip(),
+            "title": str(page.get("title") or "").strip(),
+            "snippet": str(page.get("description") or "").strip(),
             "url": str(page.get("url") or "").strip(),
         })
+        if len(out) >= limit:
+            break
     return out
 
 

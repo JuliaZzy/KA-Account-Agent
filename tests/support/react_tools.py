@@ -8,9 +8,9 @@ import json
 from typing import Any
 
 from backend.llm import calls as model_calls
-from backend.llm.errors import ModelCapacityExceeded, ProviderError
 from backend.llm.types import AssistantTurn
 from backend.memory import attach, prompt_turns
+from backend.resilience import ModelCapacityExceeded, ProviderError
 from backend.tools import all_schemas, all_tools
 
 MAX_TOOL_ROUNDS = 4

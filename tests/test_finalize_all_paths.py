@@ -267,7 +267,7 @@ def test_finalize_all_paths_retry_and_outbox_retry_do_not_deadlock(db):
     assert sorted(done) == ["publish", "retry"]
 
 
-def test_finalize_all_paths_retries_an_internal_error_once_then_answers(db):
+def test_finalize_all_paths_unknown_error_fails_once_then_answers(db):
     _user(db)
     sid = db.create_session("sess-internal", "ps-1", "u-a")["id"]
     parent = _park(db, "fin-internal", session_id=sid)
@@ -278,11 +278,10 @@ def test_finalize_all_paths_retries_an_internal_error_once_then_answers(db):
 
     immediate = (timedelta(0),)
     assert work_once(db, "w-child", boom, immediate, run_id=child["id"]) is True
-    assert db.find_agent_run_by_id(child["id"])["status"] == "queued"
-    assert work_once(db, "w-child", boom, immediate, run_id=child["id"]) is True
     failed = db.find_agent_run_by_id(child["id"])
     assert failed["status"] == "failed"
-    assert failed["error_json"]["code"] == "INTERNAL"
+    assert failed["error_json"]["code"] == "UNKNOWN"
+    assert failed["error_json"]["exc_type"] == "RuntimeError"
     assert failed["error_json"]["code"] != "PROVIDER_INTERNAL"
     state = _orch(db, parent["id"])
     assert state["results"]["1"]["ok"] is False

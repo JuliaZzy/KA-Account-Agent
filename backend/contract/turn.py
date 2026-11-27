@@ -14,7 +14,7 @@ from typing import Any
 from ..db import Database
 from ..documents import SUPPORTED_EXTS
 from ..llm import deepseek_client
-from ..llm.errors import classify, hands_off_to_worker
+from ..resilience import classify, hands_off_to_worker
 from ..schemas import ContractChunk
 from .chunks import flatten_chunk_tree
 from .ingest import record_from_extraction

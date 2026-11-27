@@ -21,8 +21,8 @@ from typing import Any
 from ..db import Database, utcnow
 from ..llm import calls as model_calls
 from ..llm import deepseek_client
-from ..llm.errors import classify, hands_off_to_worker
 from ..memory import actor_id, attach, prompt_context, prompt_turns, standing_block, summary_block
+from ..resilience import classify, hands_off_to_worker
 from .prompt import REACT
 from .sql_validator import system_row_cap, unlimited_statement, validate
 from .table_metadata import catalog_text, describe_tables, expand_tables, scope_views

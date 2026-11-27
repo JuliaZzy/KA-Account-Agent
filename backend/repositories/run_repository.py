@@ -53,6 +53,10 @@ def list_agent_runs(
 ) -> list[dict[str, Any]]:
     return db.list_agent_runs(org_id, user_id=user_id, status=status, limit=limit)
 
+
+def tool_calls_under_runs(db: Database, org_id: str, run_ids: list[str]) -> list[dict[str, Any]]:
+    return db.tool_calls_under_runs(org_id, run_ids)
+
 def create_agent_run(
     db: Database,
     org_id: str,

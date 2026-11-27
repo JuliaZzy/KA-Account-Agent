@@ -11,7 +11,6 @@ import pytest
 from backend.db import utcnow
 from backend.llm import calls
 from backend.llm.calls import ModelResult, qwen_json_async
-from backend.llm.errors import ProviderError
 from backend.llm.routing import (
     ROUTING_POLICY_VERSION,
     RouteCandidate,
@@ -20,6 +19,7 @@ from backend.llm.routing import (
     quality_check,
     run_budget_for,
 )
+from backend.resilience import ProviderError
 
 
 def qwen_json(**kwargs):

@@ -19,8 +19,10 @@ from ..repositories.run_repository import (
     list_run_events,
     request_run_cancel,
     run_trace,
+    tool_calls_under_runs,
     transition_run,
 )
+from .run_alerts import attach_run_alerts
 from .run_names import PRIVATE_PAYLOAD_KEYS, PUBLIC_RUN_EVENTS, RunType
 
 
@@ -210,7 +212,9 @@ def repair_run(
 def list_runs(
     db: Database, org_id: str, *, user_id: str | None, status: str | None, limit: int,
 ) -> list[dict[str, Any]]:
-    return list_agent_runs(db, org_id, user_id=user_id, status=status, limit=limit)
+    runs = list_agent_runs(db, org_id, user_id=user_id, status=status, limit=limit)
+    calls = tool_calls_under_runs(db, org_id, [str(run["id"]) for run in runs])
+    return attach_run_alerts(runs, calls)
 
 
 def get_trace(db: Database, org_id: str, run_id: str) -> dict[str, Any]:
